@@ -1,4 +1,12 @@
-yfinance>=0.2.0
+# Core dependencies
+customtkinter>=5.2.0
 pandas>=2.0.0
 numpy>=1.24.0
-customtkinter>=5.2.0
+yfinance>=0.2.30
+
+# Data providers (free, no auth needed)
+jugaad-data>=0.35.0
+nselib>=2.5.0
+
+# Data providers (optional, requires FYERS account)
+# fyers-apiv3>=3.1.0

@@ -1,133 +1,105 @@
 """
-Data fetcher for Indian stocks using yfinance.
-Handles NSE (.NS) suffix, fundamentals, and provides caching.
+Data fetcher for Indian stocks using multi-source provider with fallback.
+
+Provider chain:
+  1. FYERS (if configured) — Direct exchange data
+  2. jugaad-data — NSE official API
+  3. yfinance — Yahoo Finance
+  4. nselib — NSE library
+
+All data is cached to disk to avoid repeated API calls.
 """
 
 import time
 import pandas as pd
-import yfinance as yf
 from typing import Optional
 
+from data_providers import DataProvider
 
-def fetch_stock_data(ticker: str, period: str = "1y", retries: int = 2) -> Optional[pd.DataFrame]:
+
+# ── Global provider instance ───────────────────────────────────────────────
+_provider = None
+
+
+def _get_provider(fyers_config: dict = None) -> DataProvider:
+    """Get or create the global data provider."""
+    global _provider
+    if _provider is None:
+        _provider = DataProvider(fyers_config=fyers_config)
+    return _provider
+
+
+def fetch_stock_data(ticker: str, period: str = "1y", retries: int = 2,
+                     fyers_config: dict = None) -> Optional[pd.DataFrame]:
     """
     Fetch OHLCV data for an Indian NSE stock.
+
+    Uses multi-source provider with automatic fallback:
+      jugaad-data -> yfinance -> nselib
 
     Args:
         ticker: NSE symbol (e.g., "RELIANCE", "TCS")
         period: Data period ("6mo", "1y", "2y", "5y")
         retries: Number of retry attempts
+        fyers_config: Optional FYERS API config
 
     Returns:
         DataFrame with columns [open, high, low, close, volume] or None
     """
-    nse_ticker = f"{ticker}.NS"
+    provider = _get_provider(fyers_config)
 
     for attempt in range(retries):
         try:
-            stock = yf.Ticker(nse_ticker)
-            df = stock.history(period=period, auto_adjust=True)
-
-            if df is None or df.empty or len(df) < 50:
-                return None
-
-            # Standardize columns
-            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-            df.columns = ["open", "high", "low", "close", "volume"]
-            df = df.dropna()
-
-            # Attach fundamentals
-            fund = fetch_fundamentals(ticker)
-            if fund is not None:
-                df._fundamentals = fund
-
-            return df
-
+            df = provider.fetch_stock(ticker, period)
+            if df is not None and not df.empty and len(df) >= 50:
+                # Attach fundamentals
+                fund = provider.fetch_fundamentals(ticker)
+                if fund is not None:
+                    df._fundamentals = fund
+                return df
         except Exception as e:
             if attempt < retries - 1:
                 time.sleep(1)
             else:
                 print(f"  ✗ Failed to fetch {ticker}: {e}")
-                return None
 
     return None
 
 
-def fetch_fundamentals(ticker: str) -> Optional[dict]:
-    """
-    Fetch fundamental data for a stock using yfinance .info.
-    Returns dict with pe_ratio, eps_growth, rev_growth, roe.
-    """
-    nse_ticker = f"{ticker}.NS"
-    try:
-        stock = yf.Ticker(nse_ticker)
-        info = stock.info
-
-        if not info:
-            return None
-
-        # Check if we got valid data
-        pe_ratio = info.get("trailingPE")
-
-        # EPS Growth
-        eps_growth = info.get("earningsGrowth")
-        if eps_growth is not None:
-            eps_growth = eps_growth * 100 if abs(eps_growth) < 100 else eps_growth
-        else:
-            earnings_q = info.get("earningsQuarterlyGrowth")
-            if earnings_q is not None:
-                eps_growth = earnings_q * 100 if abs(earnings_q) < 100 else earnings_q
-
-        # Revenue Growth
-        rev_growth = info.get("revenueGrowth")
-        if rev_growth is not None:
-            rev_growth = rev_growth * 100 if abs(rev_growth) < 100 else rev_growth
-
-        # ROE
-        roe = info.get("returnOnEquity")
-        if roe is not None:
-            roe = roe * 100 if abs(roe) < 100 else roe
-
-        return {
-            "pe_ratio": pe_ratio,
-            "eps_growth": eps_growth,
-            "rev_growth": rev_growth,
-            "roe": roe,
-        }
-
-    except Exception:
-        return None
-
-
-def fetch_index_data(ticker: str = "^NSEI", period: str = "1y") -> Optional[pd.DataFrame]:
+def fetch_index_data(ticker: str = "^NSEI", period: str = "1y",
+                     fyers_config: dict = None) -> Optional[pd.DataFrame]:
     """
     Fetch NIFTY 50 index data for relative strength comparison.
 
+    Uses multi-source provider with automatic fallback.
+
     Args:
-        ticker: Index ticker ("^NSEI" for NIFTY 50, "^NSEBANK" for Bank Nifty)
+        ticker: Index ticker ("^NSEI" for NIFTY 50)
         period: Data period
+        fyers_config: Optional FYERS API config
 
     Returns:
         DataFrame with OHLCV data or None
     """
-    try:
-        index = yf.Ticker(ticker)
-        df = index.history(period=period, auto_adjust=True)
+    provider = _get_provider(fyers_config)
+    return provider.fetch_index(ticker, period)
 
-        if df is None or df.empty:
-            return None
 
-        df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-        df.columns = ["open", "high", "low", "close", "volume"]
-        return df.dropna()
+def fetch_fundamentals(ticker: str, fyers_config: dict = None) -> Optional[dict]:
+    """
+    Fetch fundamental data for a stock.
 
-    except Exception as e:
-        print(f"  ✗ Failed to fetch index {ticker}: {e}")
-        return None
+    Uses multi-source provider:
+      FYERS -> yfinance -> nselib
+
+    Returns dict with pe_ratio, eps_growth, rev_growth, roe.
+    """
+    provider = _get_provider(fyers_config)
+    return provider.fetch_fundamentals(ticker)
 
 
 def fetch_batch(tickers: list, period: str = "1y", delay: float = 0.1,
-                 fetch_fund: bool = True) -> dict:
+                fetch_fund: bool = True, fyers_config: dict = None) -> dict:
     """
     Fetch data for multiple tickers with rate limiting.
 
@@ -136,26 +108,31 @@ def fetch_batch(tickers: list, period: str = "1y", delay: float = 0.1,
         period: Data period
         delay: Delay between requests (seconds)
         fetch_fund: Whether to fetch fundamentals data
+        fyers_config: Optional FYERS API config
 
     Returns:
         Dict mapping ticker -> DataFrame (with _fundamentals attr if fetch_fund=True)
     """
+    provider = _get_provider(fyers_config)
     results = {}
     total = len(tickers)
 
     for i, ticker in enumerate(tickers, 1):
         print(f"  [{i}/{total}] Fetching {ticker}...", end="", flush=True)
-        df = fetch_stock_data(ticker, period=period)
-        if df is not None:
-            # Attach fundamentals if requested and not already present
-            if fetch_fund and (not hasattr(df, '_fundamentals') or df._fundamentals is None):
-                fund = fetch_fundamentals(ticker)
-                if fund is not None:
-                    df._fundamentals = fund
-            results[ticker] = df
-            print(f" ✓ ({len(df)} bars)")
-        else:
-            print(f" ✗ (no data)")
+        try:
+            df = provider.fetch_stock(ticker, period)
+            if df is not None and not df.empty:
+                if fetch_fund:
+                    fund = provider.fetch_fundamentals(ticker)
+                    if fund is not None:
+                        df._fundamentals = fund
+                results[ticker] = df
+                src = provider.last_provider or "?"
+                print(f" ✓ ({len(df)} bars, src:{src})")
+            else:
+                print(f" ✗ (no data)")
+        except Exception as e:
+            print(f" ✗ ({e})")
 
         if i < total:
             time.sleep(delay)

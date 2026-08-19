@@ -19,3 +19,5 @@ Thumbs.db
 
 # Stale files
 scanner/'
+scanner/.cache/
+scanner/fyers_token.json

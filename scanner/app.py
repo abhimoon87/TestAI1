@@ -25,8 +25,10 @@ from tkinter import messagebox
 
 from universes import UNIVERSES
 from data_fetcher import fetch_stock_data, fetch_index_data
+from data_providers import DataProvider
 from scoring import compute_scores
 from report import generate_html_report, save_report
+from fyers_auth import FyersAuth
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
@@ -55,6 +57,11 @@ DEFAULT_SETTINGS = {
     "sc_bands_mult": 0.6,
     "min_score": 50.0,
     "data_period": "1y",
+    # FYERS API (optional, leave empty to use free providers)
+    "fyers_client_id": "",
+    "fyers_secret_key": "",
+    "fyers_redirect_uri": "",
+    "fyers_access_token": "",
 }
 
 
@@ -98,6 +105,7 @@ class ScannerApp(ctk.CTk):
 
         self._build_ui()
         self._load_settings_to_ui()
+        self._load_fyers_token()
 
     # ── UI Construction ──────────────────────────────────────────────────────
 
@@ -215,6 +223,15 @@ class ScannerApp(ctk.CTk):
             command=self._start_scan)
         self.run_btn.pack(padx=20, pady=(0, 8), fill="x")
 
+        # ── Clear Cache Button ───────────────────────────────────────────────
+        self.cache_btn = ctk.CTkButton(
+            sidebar, text="Clear Cache",
+            font=ctk.CTkFont(size=11),
+            fg_color="#1a4a2a", hover_color="#2a6a3a",
+            text_color="#6a8a6a", height=24,
+            command=self._clear_cache)
+        self.cache_btn.pack(padx=20, pady=(0, 4))
+
         # ── Progress Bar ─────────────────────────────────────────────────────
         self.progress = ctk.CTkProgressBar(sidebar, width=280, height=8,
                                             fg_color="#153520", progress_color="#00ff88")
@@ -258,6 +275,12 @@ class ScannerApp(ctk.CTk):
             ("Volume", [
                 ("Volume MA Length", "vol_ma_len", "int", (5, 100)),
             ]),
+            ("Data Source (FYERS - Optional)", [
+                ("Client ID", "fyers_client_id", "text", None),
+                ("Secret Key", "fyers_secret_key", "text", None),
+                ("Redirect URI", "fyers_redirect_uri", "text", None),
+                ("Access Token", "fyers_access_token", "text", None),
+            ]),
         ]
 
         for section_title, fields in sections:
@@ -297,8 +320,44 @@ class ScannerApp(ctk.CTk):
                         fg_color="#153520", border_color="#1a4a2a",
                         font=ctk.CTkFont(size=11))
                     widget.pack(side="right")
+                elif field_type == "text":
+                    var = ctk.StringVar(value=str(self.settings.get(key, "")))
+                    widget = ctk.CTkEntry(
+                        row, textvariable=var, width=140, height=24,
+                        fg_color="#153520", border_color="#1a4a2a",
+                        font=ctk.CTkFont(size=10),
+                        show="*" if "secret" in key or "token" in key else "")
+                    widget.pack(side="right")
 
                 self.setting_widgets[key] = (var, field_type, constraints)
+
+        # FYERS Login Button
+        ctk.CTkLabel(parent, text="FYERS LOGIN", font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color="#6a8a6a").pack(padx=8, pady=(8, 2), anchor="w")
+
+        self.fyers_status_label = ctk.CTkLabel(
+            parent, text="Not connected",
+            font=ctk.CTkFont(size=10), text_color="#ff6644")
+        self.fyers_status_label.pack(padx=8, anchor="w")
+
+        login_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        login_frame.pack(fill="x", padx=8, pady=(4, 8))
+
+        self.fyers_login_btn = ctk.CTkButton(
+            login_frame, text="Login to FYERS",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#0066cc", hover_color="#0088ee",
+            text_color="white", height=28, width=120,
+            command=self._fyers_login)
+        self.fyers_login_btn.pack(side="left")
+
+        self.fyers_logout_btn = ctk.CTkButton(
+            login_frame, text="Logout",
+            font=ctk.CTkFont(size=10),
+            fg_color="#4a2020", hover_color="#6a3030",
+            text_color="#ff8888", height=28, width=60,
+            command=self._fyers_logout)
+        self.fyers_logout_btn.pack(side="left", padx=(4, 0))
 
     def _build_main_area(self):
         """Right main area: results table and log."""
@@ -444,9 +503,22 @@ class ScannerApp(ctk.CTk):
                        f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
                        f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
 
+            # Build FYERS config from settings
+            fyers_config = {}
+            if settings.get("fyers_client_id") and settings.get("fyers_access_token"):
+                fyers_config = {
+                    "client_id": settings.get("fyers_client_id", ""),
+                    "secret_key": settings.get("fyers_secret_key", ""),
+                    "redirect_uri": settings.get("fyers_redirect_uri", ""),
+                    "access_token": settings.get("fyers_access_token", ""),
+                }
+                self._log("FYERS API configured - using direct exchange data")
+            else:
+                self._log("Using free providers: jugaad-data / yfinance / nselib")
+
             # Fetch NIFTY index
             self._set_progress(0, "Fetching NIFTY 50 index...")
-            index_df = fetch_index_data("^NSEI", period=period)
+            index_df = fetch_index_data("^NSEI", period=period, fyers_config=fyers_config or None)
             if index_df is not None:
                 self._log(f"NIFTY 50 index loaded ({len(index_df)} bars)")
             else:
@@ -461,14 +533,8 @@ class ScannerApp(ctk.CTk):
                 self._set_progress(progress, f"[{i}/{total}] {ticker}")
 
                 try:
-                    df = fetch_stock_data(ticker, period=period)
+                    df = fetch_stock_data(ticker, period=period, fyers_config=fyers_config or None)
                     if df is not None and not df.empty:
-                        # Fetch fundamentals for this stock
-                        from data_fetcher import fetch_fundamentals
-                        fund = fetch_fundamentals(ticker)
-                        if fund is not None:
-                            df._fundamentals = fund
-
                         scores = compute_scores(
                             df, index_df=index_df,
                             fast_ma_type=settings["fast_ma_type"],
@@ -702,7 +768,120 @@ class ScannerApp(ctk.CTk):
         self._log(f"CSV saved: {filename}")
         os.startfile(filepath) if sys.platform == "win32" else os.system(f"open '{filepath}'")
 
+    # ── FYERS Auth ─────────────────────────────────────────────────────────
+
+    def _load_fyers_token(self):
+        """Load saved FYERS token and update status label."""
+        token_data = FyersAuth.load_token()
+        if token_data and token_data.get("access_token"):
+            # Populate settings from saved token
+            self.settings["fyers_client_id"] = token_data.get("client_id", "")
+            self.settings["fyers_secret_key"] = token_data.get("secret_key", "")
+            self.settings["fyers_redirect_uri"] = token_data.get("redirect_uri", "http://127.0.0.1:8080")
+            self.settings["fyers_access_token"] = token_data.get("access_token", "")
+            # Update UI widgets
+            for key in ["fyers_client_id", "fyers_secret_key", "fyers_redirect_uri", "fyers_access_token"]:
+                if key in self.setting_widgets:
+                    var, _, _ = self.setting_widgets[key]
+                    var.set(self.settings.get(key, ""))
+            saved_at = token_data.get("saved_at", "unknown")
+            self.fyers_status_label.configure(
+                text=f"Connected (saved {saved_at})",
+                text_color="#00ff88")
+            self._log(f"FYERS token loaded (saved {saved_at})")
+        else:
+            self.fyers_status_label.configure(text="Not connected", text_color="#ff6644")
+
+    def _fyers_login(self):
+        """Start FYERS OAuth login flow."""
+        # Collect settings from UI
+        self.settings = self._collect_settings()
+
+        client_id = self.settings.get("fyers_client_id", "")
+        secret_key = self.settings.get("fyers_secret_key", "")
+        redirect_uri = self.settings.get("fyers_redirect_uri", "http://127.0.0.1:8080") or "http://127.0.0.1:8080"
+
+        if not client_id or not secret_key:
+            self._log("Error: Enter FYERS Client ID and Secret Key first")
+            return
+
+        self._log("Starting FYERS login flow...")
+        self.fyers_status_label.configure(text="Logging in...", text_color="#ffaa00")
+        self.fyers_login_btn.configure(state="disabled")
+
+        def _do_login():
+            try:
+                auth = FyersAuth(client_id, secret_key, redirect_uri)
+                auth_url = auth.start_login(open_browser=True)
+                self._log(f"Browser opened. Waiting for login...")
+                self.after(0, lambda: self._log(f"Auth URL: {auth_url[:70]}..."))
+
+                auth_code = auth.wait_for_code(timeout=120)
+                if not auth_code:
+                    self.after(0, lambda: self._log("Login timed out"))
+                    self.after(0, lambda: self.fyers_status_label.configure(text="Timed out", text_color="#ff6644"))
+                    self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
+                    auth.cleanup()
+                    return
+
+                self.after(0, lambda: self._log("Auth code received. Exchanging for token..."))
+                access_token = auth.get_access_token(auth_code)
+
+                if not access_token:
+                    self.after(0, lambda: self._log("Token exchange failed"))
+                    self.after(0, lambda: self.fyers_status_label.configure(text="Token failed", text_color="#ff6644"))
+                    self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
+                    auth.cleanup()
+                    return
+
+                auth.save_token(access_token)
+                auth.cleanup()
+
+                # Update settings
+                self.settings["fyers_access_token"] = access_token
+                if "fyers_access_token" in self.setting_widgets:
+                    var, _, _ = self.setting_widgets["fyers_access_token"]
+                    var.set(access_token)
+
+                self.after(0, lambda: self._log(f"FYERS login successful!"))
+                self.after(0, lambda: self.fyers_status_label.configure(
+                    text="Connected", text_color="#00ff88"))
+                self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
+                save_settings(self.settings)
+
+            except Exception as e:
+                self.after(0, lambda: self._log(f"FYERS login error: {e}"))
+                self.after(0, lambda: self.fyers_status_label.configure(text="Error", text_color="#ff6644"))
+                self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
+
+        threading.Thread(target=_do_login, daemon=True).start()
+
+    def _fyers_logout(self):
+        """Clear saved FYERS token."""
+        FyersAuth.clear_token()
+        self.settings["fyers_client_id"] = ""
+        self.settings["fyers_secret_key"] = ""
+        self.settings["fyers_redirect_uri"] = ""
+        self.settings["fyers_access_token"] = ""
+        for key in ["fyers_client_id", "fyers_secret_key", "fyers_redirect_uri", "fyers_access_token"]:
+            if key in self.setting_widgets:
+                var, _, _ = self.setting_widgets[key]
+                var.set("")
+        self.fyers_status_label.configure(text="Not connected", text_color="#ff6644")
+        self._log("FYERS logged out")
+        save_settings(self.settings)
+
     # ── Utilities ────────────────────────────────────────────────────────────
+
+    def _clear_cache(self):
+        """Clear the disk cache for all data providers."""
+        try:
+            from data_providers import DataProvider
+            provider = DataProvider()
+            provider.clear_cache()
+            self._log("Cache cleared successfully")
+        except Exception as e:
+            self._log(f"Failed to clear cache: {e}")
 
     def _copy_selection(self):
         """Copy selected text from log to clipboard."""
