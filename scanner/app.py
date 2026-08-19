@@ -102,8 +102,8 @@ class ScannerApp(ctk.CTk):
         super().__init__()
 
         self.title("HMAxEMA Stock Scanner — Indian Market")
-        self.geometry("1200x820")
-        self.minsize(1000, 700)
+        self.geometry("1400x900")
+        self.minsize(1200, 800)
 
         self.settings = load_settings()
         self.results = []
@@ -288,7 +288,7 @@ class ScannerApp(ctk.CTk):
                 ("Fast MA Length", "fast_ma_len", "int", (5, 100)),
                 ("Slow MA Type", "slow_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
                 ("Slow MA Length", "slow_ma_len", "int", (10, 200)),
-                ("Crossover Lookback", "crossover_lookback", "int", (1, 20)),
+                ("Crossover Lookback", "crossover_lookback", "int", (1, 100)),
             ]),
             ("Technical Analysis", [
                 ("RSI Length", "rsi_len", "int", (5, 50)),
@@ -371,7 +371,9 @@ class ScannerApp(ctk.CTk):
         """Right main area: results table and log."""
         main = ctk.CTkFrame(self, fg_color="#0a1a10", corner_radius=0)
         main.grid(row=0, column=1, sticky="nsew")
-        main.grid_rowconfigure(1, weight=1)
+        main.grid_rowconfigure(0, weight=0)  # Header - fixed
+        main.grid_rowconfigure(1, weight=1)  # Table - expands
+        main.grid_rowconfigure(2, weight=0)  # Log - fixed at bottom
         main.grid_columnconfigure(0, weight=1)
 
         # ── Header bar ───────────────────────────────────────────────────────
@@ -417,15 +419,25 @@ class ScannerApp(ctk.CTk):
         self.table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         self.table_frame.grid_columnconfigure(0, weight=1)
 
-        # ── Log area ─────────────────────────────────────────────────────────
+        # ── Log area (fixed at bottom) ──────────────────────────────────────
+        log_frame = ctk.CTkFrame(main, fg_color="#061208", height=100)
+        log_frame.grid(row=2, column=0, sticky="sew", padx=5, pady=(0, 5))
+        log_frame.grid_propagate(False)
+        log_frame.grid_columnconfigure(0, weight=1)
+        log_frame.grid_rowconfigure(0, weight=1)
+        
+        log_label = ctk.CTkLabel(log_frame, text="LOG", font=ctk.CTkFont(size=9, weight="bold"),
+                                 text_color="#4a7a4a", anchor="w")
+        log_label.grid(row=0, column=0, sticky="w", padx=5, pady=(2, 0))
+        
         self.log_text = ctk.CTkTextbox(
-            main, height=120, fg_color="#061208",
+            log_frame, fg_color="#061208",
             text_color="#4a7a4a",
-            font=ctk.CTkFont(family="Consolas", size=11),
+            font=ctk.CTkFont(family="Consolas", size=10),
             state="normal")
         self.log_text.bind("<Control-a>", lambda e: self.log_text.tag_add("sel", "1.0", "end"))
         self.log_text.bind("<Control-c>", lambda e: self._copy_selection())
-        self.log_text.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+        self.log_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
 
     # ── Settings Management ──────────────────────────────────────────────────
 
