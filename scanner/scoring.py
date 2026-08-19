@@ -57,7 +57,7 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     return resampled if not resampled.empty else None
 
 
-def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
+def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFrame = None,
                    fast_ma_type: str = "HMA", fast_ma_len: int = 40,
                    slow_ma_type: str = "EMA", slow_ma_len: int = 50,
                     rsi_len: int = 14, vol_ma_len: int = 20,
@@ -71,6 +71,12 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
                     vp_width: int = 40, crossover_lookback: int = 4) -> dict:
     """
     Compute the 10-category score for a stock.
+
+    Args:
+        df: OHLCV DataFrame with columns [open, high, low, close, volume]
+        timeframe: Analysis timeframe ('D' daily, 'W' weekly, 'M' monthly).
+                   Drives the higher-timeframe HMA/EMA check, which is always
+                   evaluated on weekly bars regardless of the analysis timeframe.
 
     Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
     Max total = 105 pts (capped at 100), with Trend weighted at 20 pts.
@@ -86,21 +92,11 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     Returns:
         Dictionary with all scores and metadata
     """
-    # Adaptive minimum based on data frequency
+    # Minimum required bars scales with the analysis timeframe.
+    # Daily ~1y (220 bars), Weekly ~2y (110 bars), Monthly ~5y (60 bars).
     n = len(df)
-    if n >= 100:  # Daily data
-        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 10
-    elif n >= 40:  # Weekly data
-        min_required = None
-    else:  # Monthly data
-        min_required = None
-    if n >= 100:
-        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 10
-    elif n >= 40:
-        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 5
-    else:
-        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 3
-    if n < min(min_required, 25):  # At least 25 bars
+    min_required = {"D": 220, "W": 110, "M": 60}.get(timeframe, 220)
+    if n < min_required:  # At least the slowest MA length + context
         return None  # Not enough data
 
     close = df["close"]
@@ -129,7 +125,7 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     weekly_hma_cross = False
     weekly_hma_cross_bars_ago = -1
     weekly_df = to_weekly(df)
-    if weekly_df is not None and len(weekly_df) >= 60:
+    if weekly_df is not None and len(weekly_df) >= 2:
         w_close = weekly_df["close"]
         w_hma = hull_ma(w_close, 44)
         w_ema = ema(w_close, 50)
@@ -205,6 +201,7 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
 
     # ── Volume Profile POC ────────────────────────────────────────────────
     vp_bars = max(int(vp_lookback), 10)
+    vp_bars = min(vp_bars, len(df))  # never exceed available bars
     vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
     curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
 

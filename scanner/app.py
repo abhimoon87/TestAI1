@@ -655,7 +655,7 @@ class ScannerApp(ctk.CTk):
             # FAST: Batch download all stocks at once via yfinance
             self._set_progress(0.05, f"Batch downloading {len(tickers)} stocks...")
             self._log(f"Batch downloading {len(tickers)} stocks via yfinance...")
-            batch_data = fetch_batch_yfinance(tickers, period=period)
+            batch_data = fetch_batch_yfinance(tickers, period=period, timeframe=timeframe)
             self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
 
             # Score stocks from batch data
@@ -670,7 +670,7 @@ class ScannerApp(ctk.CTk):
                 try:
                     if df is not None and not df.empty:
                         scores = compute_scores(
-                            df, index_df=index_df,
+                            df, timeframe=timeframe, index_df=index_df,
                             fast_ma_type=settings["fast_ma_type"],
                             fast_ma_len=settings["fast_ma_len"],
                             slow_ma_type=settings["slow_ma_type"],

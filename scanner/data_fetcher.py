@@ -154,7 +154,7 @@ def fetch_fundamentals(ticker: str) -> Optional[dict]:
     return provider.fetch_fundamentals(ticker)
 
 
-def fetch_batch_yfinance(tickers: list, period: str = "1y") -> dict:
+def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D") -> dict:
     """
     Fast batch fetch using yfinance download (single API call).
     This is MUCH faster than individual fetches.
@@ -202,7 +202,12 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y") -> dict:
                 df.columns = ["open", "high", "low", "close", "volume"]
                 df = df.dropna()
 
-                if len(df) >= 50:
+                # Resample to the requested analysis timeframe
+                # ('D' = daily, no change; 'W' weekly; 'M' monthly)
+                if timeframe != "D":
+                    df = resample_ohlcv(df, timeframe)
+
+                if df is not None and len(df) >= 50:
                     results[orig_ticker] = df
             except Exception:
                 continue
