@@ -368,13 +368,14 @@ class ScannerApp(ctk.CTk):
                 self.setting_widgets[key] = (var, field_type, constraints)
 
     def _build_main_area(self):
-        """Right main area: results table and log."""
+        """Right main area: results table, summary stats, and log."""
         main = ctk.CTkFrame(self, fg_color="#0a1a10", corner_radius=0)
         main.grid(row=0, column=1, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
         main.grid_rowconfigure(0, weight=0)  # Header - fixed height
-        main.grid_rowconfigure(1, weight=1)  # Table - takes ALL extra space
-        main.grid_rowconfigure(2, weight=0)  # Log - fixed height at bottom
+        main.grid_rowconfigure(1, weight=0)  # Summary stats - fixed height
+        main.grid_rowconfigure(2, weight=1)  # Table - takes ALL extra space
+        main.grid_rowconfigure(3, weight=0)  # Log - fixed height at bottom
 
         # ── Header bar ───────────────────────────────────────────────────────
         header = ctk.CTkFrame(main, fg_color="#0f2a1a", height=44)
@@ -413,10 +414,29 @@ class ScannerApp(ctk.CTk):
             command=self._clear_results, state="disabled")
         self.clear_btn.pack(side="right", padx=(0, 5))
 
+        # ── Summary Stats Panel ─────────────────────────────────────────────
+        self.summary_frame = ctk.CTkFrame(main, fg_color="#0f2a1a", corner_radius=0)
+        self.summary_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(5, 0))
+        self.summary_frame.grid_columnconfigure(0, weight=1)
+
+        # Placeholder - will be populated by _update_summary
+        self.summary_inner = ctk.CTkFrame(self.summary_frame, fg_color="transparent")
+        self.summary_inner.pack(fill="x", padx=10, pady=8)
+
+        self.summary_widgets = {}
+        self._build_summary_panel(self.summary_inner)
+
+        # ── Results Table (ScrolledFrame - takes remaining space) ────────────
+        self.table_frame = ctk.CTkScrollableFrame(
+            main, fg_color="#0a1a10")
+        self.table_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        self.table_frame.grid_columnconfigure(0, weight=1)
+        self.table_frame.grid_rowconfigure(0, weight=1)
+
         # ── Log area (FIXED at bottom, NEVER expands) ──────────────────────
         log_frame = ctk.CTkFrame(main, fg_color="#061208", height=150)
-        log_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
-        log_frame.grid_propagate(False)  # CRITICAL: Don't let it expand
+        log_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=5)
+        log_frame.grid_propagate(False)
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(1, weight=1)
         
@@ -437,12 +457,54 @@ class ScannerApp(ctk.CTk):
         self.log_text.bind("<Control-c>", lambda e: self._copy_selection())
         self.log_text.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
 
-        # ── Results Table (ScrolledFrame - takes ALL remaining space) ───────
-        self.table_frame = ctk.CTkScrollableFrame(
-            main, fg_color="#0a1a10")
-        self.table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-        self.table_frame.grid_columnconfigure(0, weight=1)
-        self.table_frame.grid_rowconfigure(0, weight=1)
+    # ── Summary Stats Panel ──────────────────────────────────────────────────
+
+    def _build_summary_panel(self, parent):
+        """Build the summary statistics cards (values updated after a scan)."""
+        stats = [
+            ("TOTAL", "total", "#00ddcc"),
+            ("PASSED", "passed", "#00ff88"),
+            ("AVG", "avg", "#aaff00"),
+            ("HIGH", "high", "#00ff88"),
+            ("BULL", "bull", "#00ff88"),
+            ("BEAR", "bear", "#ff4444"),
+        ]
+        self.summary_cards = {}
+        for label, key, color in stats:
+            card = ctk.CTkFrame(parent, fg_color="#0a1a10", corner_radius=6)
+            card.pack(side="left", fill="both", expand=True, padx=4)
+            val_label = ctk.CTkLabel(card, text="—",
+                                    font=ctk.CTkFont(size=20, weight="bold"),
+                                    text_color=color)
+            val_label.pack(pady=(6, 0))
+            ctk.CTkLabel(card, text=label,
+                         font=ctk.CTkFont(size=9),
+                         text_color="#6a8a6a").pack(pady=(0, 6))
+            self.summary_cards[key] = val_label
+
+    def _update_summary(self, results):
+        """Update the summary stat cards from scan results."""
+        if not results:
+            return
+        threshold = self.settings.get("min_score", 50)
+        total = len(results)
+        passed = len([r for r in results if r["total"] >= threshold])
+        avg = sum(r["total"] for r in results) / total if total else 0
+        high = max(r["total"] for r in results) if results else 0
+        bull = len([r for r in results if r.get("trend_dir") == "Bull"])
+        bear = len([r for r in results if r.get("trend_dir") == "Bear"])
+        self.summary_cards["total"].configure(text=str(total))
+        self.summary_cards["passed"].configure(text=str(passed))
+        self.summary_cards["avg"].configure(text=f"{avg:.1f}")
+        self.summary_cards["high"].configure(text=f"{high:.0f}")
+        self.summary_cards["bull"].configure(text=str(bull))
+        self.summary_cards["bear"].configure(text=str(bear))
+
+    def _reset_summary(self):
+        """Reset the summary cards to their empty state."""
+        for key in ("total", "passed", "avg", "high", "bull", "bear"):
+            if hasattr(self, "summary_cards") and key in self.summary_cards:
+                self.summary_cards[key].configure(text="—")
 
     # ── Settings Management ──────────────────────────────────────────────────
 
@@ -824,6 +886,9 @@ class ScannerApp(ctk.CTk):
         self.result_count_label.configure(
             text=f"{len(results)} stocks scanned  |  {len([r for r in results if r['total'] >= threshold])} above {threshold}+")
 
+        # Update summary stat cards
+        self.after(0, lambda: self._update_summary(results))
+
     def _scan_complete(self):
         """Re-enable UI after scan finishes."""
         self.scanning = False
@@ -906,6 +971,9 @@ class ScannerApp(ctk.CTk):
         
         # Update labels
         self.result_count_label.configure(text="0 stocks scanned")
+        
+        # Reset summary cards
+        self._reset_summary()
         
         # Reset progress
         self.progress.set(0)
