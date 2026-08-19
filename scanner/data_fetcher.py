@@ -35,7 +35,17 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     # Ensure index is DatetimeIndex
     if not isinstance(df.index, pd.DatetimeIndex):
         df = df.copy()
-        df.index = pd.to_datetime(df.index)
+        try:
+            df.index = pd.to_datetime(df.index)
+        except Exception:
+            # If index can't be converted, try to find a date column
+            for col in ["date", "Date", "DATE"]:
+                if col in df.columns:
+                    df.index = pd.to_datetime(df[col])
+                    df = df.drop(columns=[col])
+                    break
+            else:
+                return df  # Can't resample without datetime index
 
     # Remove timezone info if present to avoid issues
     if df.index.tz is not None:

@@ -107,6 +107,12 @@ def _fetch_jugaad(ticker: str, period: str) -> Optional[pd.DataFrame]:
             "DATE": "date"
         })
 
+        # Set DATE as index (needed for resampling)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"])
+            df = df.set_index("date")
+            df.index.name = None
+
         # Keep required columns
         cols = ["open", "high", "low", "close", "volume"]
         for c in cols:

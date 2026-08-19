@@ -63,7 +63,15 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     Returns:
         Dictionary with all scores and metadata
     """
-    if len(df) < max(slow_ma_len, slope_ma_len, 63, atr_len) + 10:
+    # Adaptive minimum based on data frequency
+    n = len(df)
+    if n >= 100:  # Daily data
+        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 10
+    elif n >= 40:  # Weekly data
+        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 5
+    else:  # Monthly data
+        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 3
+    if n < min(min_required, 25):  # At least 25 bars
         return None  # Not enough data
 
     close = df["close"]
@@ -86,9 +94,19 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     atr_val = atr(high, low, close, atr_len)
     adx_val = adx(high, low, close, adx_len)
 
-    # Price changes
-    pc1m = price_change(close, 21)   # ~1 month (21 trading days)
-    pc3m = price_change(close, 63)   # ~3 months (63 trading days)
+    # Price changes (adaptive to data frequency)
+    # For daily: 21 bars ~1 month, 63 bars ~3 months
+    # For weekly: 4 bars ~1 month, 13 bars ~3 months  
+    # For monthly: 1 bar ~1 month, 3 bars ~3 months
+    n = len(close)
+    if n >= 100:  # Daily data (~250 bars/year)
+        pc1m_period, pc3m_period = 21, 63
+    elif n >= 40:  # Weekly data (~52 bars/year)
+        pc1m_period, pc3m_period = 4, 13
+    else:  # Monthly data (~12 bars/year)
+        pc1m_period, pc3m_period = 1, 3
+    pc1m = price_change(close, pc1m_period)
+    pc3m = price_change(close, pc3m_period)
 
     # ── Sideways Filter (matches Pine Script exactly) ────────────────────────
     # ADX Trend Strength
