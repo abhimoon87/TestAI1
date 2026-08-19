@@ -96,6 +96,14 @@ def save_settings(settings: dict):
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+RESULT_COLS = [
+    ("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90), ("ENTRY", 60),
+    ("Price", 80), ("MA", 70), ("POC", 50), ("Trend/15", 70), ("Mom/15", 70),
+    ("RSI/8", 55), ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
+    ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Sideways", 55),
+]
+
+
 class ScannerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -426,12 +434,28 @@ class ScannerApp(ctk.CTk):
         self.summary_widgets = {}
         self._build_summary_panel(self.summary_inner)
 
-        # ── Results Table (ScrolledFrame - takes remaining space) ────────────
-        self.table_frame = ctk.CTkScrollableFrame(
-            main, fg_color="#0a1a10")
-        self.table_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
-        self.table_frame.grid_columnconfigure(0, weight=1)
-        self.table_frame.grid_rowconfigure(0, weight=1)
+        # ── Results Table: sticky header + scrollable body ──────────────────
+        results_container = ctk.CTkFrame(main, fg_color="transparent", corner_radius=0)
+        results_container.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        results_container.grid_columnconfigure(0, weight=1)
+        results_container.grid_rowconfigure(0, weight=0)  # header (fixed)
+        results_container.grid_rowconfigure(1, weight=1)  # body (scrolls)
+
+        # Sticky header — stays visible while the list scrolls
+        self.results_header = ctk.CTkFrame(results_container, fg_color="#153520",
+                                            height=32, corner_radius=0)
+        self.results_header.grid(row=0, column=0, sticky="ew", padx=2, pady=(2, 0))
+        self.results_header.grid_propagate(False)
+        for i, (text, w) in enumerate(RESULT_COLS):
+            self.results_header.grid_columnconfigure(i, weight=w)
+            ctk.CTkLabel(self.results_header, text=text,
+                         font=ctk.CTkFont(size=10, weight="bold"),
+                         text_color="#00ddcc").grid(row=0, column=i, sticky="ew", padx=1)
+
+        # Scrolling stock list (takes the remaining height)
+        self.table_frame = ctk.CTkScrollableFrame(results_container, fg_color="#0a1a10",
+                                                   corner_radius=0)
+        self.table_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
 
         # ── Log area (FIXED at bottom, NEVER expands) ──────────────────────
         log_frame = ctk.CTkFrame(main, fg_color="#061208", height=150)
@@ -735,25 +759,8 @@ class ScannerApp(ctk.CTk):
 
         threshold = self.settings.get("min_score", 50)
 
-        # Column definitions: (header_text, weight) — weights make columns
-        # proportionally fill the full available width (utilizes free space).
-        COLS = [
-            ("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90), ("ENTRY", 60),
-            ("Price", 80), ("MA", 70), ("POC", 50), ("Trend/15", 70), ("Mom/15", 70),
-            ("RSI/8", 55), ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
-            ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Sideways", 55),
-        ]
+        COLS = RESULT_COLS
         ncols = len(COLS)
-
-        # Header row
-        header_row = ctk.CTkFrame(self.table_frame, fg_color="#153520", height=32)
-        header_row.pack(fill="x", padx=2, pady=(2, 0))
-        header_row.pack_propagate(False)
-        for i, (text, w) in enumerate(COLS):
-            header_row.grid_columnconfigure(i, weight=w)
-            ctk.CTkLabel(header_row, text=text,
-                          font=ctk.CTkFont(size=10, weight="bold"),
-                          text_color="#00ddcc").grid(row=0, column=i, sticky="ew", padx=1)
 
         # Data rows
         for rank, r in enumerate(results, 1):
