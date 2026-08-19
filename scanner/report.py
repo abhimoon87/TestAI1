@@ -52,8 +52,9 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         # MA signal
         ma_bullish = r.get('ma_bullish', False)
         ma_crossed = r.get('ma_crossed_above', False)
+        crossover_ago = r.get('crossover_bars_ago', -1)
         if ma_crossed:
-            ma_html = '<span class="ma-cross">^ CROSS</span>'
+            ma_html = f'<span class="ma-cross">^ CROSS ({crossover_ago} bars ago)</span>'
         elif ma_bullish:
             ma_html = '<span class="ma-bull">^ BULL</span>'
         else:

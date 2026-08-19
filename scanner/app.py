@@ -61,6 +61,8 @@ DEFAULT_SETTINGS = {
     # Step Channel
     "sc_pivot_len": 3,
     "sc_bands_mult": 0.6,
+    # MA Crossover
+    "crossover_lookback": 4,
     # Scanner
     "min_score": 50.0,
     "data_period": "1y",
@@ -286,6 +288,7 @@ class ScannerApp(ctk.CTk):
                 ("Fast MA Length", "fast_ma_len", "int", (5, 100)),
                 ("Slow MA Type", "slow_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
                 ("Slow MA Length", "slow_ma_len", "int", (10, 200)),
+                ("Crossover Lookback", "crossover_lookback", "int", (1, 20)),
             ]),
             ("Technical Analysis", [
                 ("RSI Length", "rsi_len", "int", (5, 50)),
@@ -578,6 +581,7 @@ class ScannerApp(ctk.CTk):
                             vp_lookback=settings["vp_lookback"],
                             vp_rows=settings["vp_rows"],
                             vp_width=settings["vp_width"],
+                            crossover_lookback=settings["crossover_lookback"],
                         )
                         if scores is not None:
                             scores["ticker"] = ticker
@@ -706,8 +710,9 @@ class ScannerApp(ctk.CTk):
             # MA Signal
             ma_bullish = r.get('ma_bullish', False)
             ma_crossed = r.get('ma_crossed_above', False)
+            crossover_ago = r.get('crossover_bars_ago', -1)
             if ma_crossed:
-                ma_text = "^ Cross"
+                ma_text = f"^ X{crossover_ago}"
                 ma_color = "#00ff88"
             elif ma_bullish:
                 ma_text = "^ Bull"
