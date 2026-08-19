@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated reports
+scanner/*_report_*.html
+scanner/nifty50_scan_report.html
+scanner/test_report.html
+scanner/test_report_columns.html
+scanner/test_report_columns.html
+
+# Settings (user-specific)
+scanner/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Stale files
+scanner/'

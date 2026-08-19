@@ -1,0 +1,743 @@
+"""
+HMAxEMA Stock Scanner — GUI Application
+Full-featured desktop app for scanning Indian stocks.
+
+Usage:
+    python scanner/app.py
+
+Or double-click run.bat (Windows) / run.sh (macOS/Linux)
+"""
+
+import json
+import os
+import sys
+import threading
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+
+# ── Ensure scanner dir is on path ───────────────────────────────────────────
+SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCANNER_DIR)
+
+import customtkinter as ctk
+from tkinter import messagebox
+
+from universes import UNIVERSES
+from data_fetcher import fetch_stock_data, fetch_index_data
+from scoring import compute_scores
+from report import generate_html_report, save_report
+
+# ── Theme ────────────────────────────────────────────────────────────────────
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("green")
+
+SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
+
+# ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
+DEFAULT_SETTINGS = {
+    "fast_ma_type": "HMA",
+    "fast_ma_len": 20,
+    "slow_ma_type": "EMA",
+    "slow_ma_len": 50,
+    "rsi_len": 14,
+    "vol_ma_len": 20,
+    "atr_len": 14,
+    "adx_len": 14,
+    "adx_threshold": 20.0,
+    "chop_len": 14,
+    "chop_threshold": 61.8,
+    "slope_ma_type": "EMA",
+    "slope_ma_len": 50,
+    "slope_lookback": 10,
+    "flat_threshold": 0.5,
+    "sc_pivot_len": 3,
+    "sc_bands_mult": 0.6,
+    "min_score": 50.0,
+    "data_period": "1y",
+}
+
+
+def load_settings() -> dict:
+    """Load settings from JSON file, falling back to defaults."""
+    settings = DEFAULT_SETTINGS.copy()
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                saved = json.load(f)
+            settings.update(saved)
+        except Exception:
+            pass
+    return settings
+
+
+def save_settings(settings: dict):
+    """Save settings to JSON file."""
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(settings, f, indent=2)
+    except Exception:
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN APPLICATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ScannerApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("HMAxEMA Stock Scanner — Indian Market")
+        self.geometry("1200x820")
+        self.minsize(1000, 700)
+
+        self.settings = load_settings()
+        self.results = []
+        self.scanning = False
+
+        self._build_ui()
+        self._load_settings_to_ui()
+
+    # ── UI Construction ──────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        # Configure grid
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        self._build_sidebar()
+        self._build_main_area()
+
+    def _build_sidebar(self):
+        """Left sidebar: universe, settings, run button."""
+        sidebar = ctk.CTkFrame(self, width=320, corner_radius=0, fg_color="#0d1f14")
+        sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
+        sidebar.grid_propagate(False)
+
+        # ── Logo / Title ─────────────────────────────────────────────────────
+        ctk.CTkLabel(sidebar, text="HMAxEMA Scanner",
+                      font=ctk.CTkFont(size=20, weight="bold"),
+                      text_color="#00ff88").pack(pady=(20, 2), padx=20, anchor="w")
+        ctk.CTkLabel(sidebar, text="Indian Market Stock Screener",
+                      font=ctk.CTkFont(size=12),
+                      text_color="#6a8a6a").pack(padx=20, anchor="w")
+
+        ctk.CTkFrame(sidebar, height=1, fg_color="#1a4a2a").pack(fill="x", padx=15, pady=12)
+
+        # ── Universe Selector ────────────────────────────────────────────────
+        ctk.CTkLabel(sidebar, text="STOCK UNIVERSE",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color="#00ddcc").pack(padx=20, anchor="w")
+
+        self.universe_var = ctk.StringVar(value="NIFTY 50")
+        universe_names = list(UNIVERSES.keys())
+        self.universe_menu = ctk.CTkOptionMenu(
+            sidebar, variable=self.universe_var,
+            values=universe_names,
+            command=self._on_universe_change,
+            width=280, height=32,
+            fg_color="#153520", button_color="#1a4a2a",
+            dropdown_fg_color="#0f2a1a"
+        )
+        self.universe_menu.pack(padx=20, pady=(4, 8))
+
+        self.universe_count_label = ctk.CTkLabel(
+            sidebar, text=f"{len(UNIVERSES['NIFTY 50'])} stocks",
+            font=ctk.CTkFont(size=11), text_color="#6a8a6a")
+        self.universe_count_label.pack(padx=20, anchor="w")
+
+        # ── Data Period ──────────────────────────────────────────────────────
+        ctk.CTkLabel(sidebar, text="DATA PERIOD",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color="#00ddcc").pack(padx=20, pady=(12, 0), anchor="w")
+
+        self.period_var = ctk.StringVar(value="1 Year")
+        period_menu = ctk.CTkOptionMenu(
+            sidebar, variable=self.period_var,
+            values=["6 Months", "1 Year", "2 Years"],
+            width=280, height=32,
+            fg_color="#153520", button_color="#1a4a2a",
+            dropdown_fg_color="#0f2a1a"
+        )
+        period_menu.pack(padx=20, pady=(4, 8))
+
+        # ── Score Threshold ──────────────────────────────────────────────────
+        ctk.CTkLabel(sidebar, text="MIN SCORE THRESHOLD",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color="#00ddcc").pack(padx=20, pady=(8, 0), anchor="w")
+
+        self.threshold_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
+        self.threshold_frame.pack(padx=20, pady=(4, 8), fill="x")
+
+        self.threshold_var = ctk.DoubleVar(value=50.0)
+        self.threshold_slider = ctk.CTkSlider(
+            self.threshold_frame, from_=0, to=100,
+            variable=self.threshold_var, number_of_steps=20,
+            command=self._on_threshold_change,
+            width=200, height=16,
+            button_color="#00ff88", progress_color="#00aa55"
+        )
+        self.threshold_slider.pack(side="left")
+        self.threshold_label = ctk.CTkLabel(
+            self.threshold_frame, text="50",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#aaff00", width=40)
+        self.threshold_label.pack(side="right")
+
+        # ── Settings Section (Collapsible) ───────────────────────────────────
+        ctk.CTkFrame(sidebar, height=1, fg_color="#1a4a2a").pack(fill="x", padx=15, pady=10)
+
+        self.settings_toggle = ctk.CTkButton(
+            sidebar, text="  SETTINGS  (Click to expand)",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#00ddcc", fg_color="transparent",
+            hover_color="#0f2a1a", anchor="w",
+            command=self._toggle_settings, height=28)
+        self.settings_toggle.pack(padx=20, fill="x")
+
+        self.settings_frame = ctk.CTkScrollableFrame(
+            sidebar, fg_color="transparent", height=0)
+        self.settings_frame.pack(padx=10, fill="x")
+
+        self._build_settings_panel(self.settings_frame)
+
+        # ── Spacer ───────────────────────────────────────────────────────────
+        ctk.CTkFrame(sidebar, fg_color="transparent").pack(fill="both", expand=True)
+
+        # ── Run Button ───────────────────────────────────────────────────────
+        self.run_btn = ctk.CTkButton(
+            sidebar, text="RUN SCAN",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            fg_color="#00aa55", hover_color="#00cc66",
+            text_color="#000000", height=48,
+            corner_radius=8,
+            command=self._start_scan)
+        self.run_btn.pack(padx=20, pady=(0, 8), fill="x")
+
+        # ── Progress Bar ─────────────────────────────────────────────────────
+        self.progress = ctk.CTkProgressBar(sidebar, width=280, height=8,
+                                            fg_color="#153520", progress_color="#00ff88")
+        self.progress.pack(padx=20, pady=(0, 4))
+        self.progress.set(0)
+
+        self.progress_label = ctk.CTkLabel(
+            sidebar, text="Ready",
+            font=ctk.CTkFont(size=11), text_color="#6a8a6a")
+        self.progress_label.pack(padx=20, pady=(0, 15))
+
+    def _build_settings_panel(self, parent):
+        """Build the settings form inside the scrollable frame."""
+        self.setting_widgets = {}
+
+        sections = [
+            ("Moving Averages", [
+                ("Fast MA Type", "fast_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
+                ("Fast MA Length", "fast_ma_len", "int", (5, 100)),
+                ("Slow MA Type", "slow_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
+                ("Slow MA Length", "slow_ma_len", "int", (10, 200)),
+            ]),
+            ("Oscillators", [
+                ("RSI Length", "rsi_len", "int", (5, 50)),
+                ("ATR Length", "atr_len", "int", (5, 50)),
+            ]),
+            ("Sideways Filter", [
+                ("ADX Length", "adx_len", "int", (5, 50)),
+                ("ADX Threshold", "adx_threshold", "float", (5.0, 50.0)),
+                ("Chop Length", "chop_len", "int", (5, 50)),
+                ("Chop Threshold", "chop_threshold", "float", (30.0, 90.0)),
+                ("Slope MA Type", "slope_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
+                ("Slope MA Length", "slope_ma_len", "int", (10, 200)),
+                ("Slope Lookback", "slope_lookback", "int", (3, 50)),
+                ("Flat Threshold %", "flat_threshold", "float", (0.1, 5.0)),
+            ]),
+            ("Step Channel", [
+                ("Pivot Length", "sc_pivot_len", "int", (1, 20)),
+                ("Bands Multiplier", "sc_bands_mult", "float", (0.1, 3.0)),
+            ]),
+            ("Volume", [
+                ("Volume MA Length", "vol_ma_len", "int", (5, 100)),
+            ]),
+        ]
+
+        for section_title, fields in sections:
+            ctk.CTkLabel(parent, text=section_title.upper(),
+                          font=ctk.CTkFont(size=10, weight="bold"),
+                          text_color="#6a8a6a").pack(padx=8, pady=(8, 2), anchor="w")
+
+            for label, key, field_type, constraints in fields:
+                row = ctk.CTkFrame(parent, fg_color="transparent", height=28)
+                row.pack(fill="x", padx=8, pady=1)
+                row.pack_propagate(False)
+
+                ctk.CTkLabel(row, text=label,
+                              font=ctk.CTkFont(size=11),
+                              text_color="#c8d8c0", width=120, anchor="w").pack(side="left")
+
+                if field_type == "option":
+                    var = ctk.StringVar(value=str(self.settings.get(key, "")))
+                    widget = ctk.CTkOptionMenu(
+                        row, variable=var, values=constraints,
+                        width=120, height=24,
+                        fg_color="#153520", button_color="#1a4a2a",
+                        dropdown_fg_color="#0f2a1a",
+                        font=ctk.CTkFont(size=11))
+                    widget.pack(side="right")
+                elif field_type == "int":
+                    var = ctk.StringVar(value=str(self.settings.get(key, 0)))
+                    widget = ctk.CTkEntry(
+                        row, textvariable=var, width=80, height=24,
+                        fg_color="#153520", border_color="#1a4a2a",
+                        font=ctk.CTkFont(size=11))
+                    widget.pack(side="right")
+                elif field_type == "float":
+                    var = ctk.StringVar(value=str(self.settings.get(key, 0.0)))
+                    widget = ctk.CTkEntry(
+                        row, textvariable=var, width=80, height=24,
+                        fg_color="#153520", border_color="#1a4a2a",
+                        font=ctk.CTkFont(size=11))
+                    widget.pack(side="right")
+
+                self.setting_widgets[key] = (var, field_type, constraints)
+
+    def _build_main_area(self):
+        """Right main area: results table and log."""
+        main = ctk.CTkFrame(self, fg_color="#0a1a10", corner_radius=0)
+        main.grid(row=0, column=1, sticky="nsew")
+        main.grid_rowconfigure(1, weight=1)
+        main.grid_columnconfigure(0, weight=1)
+
+        # ── Header bar ───────────────────────────────────────────────────────
+        header = ctk.CTkFrame(main, fg_color="#0f2a1a", height=44)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(header, text="RESULTS",
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      text_color="#00ff88").pack(padx=15, side="left")
+
+        self.result_count_label = ctk.CTkLabel(
+            header, text="0 stocks scanned",
+            font=ctk.CTkFont(size=12), text_color="#6a8a6a")
+        self.result_count_label.pack(side="left", padx=10)
+
+        # Export buttons
+        self.html_btn = ctk.CTkButton(
+            header, text="Export HTML", width=100, height=30,
+            fg_color="#1a4a2a", hover_color="#2a6a3a",
+            font=ctk.CTkFont(size=11),
+            command=self._export_html, state="disabled")
+        self.html_btn.pack(side="right", padx=(0, 10))
+
+        self.csv_btn = ctk.CTkButton(
+            header, text="Export CSV", width=100, height=30,
+            fg_color="#1a4a2a", hover_color="#2a6a3a",
+            font=ctk.CTkFont(size=11),
+            command=self._export_csv, state="disabled")
+        self.csv_btn.pack(side="right", padx=(0, 5))
+
+        # ── Results Table (ScrolledFrame with custom rows) ───────────────────
+        self.table_frame = ctk.CTkScrollableFrame(
+            main, fg_color="#0a1a10")
+        self.table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        self.table_frame.grid_columnconfigure(0, weight=1)
+
+        # ── Log area ─────────────────────────────────────────────────────────
+        self.log_text = ctk.CTkTextbox(
+            main, height=120, fg_color="#061208",
+            text_color="#4a7a4a",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            state="normal")
+        self.log_text.bind("<Control-a>", lambda e: self.log_text.tag_add("sel", "1.0", "end"))
+        self.log_text.bind("<Control-c>", lambda e: self._copy_selection())
+        self.log_text.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+
+    # ── Settings Management ──────────────────────────────────────────────────
+
+    def _toggle_settings(self):
+        """Expand/collapse settings panel."""
+        if self.settings_frame.winfo_height() > 10:
+            self.settings_frame.configure(height=0)
+            self.settings_toggle.configure(text="  SETTINGS  (Click to expand)")
+        else:
+            self.settings_frame.configure(height=350)
+            self.settings_toggle.configure(text="  SETTINGS  (Click to collapse)")
+
+    def _load_settings_to_ui(self):
+        """Load saved settings into UI widgets."""
+        self.threshold_slider.set(self.settings.get("min_score", 50))
+        self.threshold_label.configure(text=str(int(self.settings.get("min_score", 50))))
+
+        # Period mapping
+        period_map = {"6mo": "6 Months", "1y": "1 Year", "2y": "2 Years"}
+        self.period_var.set(period_map.get(self.settings.get("data_period", "1y"), "1 Year"))
+
+    def _collect_settings(self) -> dict:
+        """Read all settings from UI widgets."""
+        s = {}
+        for key, (var, field_type, constraints) in self.setting_widgets.items():
+            val = var.get()
+            if field_type == "int":
+                try:
+                    s[key] = int(val)
+                except ValueError:
+                    s[key] = self.settings.get(key, 0)
+            elif field_type == "float":
+                try:
+                    s[key] = float(val)
+                except ValueError:
+                    s[key] = self.settings.get(key, 0.0)
+            else:
+                s[key] = val
+
+        # Score threshold
+        try:
+            s["min_score"] = float(self.threshold_var.get())
+        except ValueError:
+            s["min_score"] = 50.0
+
+        # Data period
+        period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
+        s["data_period"] = period_map.get(self.period_var.get(), "1y")
+
+        return s
+
+    def _on_universe_change(self, choice):
+        count = len(UNIVERSES.get(choice, []))
+        self.universe_count_label.configure(text=f"{count} stocks")
+
+    def _on_threshold_change(self, val):
+        self.threshold_label.configure(text=str(int(float(val))))
+
+    # ── Scanning ─────────────────────────────────────────────────────────────
+
+    def _start_scan(self):
+        if self.scanning:
+            return
+
+        self.settings = self._collect_settings()
+        save_settings(self.settings)
+
+        self.scanning = True
+        self.run_btn.configure(state="disabled", text="SCANNING...", fg_color="#333333")
+        self.html_btn.configure(state="disabled")
+        self.csv_btn.configure(state="disabled")
+        self.results = []
+
+        # Clear previous results
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+
+        thread = threading.Thread(target=self._run_scan, daemon=True)
+        thread.start()
+
+    def _run_scan(self):
+        """Run the scan in a background thread."""
+        try:
+            universe_name = self.universe_var.get()
+            tickers = UNIVERSES.get(universe_name, [])
+            settings = self.settings
+            period = settings.get("data_period", "1y")
+
+            self._log(f"Starting scan: {universe_name} ({len(tickers)} stocks)")
+            self._log(f"Settings: FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
+                       f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
+                       f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
+
+            # Fetch NIFTY index
+            self._set_progress(0, "Fetching NIFTY 50 index...")
+            index_df = fetch_index_data("^NSEI", period=period)
+            if index_df is not None:
+                self._log(f"NIFTY 50 index loaded ({len(index_df)} bars)")
+            else:
+                self._log("Warning: NIFTY index unavailable, using proxy for RS")
+
+            # Fetch and score stocks
+            results = []
+            total = len(tickers)
+
+            for i, ticker in enumerate(tickers, 1):
+                progress = i / total
+                self._set_progress(progress, f"[{i}/{total}] {ticker}")
+
+                try:
+                    df = fetch_stock_data(ticker, period=period)
+                    if df is not None and not df.empty:
+                        # Fetch fundamentals for this stock
+                        from data_fetcher import fetch_fundamentals
+                        fund = fetch_fundamentals(ticker)
+                        if fund is not None:
+                            df._fundamentals = fund
+
+                        scores = compute_scores(
+                            df, index_df=index_df,
+                            fast_ma_type=settings["fast_ma_type"],
+                            fast_ma_len=settings["fast_ma_len"],
+                            slow_ma_type=settings["slow_ma_type"],
+                            slow_ma_len=settings["slow_ma_len"],
+                            rsi_len=settings["rsi_len"],
+                            vol_ma_len=settings["vol_ma_len"],
+                            atr_len=settings["atr_len"],
+                            adx_len=settings["adx_len"],
+                            adx_threshold=settings["adx_threshold"],
+                            chop_len=settings["chop_len"],
+                            chop_threshold=settings["chop_threshold"],
+                            slope_ma_type=settings["slope_ma_type"],
+                            slope_ma_len=settings["slope_ma_len"],
+                            slope_lookback=settings["slope_lookback"],
+                            flat_threshold=settings["flat_threshold"],
+                            sc_pivot_len=settings["sc_pivot_len"],
+                            sc_bands_mult=settings["sc_bands_mult"]
+                        )
+                        if scores is not None:
+                            scores["ticker"] = ticker
+                            results.append(scores)
+                            self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
+                except Exception as e:
+                    self._log(f"  {ticker}: ERROR - {str(e)}")
+
+                # Rate limiting
+                import time
+                time.sleep(0.15)
+
+            # Sort and store
+            results.sort(key=lambda x: x["total"], reverse=True)
+            self.results = results
+
+            # Update UI
+            passed = len([r for r in results if r["total"] >= settings["min_score"]])
+            self._log(f"\nScan complete: {len(results)} stocks scored, {passed} above {settings['min_score']} threshold")
+
+            self.after(0, lambda: self._display_results(results))
+
+        except Exception as e:
+            self._log(f"\nERROR: {str(e)}")
+        finally:
+            self.after(0, self._scan_complete)
+
+    def _display_results(self, results):
+        """Display results in the table (must be called from main thread)."""
+        # Clear table
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+
+        if not results:
+            ctk.CTkLabel(self.table_frame, text="No results found.",
+                          text_color="#ff4444",
+                          font=ctk.CTkFont(size=14)).pack(pady=40)
+            return
+
+        threshold = self.settings.get("min_score", 50)
+
+        # Header row
+        header_row = ctk.CTkFrame(self.table_frame, fg_color="#153520", height=32)
+        header_row.pack(fill="x", padx=2, pady=(2, 0))
+        header_row.pack_propagate(False)
+
+        headers = [("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90),
+                   ("Price", 80), ("Trend/15", 70), ("Mom/15", 70), ("RSI/8", 55),
+                   ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
+                   ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Seways", 55)]
+
+        for text, width in headers:
+            ctk.CTkLabel(header_row, text=text, width=width,
+                          font=ctk.CTkFont(size=10, weight="bold"),
+                          text_color="#00ddcc").pack(side="left", padx=1)
+
+        # Data rows
+        for rank, r in enumerate(results, 1):
+            score = r["total"]
+            is_above = score >= threshold
+
+            row_bg = "#0f2a1a" if is_above else "#0a1a10"
+            row = ctk.CTkFrame(self.table_frame, fg_color=row_bg, height=30)
+            row.pack(fill="x", padx=2, pady=1)
+            row.pack_propagate(False)
+
+            # Rank
+            rank_color = "#00ff88" if score >= 70 else ("#aaff00" if score >= 50 else ("#ffaa00" if score >= 30 else "#ff4444"))
+            ctk.CTkLabel(row, text=str(rank), width=40,
+                          font=ctk.CTkFont(size=11, weight="bold"),
+                          text_color=rank_color).pack(side="left", padx=1)
+
+            # Ticker
+            ctk.CTkLabel(row, text=r["ticker"], width=100,
+                          font=ctk.CTkFont(size=11, weight="bold"),
+                          text_color="#00ff88" if is_above else "#c8d8c0",
+                          anchor="w").pack(side="left", padx=1)
+
+            # Score
+            score_color = "#00ff88" if score >= 70 else ("#aaff00" if score >= 50 else ("#ffaa00" if score >= 30 else "#ff4444"))
+            ctk.CTkLabel(row, text=f"{score:.1f}", width=60,
+                          font=ctk.CTkFont(size=12, weight="bold"),
+                          text_color=score_color).pack(side="left", padx=1)
+
+            # Rating badge
+            rating = "EXCELLENT" if score >= 70 else ("GOOD" if score >= 50 else ("MODERATE" if score >= 30 else "POOR"))
+            badge_color = "#0a3a1a" if score >= 70 else ("#1a3a0a" if score >= 50 else ("#3a2a0a" if score >= 30 else "#3a0a0a"))
+            badge_text = "#00ff88" if score >= 70 else ("#aaff00" if score >= 50 else ("#ffaa00" if score >= 30 else "#ff4444"))
+            badge_frame = ctk.CTkFrame(row, fg_color=badge_color, corner_radius=3, height=20)
+            badge_frame.pack(side="left", padx=2)
+            ctk.CTkLabel(badge_frame, text=rating, width=85,
+                          font=ctk.CTkFont(size=9, weight="bold"),
+                          text_color=badge_text).pack(padx=4, pady=2)
+
+            # Price
+            ctk.CTkLabel(row, text=f"₹{r.get('close', 0):.1f}", width=80,
+                          font=ctk.CTkFont(size=11),
+                          text_color="#c8d8c0").pack(side="left", padx=1)
+
+            # Category scores (with mini bar)
+            for cat, max_val, color in [
+                ("trend", 15, "#00ff88"), ("momentum", 15, "#00ddcc"),
+                ("rsi", 8, "#00aaff"), ("macd", 7, "#aa88ff"),
+                ("volume", 10, "#ffaa00"), ("rel_str", 10, "#aaff00"),
+                ("fundamentals", 20, "#ffe600")
+            ]:
+                val = r.get(cat, 0)
+                bar_width = int((val / max_val) * 50) if max_val > 0 else 0
+
+                cat_frame = ctk.CTkFrame(row, fg_color="transparent", width=70, height=20)
+                cat_frame.pack(side="left", padx=1)
+                cat_frame.pack_propagate(False)
+
+                # Mini bar background
+                ctk.CTkFrame(cat_frame, fg_color="#153520",
+                              width=50, height=6, corner_radius=2).place(x=0, y=7)
+                # Mini bar fill
+                if bar_width > 0:
+                    ctk.CTkFrame(cat_frame, fg_color=color,
+                                  width=max(bar_width, 2), height=6, corner_radius=2).place(x=0, y=7)
+                # Value label
+                ctk.CTkLabel(cat_frame, text=f"{val:.0f}", width=20,
+                              font=ctk.CTkFont(size=9),
+                              text_color="#6a8a6a").place(x=52, y=1)
+
+            # 1M Change
+            pc1m = r.get("pc1m", 0) or 0
+            pc1m_color = "#00ff88" if pc1m > 0 else "#ff4444"
+            ctk.CTkLabel(row, text=f"{pc1m:+.1f}%", width=70,
+                          font=ctk.CTkFont(size=11),
+                          text_color=pc1m_color).pack(side="left", padx=1)
+
+            # Direction
+            dir_color = "#00ff88" if r["trend_dir"] == "Bull" else "#ff4444"
+            dir_icon = "^" if r["trend_dir"] == "Bull" else "v"
+            ctk.CTkLabel(row, text=f"{dir_icon} {r['trend_dir']}", width=75,
+                          font=ctk.CTkFont(size=11),
+                          text_color=dir_color).pack(side="left", padx=1)
+
+            # ADX
+            adx_val = r.get("adx_val")
+            adx_text = f"{adx_val:.0f}" if adx_val is not None else "---"
+            ctk.CTkLabel(row, text=adx_text, width=50,
+                          font=ctk.CTkFont(size=11),
+                          text_color="#c8d8c0").pack(side="left", padx=1)
+
+            # Sideways indicator
+            is_sideways = r.get("is_sideways", False)
+            sideways_text = "⚠ Chop" if is_sideways else "✓"
+            sideways_color = "#ffaa00" if is_sideways else "#00ff88"
+            ctk.CTkLabel(row, text=sideways_text, width=55,
+                          font=ctk.CTkFont(size=10),
+                          text_color=sideways_color).pack(side="left", padx=1)
+
+        # Update header
+        self.result_count_label.configure(
+            text=f"{len(results)} stocks scanned  |  {len([r for r in results if r['total'] >= threshold])} above {threshold}+")
+
+    def _scan_complete(self):
+        """Re-enable UI after scan finishes."""
+        self.scanning = False
+        self.run_btn.configure(state="normal", text="RUN SCAN", fg_color="#00aa55")
+        self.progress_label.configure(text="Done")
+        if self.results:
+            self.html_btn.configure(state="normal")
+            self.csv_btn.configure(state="normal")
+
+    # ── Export ────────────────────────────────────────────────────────────────
+
+    def _export_html(self):
+        if not self.results:
+            return
+        threshold = self.settings.get("min_score", 50)
+        html = generate_html_report(
+            self.results,
+            title=f"HMAxEMA Scanner — {self.universe_var.get()}",
+            threshold=threshold)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"scanner_report_{timestamp}.html"
+        filepath = os.path.join(SCANNER_DIR, filename)
+        save_report(html, filepath)
+        self._log(f"HTML report saved: {filename}")
+        webbrowser.open(f"file://{os.path.abspath(filepath)}")
+
+    def _export_csv(self):
+        if not self.results:
+            return
+        import csv
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"scanner_results_{timestamp}.csv"
+        filepath = os.path.join(SCANNER_DIR, filename)
+
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Rank", "Ticker", "Score", "Rating", "Price", "Trend", "Momentum",
+                             "RSI", "MACD", "Stoch", "OBV", "Volume", "RelStrength", "Volatility",
+                             "Fundamentals", "Direction", "RSI_Val", "ADX", "Sideways",
+                             "1M_Change", "3M_Change"])
+            for i, r in enumerate(self.results, 1):
+                sideways_reasons = ", ".join(r.get("sideways_reasons", []))
+                writer.writerow([
+                    i, r["ticker"], r["total"],
+                    "EXCELLENT" if r["total"] >= 70 else ("GOOD" if r["total"] >= 50 else ("MODERATE" if r["total"] >= 30 else "POOR")),
+                    r.get("close"), r["trend"], r["momentum"], r["rsi"], r["macd"],
+                    r["stoch"], r["obv"], r["volume"], r["rel_str"], r["volatility"],
+                    r.get("fundamentals", 0),
+                    r["trend_dir"], r.get("rsi_val"), r.get("adx_val"),
+                    "Yes" if r.get("is_sideways") else "No" + (f" ({sideways_reasons})" if sideways_reasons else ""),
+                    r.get("pc1m"), r.get("pc3m")
+                ])
+
+        self._log(f"CSV saved: {filename}")
+        os.startfile(filepath) if sys.platform == "win32" else os.system(f"open '{filepath}'")
+
+    # ── Utilities ────────────────────────────────────────────────────────────
+
+    def _copy_selection(self):
+        """Copy selected text from log to clipboard."""
+        try:
+            selection = self.log_text.get("sel.first", "sel.last")
+            if selection:
+                self.clipboard_clear()
+                self.clipboard_append(selection)
+        except Exception:
+            pass
+
+    def _log(self, msg: str):
+        """Thread-safe log to the log textbox."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        line = f"[{timestamp}] {msg}\n"
+
+        def _append():
+            self.log_text.insert("end", line)
+            self.log_text.see("end")
+
+        self.after(0, _append)
+
+    def _set_progress(self, value: float, text: str = ""):
+        """Thread-safe progress update."""
+        def _update():
+            self.progress.set(value)
+            if text:
+                self.progress_label.configure(text=text)
+        self.after(0, _update)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    app = ScannerApp()
+    app.mainloop()
