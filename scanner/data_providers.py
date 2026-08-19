@@ -2,15 +2,13 @@
 Multi-source data provider with fallback chain for Indian stock market.
 
 Provider priority for OHLCV:
-  1. FYERS (if configured) — Direct exchange data, fastest
-  2. jugaad-data — NSE official API, no auth needed
-  3. yfinance — Yahoo Finance, no auth needed
-  4. nselib — NSE library, no auth needed
+  1. jugaad-data — NSE official API, no auth needed
+  2. yfinance — Yahoo Finance, no auth needed
+  3. nselib — NSE library, no auth needed
 
 Provider priority for Fundamentals:
-  1. FYERS (if configured) — Live quotes with fundamental data
-  2. yfinance .info — Detailed financial data
-  3. nselib pe_ratio — Bulk P/E ratio for all stocks
+  1. yfinance .info — Detailed financial data
+  2. nselib pe_ratio — Bulk P/E ratio for all stocks
 
 All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
@@ -117,15 +115,6 @@ def _fetch_jugaad(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
         df = df[cols].copy()
         df = df.dropna()
-
-        # Also extract extra data if available
-        extras = {}
-        if "VWAP" in df.columns or "VWAP" in stock_df.__code__.co_varnames:
-            pass  # VWAP available but not in normalized cols
-        if "DELIVERY %" in df.columns:
-            extras["delivery_pct"] = df["DELIVERY %"].iloc[-1]
-        if "NO OF TRADES" in df.columns:
-            extras["trades"] = df["NO OF TRADES"].iloc[-1]
 
         return df
 
@@ -299,153 +288,6 @@ def _fetch_nselib(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PROVIDER: FYERS (Requires Authentication)
-# ══════════════════════════════════════════════════════════════════════════════
-
-class FyersProvider:
-    """FYERS API v3 provider. Requires client_id, secret_key, redirect_uri, access_token."""
-
-    def __init__(self, client_id: str = "", secret_key: str = "",
-                 redirect_uri: str = "", access_token: str = ""):
-        self.client_id = client_id
-        self.secret_key = secret_key
-        self.redirect_uri = redirect_uri
-        self.access_token = access_token
-        self._fyers = None
-
-    @property
-    def is_configured(self) -> bool:
-        return bool(self.client_id and self.secret_key and self.access_token)
-
-    def _get_client(self):
-        if self._fyers is None and self.is_configured:
-            try:
-                from fyers_apiv3 import fyersModel
-                self._fyers = fyersModel.FyersModel(
-                    client_id=self.client_id,
-                    token=self.access_token,
-                    log_path=""
-                )
-            except Exception:
-                return None
-        return self._fyers
-
-    def _symbol_nse(self, ticker: str) -> str:
-        """Convert NSE symbol to FYERS format: NSE:RELIANCE-EQ"""
-        return f"NSE:{ticker}-EQ"
-
-    def fetch_stock(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
-        """Fetch OHLCV from FYERS."""
-        client = self._get_client()
-        if client is None:
-            return None
-
-        try:
-            # Map period to FYERS format
-            period_map = {"6mo": "6M", "1y": "1Y", "2y": "2Y", "5y": "5Y"}
-            fyers_period = period_map.get(period, "1Y")
-
-            data = {
-                "symbol": self._symbol_nse(ticker),
-                "resolution": "D",
-                "date_format": "1",
-                "range_from": (date.today() - timedelta(days=365)).isoformat(),
-                "range_to": date.today().isoformat(),
-                "flag": "1",
-            }
-
-            response = client.history(data=data)
-
-            if response is None or "candles" not in response:
-                return None
-
-            candles = response["candles"]
-            if not candles:
-                return None
-
-            # FYERS candles: [timestamp, open, high, low, close, volume]
-            df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-            df = df[["open", "high", "low", "close", "volume"]]
-            df = df.dropna()
-
-            return df
-
-        except Exception:
-            return None
-
-    def fetch_index(self, ticker: str, period: str) -> Optional[pd.DataFrame]:
-        """Fetch index data from FYERS."""
-        client = self._get_client()
-        if client is None:
-            return None
-
-        try:
-            # FYERS index format
-            index_map = {
-                "^NSEI": "NSE:NIFTY50-Index",
-                "^NSEBANK": "NSE:NIFTYBANK-Index",
-            }
-            fyers_symbol = index_map.get(ticker)
-            if not fyers_symbol:
-                return None
-
-            data = {
-                "symbol": fyers_symbol,
-                "resolution": "D",
-                "date_format": "1",
-                "range_from": (date.today() - timedelta(days=365)).isoformat(),
-                "range_to": date.today().isoformat(),
-                "flag": "1",
-            }
-
-            response = client.history(data=data)
-
-            if response is None or "candles" not in response:
-                return None
-
-            candles = response["candles"]
-            if not candles:
-                return None
-
-            df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-            df = df[["open", "high", "low", "close", "volume"]]
-            df = df.dropna()
-
-            return df
-
-        except Exception:
-            return None
-
-    def fetch_fundamentals(self, ticker: str) -> Optional[dict]:
-        """Fetch fundamental data from FYERS quotes."""
-        client = self._get_client()
-        if client is None:
-            return None
-
-        try:
-            data = {"symbols": self._symbol_nse(ticker)}
-            response = client.quotes(data=data)
-
-            if response is None or "d" not in response:
-                return None
-
-            quote = response["d"][0]
-            fy = quote.get("fy", {})
-
-            return {
-                "pe_ratio": fy.get("pPriceToEarning"),
-                "eps_growth": None,  # FYERS doesn't provide growth rates directly
-                "rev_growth": None,
-                "roe": None,
-            }
-
-        except Exception:
-            return None
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # FUNDAMENTAL DATA PROVIDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -495,7 +337,6 @@ def _fetch_fundamentals_nselib(ticker: str) -> Optional[dict]:
         from nselib import capital_market
 
         today = date.today()
-        from_date = (today - timedelta(days=7)).strftime("%d-%m-%Y")
         to_date = today.strftime("%d-%m-%Y")
 
         df = capital_market.pe_ratio(trade_date=to_date)
@@ -533,19 +374,17 @@ class DataProvider:
     Multi-source data provider with automatic fallback.
 
     Usage:
-        provider = DataProvider(fyers_config={...})
+        provider = DataProvider()
         df = provider.fetch_stock("RELIANCE", period="1y")
         fund = provider.fetch_fundamentals("RELIANCE")
     """
 
-    def __init__(self, fyers_config: dict = None, use_cache: bool = True):
+    def __init__(self, use_cache: bool = True):
         """
         Args:
-            fyers_config: Optional dict with keys: client_id, secret_key, redirect_uri, access_token
             use_cache: Whether to use disk cache for API responses
         """
         self.use_cache = use_cache
-        self.fyers = FyersProvider(**(fyers_config or {}))
 
         # Track which provider was last used (for UI display)
         self.last_provider = None
@@ -557,10 +396,9 @@ class DataProvider:
 
         Priority:
           1. Cache (if enabled)
-          2. FYERS (if configured)
-          3. jugaad-data
-          4. yfinance
-          5. nselib
+          2. jugaad-data
+          3. yfinance
+          4. nselib
         """
         self.last_provider = None
         self.last_error = None
@@ -574,7 +412,6 @@ class DataProvider:
 
         # Provider chain
         providers = [
-            ("fyers", lambda: self.fyers.fetch_stock(ticker, period) if self.fyers.is_configured else None),
             ("jugaad", lambda: _fetch_jugaad(ticker, period)),
             ("yfinance", lambda: _fetch_yfinance(ticker, period)),
             ("nselib", lambda: _fetch_nselib(ticker, period)),
@@ -606,7 +443,6 @@ class DataProvider:
                 return cached
 
         providers = [
-            ("fyers", lambda: self.fyers.fetch_index(ticker, period) if self.fyers.is_configured else None),
             ("jugaad", lambda: _fetch_jugaad_index(ticker, period)),
             ("yfinance", lambda: _fetch_yfinance_index(ticker, period)),
         ]
@@ -629,14 +465,12 @@ class DataProvider:
         Fetch fundamental data with provider fallback.
 
         Priority:
-          1. FYERS (if configured)
-          2. yfinance
-          3. nselib
+          1. yfinance
+          2. nselib
         """
         self.last_provider = None
 
         providers = [
-            ("fyers", lambda: self.fyers.fetch_fundamentals(ticker) if self.fyers.is_configured else None),
             ("yfinance", lambda: _fetch_fundamentals_yfinance(ticker)),
             ("nselib", lambda: _fetch_fundamentals_nselib(ticker)),
         ]

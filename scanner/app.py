@@ -25,10 +25,8 @@ from tkinter import messagebox
 
 from universes import UNIVERSES
 from data_fetcher import fetch_stock_data, fetch_index_data
-from data_providers import DataProvider
 from scoring import compute_scores
 from report import generate_html_report, save_report
-from fyers_auth import FyersAuth
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
@@ -38,13 +36,23 @@ SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
 DEFAULT_SETTINGS = {
+    # Moving Averages
     "fast_ma_type": "HMA",
     "fast_ma_len": 20,
     "slow_ma_type": "EMA",
     "slow_ma_len": 50,
+    # Technical Analysis
     "rsi_len": 14,
+    "rs_length": 14,
     "vol_ma_len": 20,
     "atr_len": 14,
+    # Relative Strength
+    "index_symbol": "NSEI",
+    # Volume Profile
+    "vp_lookback": 200,
+    "vp_rows": 30,
+    "vp_width": 40,
+    # Sideways Filter
     "adx_len": 14,
     "adx_threshold": 20.0,
     "chop_len": 14,
@@ -53,15 +61,13 @@ DEFAULT_SETTINGS = {
     "slope_ma_len": 50,
     "slope_lookback": 10,
     "flat_threshold": 0.5,
+    # Step Channel
     "sc_pivot_len": 3,
     "sc_bands_mult": 0.6,
+    # Scanner
     "min_score": 50.0,
     "data_period": "1y",
-    # FYERS API (optional, leave empty to use free providers)
-    "fyers_client_id": "",
-    "fyers_secret_key": "",
-    "fyers_redirect_uri": "",
-    "fyers_access_token": "",
+    "trend_filter": "All",
 }
 
 
@@ -105,7 +111,6 @@ class ScannerApp(ctk.CTk):
 
         self._build_ui()
         self._load_settings_to_ui()
-        self._load_fyers_token()
 
     # ── UI Construction ──────────────────────────────────────────────────────
 
@@ -169,6 +174,21 @@ class ScannerApp(ctk.CTk):
             dropdown_fg_color="#0f2a1a"
         )
         period_menu.pack(padx=20, pady=(4, 8))
+
+        # ── Trend Filter ─────────────────────────────────────────────────────
+        ctk.CTkLabel(sidebar, text="TREND FILTER",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color="#00ddcc").pack(padx=20, pady=(8, 0), anchor="w")
+
+        self.trend_filter_var = ctk.StringVar(value="All")
+        trend_menu = ctk.CTkOptionMenu(
+            sidebar, variable=self.trend_filter_var,
+            values=["All", "Bullish Only", "Bearish Only"],
+            width=280, height=32,
+            fg_color="#153520", button_color="#1a4a2a",
+            dropdown_fg_color="#0f2a1a"
+        )
+        trend_menu.pack(padx=20, pady=(4, 8))
 
         # ── Score Threshold ──────────────────────────────────────────────────
         ctk.CTkLabel(sidebar, text="MIN SCORE THRESHOLD",
@@ -248,15 +268,25 @@ class ScannerApp(ctk.CTk):
         self.setting_widgets = {}
 
         sections = [
-            ("Moving Averages", [
+            ("Moving Averages (Crossover)", [
                 ("Fast MA Type", "fast_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
                 ("Fast MA Length", "fast_ma_len", "int", (5, 100)),
                 ("Slow MA Type", "slow_ma_type", "option", ["HMA", "EMA", "SMA", "KAMA", "VWMA"]),
                 ("Slow MA Length", "slow_ma_len", "int", (10, 200)),
             ]),
-            ("Oscillators", [
+            ("Technical Analysis", [
                 ("RSI Length", "rsi_len", "int", (5, 50)),
                 ("ATR Length", "atr_len", "int", (5, 50)),
+                ("Volume MA Length", "vol_ma_len", "int", (5, 100)),
+            ]),
+            ("Relative Strength", [
+                ("RS Length", "rs_length", "int", (5, 50)),
+                ("Index Symbol", "index_symbol", "text", None),
+            ]),
+            ("Volume Profile", [
+                ("VP Lookback (Candles)", "vp_lookback", "int", (10, 500)),
+                ("VP Rows/Bins", "vp_rows", "int", (5, 100)),
+                ("VP Width (Bars)", "vp_width", "int", (10, 100)),
             ]),
             ("Sideways Filter", [
                 ("ADX Length", "adx_len", "int", (5, 50)),
@@ -272,15 +302,6 @@ class ScannerApp(ctk.CTk):
                 ("Pivot Length", "sc_pivot_len", "int", (1, 20)),
                 ("Bands Multiplier", "sc_bands_mult", "float", (0.1, 3.0)),
             ]),
-            ("Volume", [
-                ("Volume MA Length", "vol_ma_len", "int", (5, 100)),
-            ]),
-            ("Data Source (FYERS - Optional)", [
-                ("Client ID", "fyers_client_id", "text", None),
-                ("Secret Key", "fyers_secret_key", "text", None),
-                ("Redirect URI", "fyers_redirect_uri", "text", None),
-                ("Access Token", "fyers_access_token", "text", None),
-            ]),
         ]
 
         for section_title, fields in sections:
@@ -295,7 +316,7 @@ class ScannerApp(ctk.CTk):
 
                 ctk.CTkLabel(row, text=label,
                               font=ctk.CTkFont(size=11),
-                              text_color="#c8d8c0", width=120, anchor="w").pack(side="left")
+                              text_color="#c8d8c0", width=130, anchor="w").pack(side="left")
 
                 if field_type == "option":
                     var = ctk.StringVar(value=str(self.settings.get(key, "")))
@@ -323,41 +344,12 @@ class ScannerApp(ctk.CTk):
                 elif field_type == "text":
                     var = ctk.StringVar(value=str(self.settings.get(key, "")))
                     widget = ctk.CTkEntry(
-                        row, textvariable=var, width=140, height=24,
+                        row, textvariable=var, width=120, height=24,
                         fg_color="#153520", border_color="#1a4a2a",
-                        font=ctk.CTkFont(size=10),
-                        show="*" if "secret" in key or "token" in key else "")
+                        font=ctk.CTkFont(size=10))
                     widget.pack(side="right")
 
                 self.setting_widgets[key] = (var, field_type, constraints)
-
-        # FYERS Login Button
-        ctk.CTkLabel(parent, text="FYERS LOGIN", font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color="#6a8a6a").pack(padx=8, pady=(8, 2), anchor="w")
-
-        self.fyers_status_label = ctk.CTkLabel(
-            parent, text="Not connected",
-            font=ctk.CTkFont(size=10), text_color="#ff6644")
-        self.fyers_status_label.pack(padx=8, anchor="w")
-
-        login_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        login_frame.pack(fill="x", padx=8, pady=(4, 8))
-
-        self.fyers_login_btn = ctk.CTkButton(
-            login_frame, text="Login to FYERS",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color="#0066cc", hover_color="#0088ee",
-            text_color="white", height=28, width=120,
-            command=self._fyers_login)
-        self.fyers_login_btn.pack(side="left")
-
-        self.fyers_logout_btn = ctk.CTkButton(
-            login_frame, text="Logout",
-            font=ctk.CTkFont(size=10),
-            fg_color="#4a2020", hover_color="#6a3030",
-            text_color="#ff8888", height=28, width=60,
-            command=self._fyers_logout)
-        self.fyers_logout_btn.pack(side="left", padx=(4, 0))
 
     def _build_main_area(self):
         """Right main area: results table and log."""
@@ -419,7 +411,7 @@ class ScannerApp(ctk.CTk):
             self.settings_frame.configure(height=0)
             self.settings_toggle.configure(text="  SETTINGS  (Click to expand)")
         else:
-            self.settings_frame.configure(height=350)
+            self.settings_frame.configure(height=400)
             self.settings_toggle.configure(text="  SETTINGS  (Click to collapse)")
 
     def _load_settings_to_ui(self):
@@ -430,6 +422,9 @@ class ScannerApp(ctk.CTk):
         # Period mapping
         period_map = {"6mo": "6 Months", "1y": "1 Year", "2y": "2 Years"}
         self.period_var.set(period_map.get(self.settings.get("data_period", "1y"), "1 Year"))
+
+        # Trend filter
+        self.trend_filter_var.set(self.settings.get("trend_filter", "All"))
 
     def _collect_settings(self) -> dict:
         """Read all settings from UI widgets."""
@@ -458,6 +453,9 @@ class ScannerApp(ctk.CTk):
         # Data period
         period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
         s["data_period"] = period_map.get(self.period_var.get(), "1y")
+
+        # Trend filter
+        s["trend_filter"] = self.trend_filter_var.get()
 
         return s
 
@@ -497,28 +495,17 @@ class ScannerApp(ctk.CTk):
             tickers = UNIVERSES.get(universe_name, [])
             settings = self.settings
             period = settings.get("data_period", "1y")
+            trend_filter = settings.get("trend_filter", "All")
 
             self._log(f"Starting scan: {universe_name} ({len(tickers)} stocks)")
-            self._log(f"Settings: FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
+            self._log(f"Filter: {trend_filter} | FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
                        f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
                        f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
-
-            # Build FYERS config from settings
-            fyers_config = {}
-            if settings.get("fyers_client_id") and settings.get("fyers_access_token"):
-                fyers_config = {
-                    "client_id": settings.get("fyers_client_id", ""),
-                    "secret_key": settings.get("fyers_secret_key", ""),
-                    "redirect_uri": settings.get("fyers_redirect_uri", ""),
-                    "access_token": settings.get("fyers_access_token", ""),
-                }
-                self._log("FYERS API configured - using direct exchange data")
-            else:
-                self._log("Using free providers: jugaad-data / yfinance / nselib")
+            self._log(f"Using free providers: jugaad-data / yfinance / nselib")
 
             # Fetch NIFTY index
             self._set_progress(0, "Fetching NIFTY 50 index...")
-            index_df = fetch_index_data("^NSEI", period=period, fyers_config=fyers_config or None)
+            index_df = fetch_index_data("^NSEI", period=period)
             if index_df is not None:
                 self._log(f"NIFTY 50 index loaded ({len(index_df)} bars)")
             else:
@@ -533,7 +520,7 @@ class ScannerApp(ctk.CTk):
                 self._set_progress(progress, f"[{i}/{total}] {ticker}")
 
                 try:
-                    df = fetch_stock_data(ticker, period=period, fyers_config=fyers_config or None)
+                    df = fetch_stock_data(ticker, period=period)
                     if df is not None and not df.empty:
                         scores = compute_scores(
                             df, index_df=index_df,
@@ -544,6 +531,7 @@ class ScannerApp(ctk.CTk):
                             rsi_len=settings["rsi_len"],
                             vol_ma_len=settings["vol_ma_len"],
                             atr_len=settings["atr_len"],
+                            rs_length=settings["rs_length"],
                             adx_len=settings["adx_len"],
                             adx_threshold=settings["adx_threshold"],
                             chop_len=settings["chop_len"],
@@ -553,10 +541,20 @@ class ScannerApp(ctk.CTk):
                             slope_lookback=settings["slope_lookback"],
                             flat_threshold=settings["flat_threshold"],
                             sc_pivot_len=settings["sc_pivot_len"],
-                            sc_bands_mult=settings["sc_bands_mult"]
+                            sc_bands_mult=settings["sc_bands_mult"],
+                            vp_lookback=settings["vp_lookback"],
+                            vp_rows=settings["vp_rows"],
+                            vp_width=settings["vp_width"],
                         )
                         if scores is not None:
                             scores["ticker"] = ticker
+
+                            # Apply trend filter
+                            if trend_filter == "Bullish Only" and scores["trend_dir"] != "Bull":
+                                continue
+                            elif trend_filter == "Bearish Only" and scores["trend_dir"] != "Bear":
+                                continue
+
                             results.append(scores)
                             self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
                 except Exception as e:
@@ -572,7 +570,9 @@ class ScannerApp(ctk.CTk):
 
             # Update UI
             passed = len([r for r in results if r["total"] >= settings["min_score"]])
-            self._log(f"\nScan complete: {len(results)} stocks scored, {passed} above {settings['min_score']} threshold")
+            filtered_out = total - len(results) if trend_filter != "All" else 0
+            filter_msg = f", {filtered_out} filtered by {trend_filter}" if filtered_out > 0 else ""
+            self._log(f"\nScan complete: {len(results)} stocks scored, {passed} above {settings['min_score']} threshold{filter_msg}")
 
             self.after(0, lambda: self._display_results(results))
 
@@ -603,7 +603,7 @@ class ScannerApp(ctk.CTk):
         headers = [("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90),
                    ("Price", 80), ("Trend/15", 70), ("Mom/15", 70), ("RSI/8", 55),
                    ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
-                   ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Seways", 55)]
+                   ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Sideways", 55)]
 
         for text, width in headers:
             ctk.CTkLabel(header_row, text=text, width=width,
@@ -649,7 +649,7 @@ class ScannerApp(ctk.CTk):
                           text_color=badge_text).pack(padx=4, pady=2)
 
             # Price
-            ctk.CTkLabel(row, text=f"₹{r.get('close', 0):.1f}", width=80,
+            ctk.CTkLabel(row, text=f"\u20b9{r.get('close', 0):.1f}", width=80,
                           font=ctk.CTkFont(size=11),
                           text_color="#c8d8c0").pack(side="left", padx=1)
 
@@ -702,7 +702,7 @@ class ScannerApp(ctk.CTk):
 
             # Sideways indicator
             is_sideways = r.get("is_sideways", False)
-            sideways_text = "⚠ Chop" if is_sideways else "✓"
+            sideways_text = "\u26a0 Chop" if is_sideways else "\u2713"
             sideways_color = "#ffaa00" if is_sideways else "#00ff88"
             ctk.CTkLabel(row, text=sideways_text, width=55,
                           font=ctk.CTkFont(size=10),
@@ -767,109 +767,6 @@ class ScannerApp(ctk.CTk):
 
         self._log(f"CSV saved: {filename}")
         os.startfile(filepath) if sys.platform == "win32" else os.system(f"open '{filepath}'")
-
-    # ── FYERS Auth ─────────────────────────────────────────────────────────
-
-    def _load_fyers_token(self):
-        """Load saved FYERS token and update status label."""
-        token_data = FyersAuth.load_token()
-        if token_data and token_data.get("access_token"):
-            # Populate settings from saved token
-            self.settings["fyers_client_id"] = token_data.get("client_id", "")
-            self.settings["fyers_secret_key"] = token_data.get("secret_key", "")
-            self.settings["fyers_redirect_uri"] = token_data.get("redirect_uri", "http://127.0.0.1:8080")
-            self.settings["fyers_access_token"] = token_data.get("access_token", "")
-            # Update UI widgets
-            for key in ["fyers_client_id", "fyers_secret_key", "fyers_redirect_uri", "fyers_access_token"]:
-                if key in self.setting_widgets:
-                    var, _, _ = self.setting_widgets[key]
-                    var.set(self.settings.get(key, ""))
-            saved_at = token_data.get("saved_at", "unknown")
-            self.fyers_status_label.configure(
-                text=f"Connected (saved {saved_at})",
-                text_color="#00ff88")
-            self._log(f"FYERS token loaded (saved {saved_at})")
-        else:
-            self.fyers_status_label.configure(text="Not connected", text_color="#ff6644")
-
-    def _fyers_login(self):
-        """Start FYERS OAuth login flow."""
-        # Collect settings from UI
-        self.settings = self._collect_settings()
-
-        client_id = self.settings.get("fyers_client_id", "")
-        secret_key = self.settings.get("fyers_secret_key", "")
-        redirect_uri = self.settings.get("fyers_redirect_uri", "http://127.0.0.1:8080") or "http://127.0.0.1:8080"
-
-        if not client_id or not secret_key:
-            self._log("Error: Enter FYERS Client ID and Secret Key first")
-            return
-
-        self._log("Starting FYERS login flow...")
-        self.fyers_status_label.configure(text="Logging in...", text_color="#ffaa00")
-        self.fyers_login_btn.configure(state="disabled")
-
-        def _do_login():
-            try:
-                auth = FyersAuth(client_id, secret_key, redirect_uri)
-                auth_url = auth.start_login(open_browser=True)
-                self._log(f"Browser opened. Waiting for login...")
-                self.after(0, lambda: self._log(f"Auth URL: {auth_url[:70]}..."))
-
-                auth_code = auth.wait_for_code(timeout=120)
-                if not auth_code:
-                    self.after(0, lambda: self._log("Login timed out"))
-                    self.after(0, lambda: self.fyers_status_label.configure(text="Timed out", text_color="#ff6644"))
-                    self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
-                    auth.cleanup()
-                    return
-
-                self.after(0, lambda: self._log("Auth code received. Exchanging for token..."))
-                access_token = auth.get_access_token(auth_code)
-
-                if not access_token:
-                    self.after(0, lambda: self._log("Token exchange failed"))
-                    self.after(0, lambda: self.fyers_status_label.configure(text="Token failed", text_color="#ff6644"))
-                    self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
-                    auth.cleanup()
-                    return
-
-                auth.save_token(access_token)
-                auth.cleanup()
-
-                # Update settings
-                self.settings["fyers_access_token"] = access_token
-                if "fyers_access_token" in self.setting_widgets:
-                    var, _, _ = self.setting_widgets["fyers_access_token"]
-                    var.set(access_token)
-
-                self.after(0, lambda: self._log(f"FYERS login successful!"))
-                self.after(0, lambda: self.fyers_status_label.configure(
-                    text="Connected", text_color="#00ff88"))
-                self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
-                save_settings(self.settings)
-
-            except Exception as e:
-                self.after(0, lambda: self._log(f"FYERS login error: {e}"))
-                self.after(0, lambda: self.fyers_status_label.configure(text="Error", text_color="#ff6644"))
-                self.after(0, lambda: self.fyers_login_btn.configure(state="normal"))
-
-        threading.Thread(target=_do_login, daemon=True).start()
-
-    def _fyers_logout(self):
-        """Clear saved FYERS token."""
-        FyersAuth.clear_token()
-        self.settings["fyers_client_id"] = ""
-        self.settings["fyers_secret_key"] = ""
-        self.settings["fyers_redirect_uri"] = ""
-        self.settings["fyers_access_token"] = ""
-        for key in ["fyers_client_id", "fyers_secret_key", "fyers_redirect_uri", "fyers_access_token"]:
-            if key in self.setting_widgets:
-                var, _, _ = self.setting_widgets[key]
-                var.set("")
-        self.fyers_status_label.configure(text="Not connected", text_color="#ff6644")
-        self._log("FYERS logged out")
-        save_settings(self.settings)
 
     # ── Utilities ────────────────────────────────────────────────────────────
 

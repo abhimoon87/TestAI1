@@ -34,12 +34,14 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
                    fast_ma_type: str = "HMA", fast_ma_len: int = 20,
                    slow_ma_type: str = "EMA", slow_ma_len: int = 50,
                    rsi_len: int = 14, vol_ma_len: int = 20,
-                   atr_len: int = 14,
+                   atr_len: int = 14, rs_length: int = 14,
                    adx_len: int = 14, adx_threshold: float = 20.0,
                    chop_len: int = 14, chop_threshold: float = 61.8,
                    slope_ma_type: str = "EMA", slope_ma_len: int = 50,
                    slope_lookback: int = 10, flat_threshold: float = 0.5,
-                   sc_pivot_len: int = 3, sc_bands_mult: float = 0.6) -> dict:
+                   sc_pivot_len: int = 3, sc_bands_mult: float = 0.6,
+                   vp_lookback: int = 200, vp_rows: int = 30,
+                   vp_width: int = 40) -> dict:
     """
     Compute the 10-category score for a stock.
 
@@ -211,10 +213,10 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
 
     # ── Category 8: RELATIVE STRENGTH (max 10 pts) ──────────────────────────
     rs_score = 0.0
-    if index_df is not None and len(index_df) > 63:
+    if index_df is not None and len(index_df) > rs_length + 5:
         idx_close = index_df["close"]
-        idx_rs = (idx_close.iloc[-1] / idx_close.iloc[-1 - 14] - 1) * 100
-        stock_rs = (close.iloc[-1] / close.iloc[-1 - 14] - 1) * 100
+        idx_rs = (idx_close.iloc[-1] / idx_close.iloc[-1 - rs_length] - 1) * 100
+        stock_rs = (close.iloc[-1] / close.iloc[-1 - rs_length] - 1) * 100
         if stock_rs > idx_rs:
             rs_score += 5.0
         if stock_rs > 0:

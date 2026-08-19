@@ -7,6 +7,3 @@ yfinance>=0.2.30
 # Data providers (free, no auth needed)
 jugaad-data>=0.35.0
 nselib>=2.5.0
-
-# Data providers (optional, requires FYERS account)
-# fyers-apiv3>=3.1.0
