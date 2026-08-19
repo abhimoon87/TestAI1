@@ -47,7 +47,10 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
 
     Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
     Max total = 105 pts (capped at 100), with Trend weighted at 20 pts.
-    Key entry signals: crossover freshness + above POC + close above both MAs.
+    Entry signal (swing-trading strategy):
+      (1) recent Fast MA crossed above Slow MA AND current close is above the crossover level
+      (2) current close is above Volume Profile POC AND above the crossover level
+      (3) techno-fundamental total score >= 50
 
     Args:
         df: OHLCV DataFrame with columns [open, high, low, close, volume]
@@ -182,20 +185,21 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     crossover_bars_ago = -1  # -1 means no crossover found
     crossover_count = 0  # Total crossovers found in lookback
     crossover_dates = []  # List of bars where crossovers happened
-    
+    crossover_level = None  # Price level where the most recent crossover occurred
+
     lookback = min(crossover_lookback, len(fast_ma) - 1)  # Check last N bars (or available bars)
     for i in range(1, lookback + 1):
         idx_curr = -i
         idx_prev = -i - 1
-        
+
         if idx_prev < -len(fast_ma):
             break
-        
+
         fast_curr = fast_ma.iloc[idx_curr]
         fast_prev = fast_ma.iloc[idx_prev]
         slow_curr = slow_ma.iloc[idx_curr]
         slow_prev = slow_ma.iloc[idx_prev]
-        
+
         # Check if crossover happened at this bar
         if (not np.isnan(fast_curr) and not np.isnan(fast_prev) and
             not np.isnan(slow_curr) and not np.isnan(slow_prev)):
@@ -205,11 +209,19 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
                 if not ma_crossed_above:  # First (most recent) crossover
                     ma_crossed_above = True
                     crossover_bars_ago = i
-    
+                    # Price level of the crossover (~ where Fast MA met Slow MA)
+                    crossover_level = float(slow_curr)
+
     curr["ma_crossed_above"] = ma_crossed_above
     curr["crossover_bars_ago"] = crossover_bars_ago if ma_crossed_above else -1
     curr["crossover_count"] = crossover_count
     curr["crossover_dates"] = crossover_dates
+    curr["crossover_level"] = crossover_level
+
+    # Criterion: current close must be above the crossover price level
+    curr["close_above_crossover"] = (
+        crossover_level is not None and curr["close"] > crossover_level
+    )
 
     # ── Category 1: TREND (max 20 pts) ──────────────────────────────────────
     # Priority: Crossover freshness + POC position are the key entry signals
@@ -449,6 +461,16 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "fund_detail": fund_detail,
         # Combined rating based on key signals + score
         "combined_rating": _get_combined_rating(total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]),
+        # Swing-trading ENTRY signal (per strategy):
+        #   (1) recent Fast MA crossed above Slow MA AND close above the crossover level
+        #   (2) close above Volume Profile POC AND above the crossover level
+        #   (3) techno-fundamental score >= 50
+        "entry_signal": bool(
+            curr["ma_crossed_above"]
+            and curr["close_above_crossover"]
+            and curr["above_poc"]
+            and total >= 50
+        ),
     }
 
     return result

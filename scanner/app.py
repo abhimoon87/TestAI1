@@ -198,7 +198,7 @@ class ScannerApp(ctk.CTk):
         self.trend_filter_var = ctk.StringVar(value="All")
         trend_menu = ctk.CTkOptionMenu(
             sidebar, variable=self.trend_filter_var,
-            values=["All", "Bullish Only", "Bearish Only", "MA + POC Only", "Crossover Only"],
+            values=["All", "Bullish Only", "Bearish Only", "MA + POC Only", "Crossover Only", "Entry Signals Only"],
             width=280, height=32,
             fg_color="#153520", button_color="#1a4a2a",
             dropdown_fg_color="#0f2a1a"
@@ -464,6 +464,7 @@ class ScannerApp(ctk.CTk):
         stats = [
             ("TOTAL", "total", "#00ddcc"),
             ("PASSED", "passed", "#00ff88"),
+            ("ENTRY", "entry", "#00ff88"),
             ("AVG", "avg", "#aaff00"),
             ("HIGH", "high", "#00ff88"),
             ("BULL", "bull", "#00ff88"),
@@ -493,8 +494,10 @@ class ScannerApp(ctk.CTk):
         high = max(r["total"] for r in results) if results else 0
         bull = len([r for r in results if r.get("trend_dir") == "Bull"])
         bear = len([r for r in results if r.get("trend_dir") == "Bear"])
+        entry = len([r for r in results if r.get("entry_signal")])
         self.summary_cards["total"].configure(text=str(total))
         self.summary_cards["passed"].configure(text=str(passed))
+        self.summary_cards["entry"].configure(text=str(entry))
         self.summary_cards["avg"].configure(text=f"{avg:.1f}")
         self.summary_cards["high"].configure(text=f"{high:.0f}")
         self.summary_cards["bull"].configure(text=str(bull))
@@ -502,7 +505,7 @@ class ScannerApp(ctk.CTk):
 
     def _reset_summary(self):
         """Reset the summary cards to their empty state."""
-        for key in ("total", "passed", "avg", "high", "bull", "bear"):
+        for key in ("total", "passed", "entry", "avg", "high", "bull", "bear"):
             if hasattr(self, "summary_cards") and key in self.summary_cards:
                 self.summary_cards[key].configure(text="—")
 
@@ -683,6 +686,13 @@ class ScannerApp(ctk.CTk):
                                 # Only show stocks that had a crossover in the lookback period
                                 if not scores.get("ma_crossed_above", False):
                                     continue
+                            elif trend_filter == "Entry Signals Only":
+                                # Only show stocks that meet the full swing-entry strategy:
+                                # (1) Fast MA crossed above Slow MA AND close above crossover level
+                                # (2) close above Volume Profile POC AND above crossover level
+                                # (3) techno-fundamental score >= 50
+                                if not scores.get("entry_signal", False):
+                                    continue
 
                             results.append(scores)
                             scored += 1
@@ -730,7 +740,7 @@ class ScannerApp(ctk.CTk):
         header_row.pack(fill="x", padx=2, pady=(2, 0))
         header_row.pack_propagate(False)
 
-        headers = [("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90),
+        headers = [("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90), ("ENTRY", 60),
                    ("Price", 80), ("MA", 50), ("POC", 50), ("Trend/15", 70), ("Mom/15", 70), ("RSI/8", 55),
                    ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
                    ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Sideways", 55)]
@@ -787,6 +797,15 @@ class ScannerApp(ctk.CTk):
             ctk.CTkLabel(badge_frame, text=rating, width=85,
                           font=ctk.CTkFont(size=9, weight="bold"),
                           text_color=badge_text).pack(padx=4, pady=2)
+
+            # ENTRY signal badge (full swing-entry strategy met?)
+            entry_signal = r.get("entry_signal", False)
+            entry_badge = ctk.CTkFrame(row, fg_color="#0a3a1a" if entry_signal else "#3a0a0a",
+                                       corner_radius=3, height=20)
+            entry_badge.pack(side="left", padx=2)
+            ctk.CTkLabel(entry_badge, text="ENTRY" if entry_signal else "—", width=55,
+                          font=ctk.CTkFont(size=9, weight="bold"),
+                          text_color="#00ff88" if entry_signal else "#ff4444").pack(padx=4, pady=2)
 
             # Price
             ctk.CTkLabel(row, text=f"\u20b9{r.get('close', 0):.1f}", width=80,
