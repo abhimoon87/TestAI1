@@ -154,42 +154,77 @@ def fetch_fundamentals(ticker: str) -> Optional[dict]:
     return provider.fetch_fundamentals(ticker)
 
 
-def fetch_batch(tickers: list, period: str = "1y", delay: float = 0.1,
-                fetch_fund: bool = True) -> dict:
+def fetch_batch_yfinance(tickers: list, period: str = "1y") -> dict:
     """
-    Fetch data for multiple tickers with rate limiting.
+    Fast batch fetch using yfinance download (single API call).
+    This is MUCH faster than individual fetches.
 
     Args:
         tickers: List of NSE symbols
         period: Data period
-        delay: Delay between requests (seconds)
-        fetch_fund: Whether to fetch fundamentals data
 
     Returns:
-        Dict mapping ticker -> DataFrame (with _fundamentals attr if fetch_fund=True)
+        Dict mapping ticker -> DataFrame
+    """
+    try:
+        import yfinance as yf
+        import pandas as pd
+
+        # Add .NS suffix for NSE stocks
+        yf_tickers = [f"{t}.NS" for t in tickers]
+        ticker_map = {f"{t}.NS": t for t in tickers}  # Map back to original
+
+        # Single batch download
+        print(f"  Batch downloading {len(tickers)} stocks via yfinance...", flush=True)
+        data = yf.download(yf_tickers, period=period, group_by="ticker",
+                           auto_adjust=True, progress=False, threads=True)
+
+        results = {}
+        for yf_ticker, orig_ticker in ticker_map.items():
+            try:
+                if len(tickers) == 1:
+                    df = data.copy()
+                else:
+                    df = data[yf_ticker].copy()
+
+                if df is None or df.empty or len(df) < 20:
+                    continue
+
+                # Normalize columns
+                df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+                df.columns = ["open", "high", "low", "close", "volume"]
+                df = df.dropna()
+
+                if len(df) >= 50:
+                    results[orig_ticker] = df
+            except Exception:
+                continue
+
+        print(f"  Batch download complete: {len(results)}/{len(tickers)} stocks")
+        return results
+
+    except ImportError:
+        print("  yfinance not available for batch download")
+        return {}
+    except Exception as e:
+        print(f"  Batch download failed: {e}")
+        return {}
+
+
+def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> Optional[pd.DataFrame]:
+    """
+    Fast single stock fetch using cache-first approach.
     """
     provider = _get_provider()
-    results = {}
-    total = len(tickers)
-
-    for i, ticker in enumerate(tickers, 1):
-        print(f"  [{i}/{total}] Fetching {ticker}...", end="", flush=True)
-        try:
-            df = provider.fetch_stock(ticker, period)
+    try:
+        df = provider.fetch_stock(ticker, period)
+        if df is not None and not df.empty and len(df) >= 50:
+            df = resample_ohlcv(df, timeframe)
             if df is not None and not df.empty:
-                if fetch_fund:
-                    fund = provider.fetch_fundamentals(ticker)
-                    if fund is not None:
-                        df._fundamentals = fund
-                results[ticker] = df
-                src = provider.last_provider or "?"
-                print(f" OK ({len(df)} bars, src:{src})")
-            else:
-                print(f" no data")
-        except Exception as e:
-            print(f" error: {e}")
-
-        if i < total:
-            time.sleep(delay)
-
-    return results
+                fund = provider.fetch_fundamentals(ticker)
+                if fund is not None:
+                    df._fundamentals = fund
+                return df
+    except Exception:
+        pass
+    return None

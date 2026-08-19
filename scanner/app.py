@@ -19,7 +19,7 @@ from datetime import datetime
 import customtkinter as ctk
 
 from .universes import UNIVERSES
-from .data_fetcher import fetch_stock_data, fetch_index_data
+from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, fetch_batch_yfinance
 from .scoring import compute_scores
 from .report import generate_html_report, save_report
 
@@ -101,8 +101,9 @@ class ScannerApp(ctk.CTk):
         super().__init__()
 
         self.title("HMAxEMA Stock Scanner — Indian Market")
-        self.geometry("1400x900")
+        self.geometry("1920x1080")
         self.minsize(1200, 800)
+        self.state("zoomed")  # Start maximized
 
         self.settings = load_settings()
         self.results = []
@@ -370,9 +371,9 @@ class ScannerApp(ctk.CTk):
         """Right main area: results table and log."""
         main = ctk.CTkFrame(self, fg_color="#0a1a10", corner_radius=0)
         main.grid(row=0, column=1, sticky="nsew")
-        main.grid_rowconfigure(0, weight=0)  # Header - fixed
-        main.grid_rowconfigure(1, weight=1)  # Table - expands
-        main.grid_rowconfigure(2, weight=0)  # Log - fixed at bottom
+        main.grid_rowconfigure(1, weight=1)  # Table - takes ALL extra space
+        main.grid_rowconfigure(0, weight=0)  # Header - fixed height
+        main.grid_rowconfigure(2, weight=0)  # Log - fixed height at bottom
         main.grid_columnconfigure(0, weight=1)
 
         # ── Header bar ───────────────────────────────────────────────────────
@@ -412,22 +413,21 @@ class ScannerApp(ctk.CTk):
             command=self._clear_results, state="disabled")
         self.clear_btn.pack(side="right", padx=(0, 5))
 
-        # ── Results Table (ScrolledFrame with custom rows) ───────────────────
-        self.table_frame = ctk.CTkScrollableFrame(
-            main, fg_color="#0a1a10")
-        self.table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
-        self.table_frame.grid_columnconfigure(0, weight=1)
-
-        # ── Log area (fixed at bottom) ──────────────────────────────────────
-        log_frame = ctk.CTkFrame(main, fg_color="#061208", height=100)
-        log_frame.grid(row=2, column=0, sticky="sew", padx=5, pady=(0, 5))
-        log_frame.grid_propagate(False)
+        # ── Log area (FIXED at bottom, ALWAYS visible) ──────────────────────
+        log_frame = ctk.CTkFrame(main, fg_color="#061208")
+        log_frame.grid(row=2, column=0, sticky="sew", padx=5, pady=5)
+        log_frame.grid_propagate(False)  # Don't resize - keep fixed height
+        log_frame.configure(height=150)  # Fixed 150px height
         log_frame.grid_columnconfigure(0, weight=1)
-        log_frame.grid_rowconfigure(0, weight=1)
+        log_frame.grid_rowconfigure(1, weight=1)
         
-        log_label = ctk.CTkLabel(log_frame, text="LOG", font=ctk.CTkFont(size=9, weight="bold"),
-                                 text_color="#4a7a4a", anchor="w")
-        log_label.grid(row=0, column=0, sticky="w", padx=5, pady=(2, 0))
+        log_header = ctk.CTkFrame(log_frame, fg_color="#0a1a0a", height=24)
+        log_header.grid(row=0, column=0, sticky="ew")
+        log_header.grid_propagate(False)
+        
+        ctk.CTkLabel(log_header, text="  LOG",
+                      font=ctk.CTkFont(size=10, weight="bold"),
+                      text_color="#4a7a4a").pack(side="left", padx=5)
         
         self.log_text = ctk.CTkTextbox(
             log_frame, fg_color="#061208",
@@ -436,7 +436,13 @@ class ScannerApp(ctk.CTk):
             state="normal")
         self.log_text.bind("<Control-a>", lambda e: self.log_text.tag_add("sel", "1.0", "end"))
         self.log_text.bind("<Control-c>", lambda e: self._copy_selection())
-        self.log_text.grid(row=1, column=0, sticky="nsew", padx=5, pady=(0, 5))
+        self.log_text.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
+
+        # ── Results Table (ScrolledFrame - takes ALL remaining space) ───────
+        self.table_frame = ctk.CTkScrollableFrame(
+            main, fg_color="#0a1a10")
+        self.table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        self.table_frame.grid_columnconfigure(0, weight=1)
 
     # ── Settings Management ──────────────────────────────────────────────────
 
@@ -548,7 +554,6 @@ class ScannerApp(ctk.CTk):
             self._log(f"FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
                        f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
                        f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
-            self._log(f"Using free providers: jugaad-data / yfinance / nselib")
 
             # Fetch NIFTY index
             self._set_progress(0, "Fetching NIFTY 50 index...")
@@ -558,16 +563,22 @@ class ScannerApp(ctk.CTk):
             else:
                 self._log("Warning: NIFTY index unavailable, using proxy for RS")
 
-            # Fetch and score stocks
-            results = []
-            total = len(tickers)
+            # FAST: Batch download all stocks at once via yfinance
+            self._set_progress(0.05, f"Batch downloading {len(tickers)} stocks...")
+            self._log(f"Batch downloading {len(tickers)} stocks via yfinance...")
+            batch_data = fetch_batch_yfinance(tickers, period=period)
+            self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
 
-            for i, ticker in enumerate(tickers, 1):
-                progress = i / total
-                self._set_progress(progress, f"[{i}/{total}] {ticker}")
+            # Score stocks from batch data
+            results = []
+            total = len(batch_data)
+            scored = 0
+
+            for i, (ticker, df) in enumerate(batch_data.items(), 1):
+                progress = 0.1 + (i / total * 0.9) if total > 0 else 0.5
+                self._set_progress(progress, f"[{i}/{total}] Scoring {ticker}")
 
                 try:
-                    df = fetch_stock_data(ticker, period=period, timeframe=timeframe)
                     if df is not None and not df.empty:
                         scores = compute_scores(
                             df, index_df=index_df,
@@ -612,12 +623,11 @@ class ScannerApp(ctk.CTk):
                                     continue
 
                             results.append(scores)
-                            self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
+                            scored += 1
+                            if scored % 10 == 0 or scored <= 5:
+                                self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
                 except Exception as e:
-                    self._log(f"  {ticker}: ERROR - {str(e)}")
-
-                # Rate limiting
-                time.sleep(0.15)
+                    pass  # Silently skip errors in batch mode
 
             # Sort and store
             results.sort(key=lambda x: x["total"], reverse=True)
@@ -625,7 +635,7 @@ class ScannerApp(ctk.CTk):
 
             # Update UI
             passed = len([r for r in results if r["total"] >= settings["min_score"]])
-            filtered_out = total - len(results) if trend_filter != "All" else 0
+            filtered_out = len(tickers) - len(results) if trend_filter != "All" else 0
             if trend_filter == "MA + POC Only":
                 filter_msg = f", {filtered_out} filtered (require MA bullish + above POC)" if filtered_out > 0 else ""
             else:
