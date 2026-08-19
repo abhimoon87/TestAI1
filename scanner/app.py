@@ -117,7 +117,7 @@ class ScannerApp(ctk.CTk):
     def _build_ui(self):
         # Configure grid
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
         self._build_sidebar()
         self._build_main_area()
@@ -125,7 +125,7 @@ class ScannerApp(ctk.CTk):
     def _build_sidebar(self):
         """Left sidebar: universe, settings, run button."""
         sidebar = ctk.CTkFrame(self, width=320, corner_radius=0, fg_color="#0d1f14")
-        sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
+        sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
 
         # ── Logo / Title ─────────────────────────────────────────────────────
