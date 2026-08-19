@@ -31,8 +31,8 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
 
 
 def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
-                   fast_ma_type: str = "HMA", fast_ma_len: int = 20,
-                   slow_ma_type: str = "EMA", slow_ma_len: int = 50,
+                  fast_ma_type: str = "HMA", fast_ma_len: int = 40,
+                  slow_ma_type: str = "EMA", slow_ma_len: int = 50,
                    rsi_len: int = 14, vol_ma_len: int = 20,
                    atr_len: int = 14, rs_length: int = 14,
                    adx_len: int = 14, adx_threshold: float = 20.0,

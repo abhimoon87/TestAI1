@@ -34,7 +34,7 @@ SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 DEFAULT_SETTINGS = {
     # Moving Averages
     "fast_ma_type": "HMA",
-    "fast_ma_len": 20,
+    "fast_ma_len": 40,
     "slow_ma_type": "EMA",
     "slow_ma_len": 50,
     # Technical Analysis
