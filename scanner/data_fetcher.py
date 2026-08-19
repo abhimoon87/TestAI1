@@ -16,6 +16,49 @@ from typing import Optional
 from data_providers import DataProvider
 
 
+# ── OHLCV Resampling ───────────────────────────────────────────────────────
+
+def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """
+    Resample daily OHLCV data to weekly or monthly bars.
+
+    Args:
+        df: Daily OHLCV DataFrame with columns [open, high, low, close, volume]
+        timeframe: 'D' (daily, no change), 'W' (weekly), 'M' (monthly)
+
+    Returns:
+        Resampled DataFrame with same columns
+    """
+    if timeframe == "D" or df is None or df.empty:
+        return df
+
+    # Ensure index is DatetimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df = df.copy()
+        df.index = pd.to_datetime(df.index)
+
+    # Remove timezone info if present to avoid issues
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+
+    if timeframe == "W":
+        rule = "W"
+    elif timeframe == "M":
+        rule = "ME"  # Month End
+    else:
+        return df
+
+    resampled = df.resample(rule).agg({
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum"
+    }).dropna()
+
+    return resampled
+
+
 # ── Global provider instance ───────────────────────────────────────────────
 _provider = None
 
@@ -28,7 +71,8 @@ def _get_provider() -> DataProvider:
     return _provider
 
 
-def fetch_stock_data(ticker: str, period: str = "1y", retries: int = 2) -> Optional[pd.DataFrame]:
+def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
+                     retries: int = 2) -> Optional[pd.DataFrame]:
     """
     Fetch OHLCV data for an Indian NSE stock.
 
@@ -38,6 +82,7 @@ def fetch_stock_data(ticker: str, period: str = "1y", retries: int = 2) -> Optio
     Args:
         ticker: NSE symbol (e.g., "RELIANCE", "TCS")
         period: Data period ("6mo", "1y", "2y", "5y")
+        timeframe: Bar interval - 'D' (daily), 'W' (weekly), 'M' (monthly)
         retries: Number of retry attempts
 
     Returns:
@@ -49,6 +94,10 @@ def fetch_stock_data(ticker: str, period: str = "1y", retries: int = 2) -> Optio
         try:
             df = provider.fetch_stock(ticker, period)
             if df is not None and not df.empty and len(df) >= 50:
+                # Resample to requested timeframe
+                df = resample_ohlcv(df, timeframe)
+                if df is None or df.empty:
+                    continue
                 # Attach fundamentals
                 fund = provider.fetch_fundamentals(ticker)
                 if fund is not None:

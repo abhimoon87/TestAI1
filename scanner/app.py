@@ -24,7 +24,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from universes import UNIVERSES
-from data_fetcher import fetch_stock_data, fetch_index_data
+from data_fetcher import fetch_stock_data, fetch_index_data, resample_ohlcv
 from scoring import compute_scores
 from report import generate_html_report, save_report
 
@@ -67,6 +67,7 @@ DEFAULT_SETTINGS = {
     # Scanner
     "min_score": 50.0,
     "data_period": "1y",
+    "timeframe": "D",
     "trend_filter": "All",
 }
 
@@ -160,10 +161,25 @@ class ScannerApp(ctk.CTk):
             font=ctk.CTkFont(size=11), text_color="#6a8a6a")
         self.universe_count_label.pack(padx=20, anchor="w")
 
+        # ── Timeframe ──────────────────────────────────────────────────────
+        ctk.CTkLabel(sidebar, text="TIMEFRAME",
+                      font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color="#00ddcc").pack(padx=20, pady=(12, 0), anchor="w")
+
+        self.timeframe_var = ctk.StringVar(value="Daily")
+        timeframe_menu = ctk.CTkOptionMenu(
+            sidebar, variable=self.timeframe_var,
+            values=["Daily", "Weekly", "Monthly"],
+            width=280, height=32,
+            fg_color="#153520", button_color="#1a4a2a",
+            dropdown_fg_color="#0f2a1a"
+        )
+        timeframe_menu.pack(padx=20, pady=(4, 8))
+
         # ── Data Period ──────────────────────────────────────────────────────
         ctk.CTkLabel(sidebar, text="DATA PERIOD",
                       font=ctk.CTkFont(size=11, weight="bold"),
-                      text_color="#00ddcc").pack(padx=20, pady=(12, 0), anchor="w")
+                      text_color="#00ddcc").pack(padx=20, pady=(8, 0), anchor="w")
 
         self.period_var = ctk.StringVar(value="1 Year")
         period_menu = ctk.CTkOptionMenu(
@@ -423,6 +439,10 @@ class ScannerApp(ctk.CTk):
         period_map = {"6mo": "6 Months", "1y": "1 Year", "2y": "2 Years"}
         self.period_var.set(period_map.get(self.settings.get("data_period", "1y"), "1 Year"))
 
+        # Timeframe
+        tf_map = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
+        self.timeframe_var.set(tf_map.get(self.settings.get("timeframe", "D"), "Daily"))
+
         # Trend filter
         self.trend_filter_var.set(self.settings.get("trend_filter", "All"))
 
@@ -453,6 +473,10 @@ class ScannerApp(ctk.CTk):
         # Data period
         period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
         s["data_period"] = period_map.get(self.period_var.get(), "1y")
+
+        # Timeframe
+        tf_map = {"Daily": "D", "Weekly": "W", "Monthly": "M"}
+        s["timeframe"] = tf_map.get(self.timeframe_var.get(), "D")
 
         # Trend filter
         s["trend_filter"] = self.trend_filter_var.get()
@@ -495,10 +519,13 @@ class ScannerApp(ctk.CTk):
             tickers = UNIVERSES.get(universe_name, [])
             settings = self.settings
             period = settings.get("data_period", "1y")
+            timeframe = settings.get("timeframe", "D")
             trend_filter = settings.get("trend_filter", "All")
 
+            tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
             self._log(f"Starting scan: {universe_name} ({len(tickers)} stocks)")
-            self._log(f"Filter: {trend_filter} | FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
+            self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
+            self._log(f"FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
                        f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
                        f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
             self._log(f"Using free providers: jugaad-data / yfinance / nselib")
@@ -520,7 +547,7 @@ class ScannerApp(ctk.CTk):
                 self._set_progress(progress, f"[{i}/{total}] {ticker}")
 
                 try:
-                    df = fetch_stock_data(ticker, period=period)
+                    df = fetch_stock_data(ticker, period=period, timeframe=timeframe)
                     if df is not None and not df.empty:
                         scores = compute_scores(
                             df, index_df=index_df,
@@ -727,9 +754,11 @@ class ScannerApp(ctk.CTk):
         if not self.results:
             return
         threshold = self.settings.get("min_score", 50)
+        tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
+        tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
         html = generate_html_report(
             self.results,
-            title=f"HMAxEMA Scanner — {self.universe_var.get()}",
+            title=f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}",
             threshold=threshold)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"scanner_report_{timestamp}.html"
