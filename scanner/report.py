@@ -54,7 +54,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         ma_crossed = r.get('ma_crossed_above', False)
         crossover_ago = r.get('crossover_bars_ago', -1)
         if ma_crossed:
-            ma_html = f'<span class="ma-cross">^ CROSS ({crossover_ago} bars ago)</span>'
+            freshness_cls = 'fresh' if crossover_ago <= 2 else 'stale'
+            ma_html = f'<span class="ma-cross">^ CROSS</span> <span class="{freshness_cls}">({crossover_ago} bars)</span>'
         elif ma_bullish:
             ma_html = '<span class="ma-bull">^ BULL</span>'
         else:
@@ -64,9 +65,16 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         above_poc = r.get('above_poc', False)
         vp_poc = r.get('vp_poc', 0)
         if above_poc:
-            poc_html = f'<span class="poc-above">ABOVE</span>'
+            poc_html = f'<span class="poc-above">ABOVE</span> <span style="color:var(--text-dim);font-size:0.8em">{vp_poc}</span>'
         else:
-            poc_html = f'<span class="poc-below">BELOW</span>'
+            poc_html = f'<span class="poc-below">BELOW</span> <span style="color:var(--text-dim);font-size:0.8em">{vp_poc}</span>'
+
+        # Close above both MAs
+        close_above_both = r.get('close_above_both_ma', False)
+        if close_above_both:
+            bothma_html = '<span class="bothma-yes">YES</span>'
+        else:
+            bothma_html = '<span class="bothma-no">NO</span>'
 
         sideways = r.get('is_sideways', False)
         sideways_cls = 'sideways' if sideways else 'trending'
@@ -76,18 +84,21 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         rows_html += f"""
         <tr class="{'highlight' if score >= threshold else ''}" 
             data-ma-bull="{'true' if ma_bullish else 'false'}" 
-            data-above-poc="{'true' if above_poc else 'false'}">
+            data-above-poc="{'true' if above_poc else 'false'}"
+            data-both-ma="{'true' if close_above_both else 'false'}"
+            data-crossed="{'true' if ma_crossed else 'false'}">
             <td class="ticker">{r['ticker']}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
             <td class="num">{r.get('close', '—')}</td>
             <td class="num">{ma_html}</td>
             <td class="num">{poc_html}</td>
+            <td class="num">{bothma_html}</td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar" style="width: {r['trend'] / 15 * 100:.0f}%"></div>
+                    <div class="bar" style="width: {r['trend'] / 20 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['trend']}/15</span>
+                <span class="bar-val">{r['trend']}/20</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
@@ -201,6 +212,10 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .ma-bear {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
     .poc-above {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
     .poc-below {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
+    .bothma-yes {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
+    .bothma-no {{ color: #6a8a6a; font-size: 0.9em; }}
+    .fresh {{ color: #00ff88; }}
+    .stale {{ color: var(--text-dim); }}
     .footer {{ margin-top: 20px; color: var(--text-dim); font-size: 0.75em; text-align: center; }}
 </style>
 </head>
@@ -243,9 +258,12 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     </select>
     <select id="signalFilter" onchange="filterTable()">
         <option value="">All signals</option>
-        <option value="ma+poq">MA + POC Only</option>
+        <option value="both_ma+poc">Close &gt; Both MA + POC</option>
+        <option value="ma+poq">MA Bull + POC</option>
+        <option value="crossed">Fresh Crossover</option>
         <option value="ma_bull">MA Bullish only</option>
         <option value="above_poc">Above POC only</option>
+        <option value="both_ma">Close &gt; Both MA</option>
     </select>
 </div>
 
@@ -258,19 +276,20 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     <th onclick="sortTable(3)">Price</th>
     <th onclick="sortTable(4)">MA Signal</th>
     <th onclick="sortTable(5)">POC</th>
-    <th onclick="sortTable(6)">Trend</th>
-    <th onclick="sortTable(7)">Momentum</th>
-    <th onclick="sortTable(8)">RSI</th>
-    <th onclick="sortTable(9)">MACD</th>
-    <th onclick="sortTable(10)">Volume</th>
-    <th onclick="sortTable(11)">RS</th>
-    <th onclick="sortTable(12)">Fund</th>
-    <th onclick="sortTable(13)">RSI Val</th>
-    <th onclick="sortTable(14)">ADX</th>
-    <th onclick="sortTable(15)">1M Chg</th>
-    <th onclick="sortTable(16)">Trend</th>
-    <th onclick="sortTable(17)">Volatility</th>
-    <th onclick="sortTable(18)">Sideways</th>
+    <th onclick="sortTable(6)">Both MA</th>
+    <th onclick="sortTable(7)">Trend</th>
+    <th onclick="sortTable(8)">Momentum</th>
+    <th onclick="sortTable(9)">RSI</th>
+    <th onclick="sortTable(10)">MACD</th>
+    <th onclick="sortTable(11)">Volume</th>
+    <th onclick="sortTable(12)">RS</th>
+    <th onclick="sortTable(13)">Fund</th>
+    <th onclick="sortTable(14)">RSI Val</th>
+    <th onclick="sortTable(15)">ADX</th>
+    <th onclick="sortTable(16)">1M Chg</th>
+    <th onclick="sortTable(17)">Trend</th>
+    <th onclick="sortTable(18)">Volatility</th>
+    <th onclick="sortTable(19)">Sideways</th>
 </tr>
 </thead>
 <tbody>
@@ -329,23 +348,31 @@ function filterTable() {{
     for (let row of rows) {{
         const ticker = row.cells[0].textContent.toLowerCase();
         const score = parseFloat(row.cells[1].textContent);
-        const trend = row.cells[16].textContent;  // Trend column shifted to index 16
+        const trend = row.cells[17].textContent;  // Trend column shifted to index 17
         
-        // Get MA and POC data attributes
+        // Get data attributes
         const maBull = row.getAttribute("data-ma-bull") === "true";
         const abovePoc = row.getAttribute("data-above-poc") === "true";
+        const bothMa = row.getAttribute("data-both-ma") === "true";
+        const crossed = row.getAttribute("data-crossed") === "true";
 
         const matchSearch = ticker.includes(search);
         const matchScore = score >= minScore;
         const matchTrend = !trendFilter || trend.includes(trendFilter);
         
         let matchSignal = true;
-        if (signalFilter === "ma+poq") {{
+        if (signalFilter === "both_ma+poc") {{
+            matchSignal = bothMa && abovePoc;
+        }} else if (signalFilter === "ma+poq") {{
             matchSignal = maBull && abovePoc;
+        }} else if (signalFilter === "crossed") {{
+            matchSignal = crossed;
         }} else if (signalFilter === "ma_bull") {{
             matchSignal = maBull;
         }} else if (signalFilter === "above_poc") {{
             matchSignal = abovePoc;
+        }} else if (signalFilter === "both_ma") {{
+            matchSignal = bothMa;
         }}
 
         row.style.display = (matchSearch && matchScore && matchTrend && matchSignal) ? "" : "none";

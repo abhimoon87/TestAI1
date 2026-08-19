@@ -46,7 +46,8 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     Compute the 10-category score for a stock.
 
     Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
-    Max total = 100 pts (including fundamentals).
+    Max total = 105 pts (capped at 100), with Trend weighted at 20 pts.
+    Key entry signals: crossover freshness + above POC + close above both MAs.
 
     Args:
         df: OHLCV DataFrame with columns [open, high, low, close, volume]
@@ -173,6 +174,9 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     # This is used as a FILTER, not for scoring
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
     
+    # Close above BOTH MAs — stricter entry confirmation
+    curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
+    
     # Look for crossovers in last N bars (configurable)
     ma_crossed_above = False
     crossover_bars_ago = -1  # -1 means no crossover found
@@ -207,29 +211,43 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     curr["crossover_count"] = crossover_count
     curr["crossover_dates"] = crossover_dates
 
-    # ── Category 1: TREND (max 15 pts) ──────────────────────────────────────
-    # Priority: MA crossover and POC position are key signals
+    # ── Category 1: TREND (max 20 pts) ──────────────────────────────────────
+    # Priority: Crossover freshness + POC position are the key entry signals
     trend_score = 0.0
     
-    # MA Trend scoring (crossover is a filter, not scored)
+    # 1. MA alignment (0-5 pts)
     if curr["ma_bullish"]:
-        trend_score += 5.0  # MA alignment is bullish
-    else:
-        trend_score += 0.0  # MA bearish
+        trend_score += 5.0
     
-    # Price above POC bonus
+    # 2. Above Volume Profile POC (0-5 pts) — key volume support
     if curr["above_poc"]:
-        trend_score += 4.0  # Price above volume support
+        trend_score += 5.0
     
-    # Price above slow MA
-    if curr["close"] > curr["slow_ma"]:
+    # 3. Close above BOTH MAs (0-3 pts) — entry confirmation
+    if curr["close_above_both_ma"]:
+        trend_score += 3.0
+    elif curr["close"] > curr["slow_ma"]:
+        trend_score += 1.5  # Partial credit if only above slow MA
+    
+    # 4. Crossover freshness (0-4 pts) — recent crossover = stronger signal
+    if curr["ma_crossed_above"]:
+        bars = curr["crossover_bars_ago"]
+        if bars <= 1:
+            trend_score += 4.0  # Fresh crossover — strongest signal
+        elif bars <= 2:
+            trend_score += 3.0
+        elif bars <= 3:
+            trend_score += 2.0
+        elif bars <= 4:
+            trend_score += 1.0
+        else:
+            trend_score += 0.5  # Older crossover, diminishing value
+    
+    # 5. ADX trend strength (0-3 pts)
+    if not np.isnan(curr["adx"]) and curr["adx"] > 25:
         trend_score += 3.0
     
-    # ADX trend strength
-    if not np.isnan(curr["adx"]) and curr["adx"] > 25:
-        trend_score += 2.0
-    
-    trend_score = min(trend_score, 15.0)
+    trend_score = min(trend_score, 20.0)
 
     # ── Category 2: MOMENTUM (max 15 pts) ───────────────────────────────────
     mom_score = 0.0
@@ -403,6 +421,7 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "fundamentals": round(fund_score, 1),
         # Key signals (priority indicators)
         "ma_bullish": curr["ma_bullish"],
+        "close_above_both_ma": curr["close_above_both_ma"],
         "ma_crossed_above": curr["ma_crossed_above"],
         "crossover_bars_ago": curr["crossover_bars_ago"],
         "crossover_count": curr["crossover_count"],
@@ -429,32 +448,34 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         # Fundamentals detail
         "fund_detail": fund_detail,
         # Combined rating based on key signals + score
-        "combined_rating": _get_combined_rating(total, curr["ma_bullish"], curr["above_poc"]),
+        "combined_rating": _get_combined_rating(total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]),
     }
 
     return result
 
 
-def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool) -> str:
+def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, close_above_both_ma: bool = False) -> str:
     """
     Generate combined rating based on key signals and score.
     
     Priority:
-    1. MA crossover + above POC = strongest signal
+    1. Close above BOTH MAs + above POC = strongest signal (ideal entry)
     2. MA bullish + above POC = strong signal
-    3. Score-based rating as fallback
+    3. MA bullish only or above POC only = moderate
+    4. Score-based rating as fallback
     
     Args:
         total_score: Total score (0-100)
         ma_bullish: True if Fast MA > Slow MA
         above_poc: True if price >= VP POC
+        close_above_both_ma: True if close > Fast MA AND close > Slow MA
     
     Returns:
         'EXCELLENT', 'GOOD', 'MODERATE', or 'POOR'
     """
-    # Strongest: Both conditions met
-    if ma_bullish and above_poc:
-        if total_score >= 65:
+    # Strongest: Close above both MAs + above POC (ideal entry criteria)
+    if close_above_both_ma and above_poc:
+        if total_score >= 60:
             return "EXCELLENT"
         elif total_score >= 50:
             return "GOOD"
@@ -463,7 +484,18 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool) 
         else:
             return "POOR"
     
-    # Strong: MA bullish only
+    # Strong: MA bullish + above POC (close may be between the MAs)
+    elif ma_bullish and above_poc:
+        if total_score >= 65:
+            return "EXCELLENT"
+        elif total_score >= 50:
+            return "GOOD"
+        elif total_score >= 40:
+            return "MODERATE"
+        else:
+            return "POOR"
+    
+    # Moderate: MA bullish only
     elif ma_bullish:
         if total_score >= 70:
             return "EXCELLENT"
