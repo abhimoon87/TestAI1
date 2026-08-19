@@ -29,18 +29,43 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     rows_html = ""
     for r in results:
         score = r["total"]
-        if score >= 70:
-            badge = '<span class="badge excellent">EXCELLENT</span>'
-        elif score >= 50:
-            badge = '<span class="badge good">GOOD</span>'
-        elif score >= 30:
-            badge = '<span class="badge moderate">MODERATE</span>'
+        
+        # Use combined rating if available, else fall back to score-based
+        combined_rating = r.get('combined_rating', None)
+        if combined_rating:
+            rating_lower = combined_rating.lower()
+            badge = f'<span class="badge {rating_lower}">{combined_rating}</span>'
         else:
-            badge = '<span class="badge poor">POOR</span>'
+            if score >= 70:
+                badge = '<span class="badge excellent">EXCELLENT</span>'
+            elif score >= 50:
+                badge = '<span class="badge good">GOOD</span>'
+            elif score >= 30:
+                badge = '<span class="badge moderate">MODERATE</span>'
+            else:
+                badge = '<span class="badge poor">POOR</span>'
 
         trend_icon = "▲" if r["trend_dir"] == "Bull" else "▼"
         trend_class = "bull" if "bull" in r["trend_color"] else "bear"
         rs_icon = "+" if (r.get("pc1m", 0) or 0) > 0 else ""
+
+        # MA signal
+        ma_bullish = r.get('ma_bullish', False)
+        ma_crossed = r.get('ma_crossed_above', False)
+        if ma_crossed:
+            ma_html = '<span class="ma-cross">^ CROSS</span>'
+        elif ma_bullish:
+            ma_html = '<span class="ma-bull">^ BULL</span>'
+        else:
+            ma_html = '<span class="ma-bear">v BEAR</span>'
+
+        # POC signal
+        above_poc = r.get('above_poc', False)
+        vp_poc = r.get('vp_poc', 0)
+        if above_poc:
+            poc_html = f'<span class="poc-above">ABOVE</span>'
+        else:
+            poc_html = f'<span class="poc-below">BELOW</span>'
 
         sideways = r.get('is_sideways', False)
         sideways_cls = 'sideways' if sideways else 'trending'
@@ -48,11 +73,15 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         sideways_label = f'⚠ Chop' if sideways else '✓ Trend'
 
         rows_html += f"""
-        <tr class="{'highlight' if score >= threshold else ''}">
+        <tr class="{'highlight' if score >= threshold else ''}" 
+            data-ma-bull="{'true' if ma_bullish else 'false'}" 
+            data-above-poc="{'true' if above_poc else 'false'}">
             <td class="ticker">{r['ticker']}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
             <td class="num">{r.get('close', '—')}</td>
+            <td class="num">{ma_html}</td>
+            <td class="num">{poc_html}</td>
             <td class="num bar-cell">
                 <div class="bar-container">
                     <div class="bar" style="width: {r['trend'] / 15 * 100:.0f}%"></div>
@@ -166,6 +195,11 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .badge.good {{ background: rgba(170,255,0,0.15); color: var(--lime); }}
     .badge.moderate {{ background: rgba(255,170,0,0.15); color: var(--orange); }}
     .badge.poor {{ background: rgba(255,68,68,0.15); color: var(--red); }}
+    .ma-cross {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
+    .ma-bull {{ color: #aaff00; font-weight: bold; font-size: 0.9em; }}
+    .ma-bear {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
+    .poc-above {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
+    .poc-below {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
     .footer {{ margin-top: 20px; color: var(--text-dim); font-size: 0.75em; text-align: center; }}
 </style>
 </head>
@@ -194,7 +228,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 </div>
 
 <div class="filters">
-    <input type="text" id="search" placeholder="🔍 Search ticker..." oninput="filterTable()">
+    <input type="text" id="search" placeholder="Search ticker..." oninput="filterTable()">
     <select id="minScore" onchange="filterTable()">
         <option value="0">All scores</option>
         <option value="70" {"selected" if threshold >= 70 else ""}>70+ EXCELLENT</option>
@@ -203,8 +237,14 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     </select>
     <select id="trendFilter" onchange="filterTable()">
         <option value="">All trends</option>
-        <option value="Bull">▲ Bullish only</option>
-        <option value="Bear">▼ Bearish only</option>
+        <option value="Bull">Bullish only</option>
+        <option value="Bear">Bearish only</option>
+    </select>
+    <select id="signalFilter" onchange="filterTable()">
+        <option value="">All signals</option>
+        <option value="ma+poq">MA + POC Only</option>
+        <option value="ma_bull">MA Bullish only</option>
+        <option value="above_poc">Above POC only</option>
     </select>
 </div>
 
@@ -214,20 +254,22 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     <th onclick="sortTable(0)">Ticker</th>
     <th onclick="sortTable(1)">Score</th>
     <th onclick="sortTable(2)">Rating</th>
-    <th onclick="sortTable(3)">Price (₹)</th>
-    <th onclick="sortTable(4)">Trend</th>
-    <th onclick="sortTable(5)">Momentum</th>
-    <th onclick="sortTable(6)">RSI</th>
-    <th onclick="sortTable(7)">MACD</th>
-    <th onclick="sortTable(8)">Volume</th>
-    <th onclick="sortTable(9)">RS</th>
-    <th onclick="sortTable(10)">Fund</th>
-    <th onclick="sortTable(11)">RSI Val</th>
-    <th onclick="sortTable(12)">ADX</th>
-    <th onclick="sortTable(13)">1M Chg</th>
-    <th onclick="sortTable(14)">Trend</th>
-    <th onclick="sortTable(15)">Volatility</th>
-    <th onclick="sortTable(16)">Sideways</th>
+    <th onclick="sortTable(3)">Price</th>
+    <th onclick="sortTable(4)">MA Signal</th>
+    <th onclick="sortTable(5)">POC</th>
+    <th onclick="sortTable(6)">Trend</th>
+    <th onclick="sortTable(7)">Momentum</th>
+    <th onclick="sortTable(8)">RSI</th>
+    <th onclick="sortTable(9)">MACD</th>
+    <th onclick="sortTable(10)">Volume</th>
+    <th onclick="sortTable(11)">RS</th>
+    <th onclick="sortTable(12)">Fund</th>
+    <th onclick="sortTable(13)">RSI Val</th>
+    <th onclick="sortTable(14)">ADX</th>
+    <th onclick="sortTable(15)">1M Chg</th>
+    <th onclick="sortTable(16)">Trend</th>
+    <th onclick="sortTable(17)">Volatility</th>
+    <th onclick="sortTable(18)">Sideways</th>
 </tr>
 </thead>
 <tbody>
@@ -260,12 +302,17 @@ function sortTable(col) {{
     rows.sort((a, b) => {{
         let aVal = a.cells[col].textContent.trim();
         let bVal = b.cells[col].textContent.trim();
-        let aNum = parseFloat(aVal.replace(/[+%]/g, ""));
-        let bNum = parseFloat(bVal.replace(/[+%]/g, ""));
+        
+        // Handle HTML content (strip tags for sorting)
+        let aText = aVal.replace(/<[^>]*>/g, "").trim();
+        let bText = bVal.replace(/<[^>]*>/g, "").trim();
+        
+        let aNum = parseFloat(aText.replace(/[+%]/g, ""));
+        let bNum = parseFloat(bText.replace(/[+%]/g, ""));
         if (!isNaN(aNum) && !isNaN(bNum)) {{
             return dir === "asc" ? aNum - bNum : bNum - aNum;
         }}
-        return dir === "asc" ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        return dir === "asc" ? aText.localeCompare(bText) : bText.localeCompare(aText);
     }});
 
     rows.forEach(row => tbody.appendChild(row));
@@ -275,18 +322,32 @@ function filterTable() {{
     const search = document.getElementById("search").value.toLowerCase();
     const minScore = parseFloat(document.getElementById("minScore").value);
     const trendFilter = document.getElementById("trendFilter").value;
+    const signalFilter = document.getElementById("signalFilter").value;
     const rows = document.getElementById("stockTable").tBodies[0].rows;
 
     for (let row of rows) {{
         const ticker = row.cells[0].textContent.toLowerCase();
         const score = parseFloat(row.cells[1].textContent);
-        const trend = row.cells[13].textContent;
+        const trend = row.cells[16].textContent;  // Trend column shifted to index 16
+        
+        // Get MA and POC data attributes
+        const maBull = row.getAttribute("data-ma-bull") === "true";
+        const abovePoc = row.getAttribute("data-above-poc") === "true";
 
         const matchSearch = ticker.includes(search);
         const matchScore = score >= minScore;
         const matchTrend = !trendFilter || trend.includes(trendFilter);
+        
+        let matchSignal = true;
+        if (signalFilter === "ma+poq") {{
+            matchSignal = maBull && abovePoc;
+        }} else if (signalFilter === "ma_bull") {{
+            matchSignal = maBull;
+        }} else if (signalFilter === "above_poc") {{
+            matchSignal = abovePoc;
+        }}
 
-        row.style.display = (matchSearch && matchScore && matchTrend) ? "" : "none";
+        row.style.display = (matchSearch && matchScore && matchTrend && matchSignal) ? "" : "none";
     }}
 }}
 </script>

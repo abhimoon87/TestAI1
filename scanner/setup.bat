@@ -1,5 +1,7 @@
 @echo off
 title HMAxEMA Stock Scanner — Setup
+cd /d "%~dp0.."
+
 echo.
 echo ========================================
 echo   HMAxEMA Stock Scanner — First Setup
@@ -28,7 +30,7 @@ python -m pip install --upgrade pip --quiet
 
 REM Install dependencies
 echo [3/4] Installing dependencies...
-pip install -r requirements.txt
+pip install -r scanner/requirements.txt
 if errorlevel 1 (
     echo.
     echo  [ERROR] Failed to install some dependencies.
@@ -54,4 +56,4 @@ echo ========================================
 echo.
 
 REM Launch
-python app.py
+python -m scanner.app

@@ -1,6 +1,6 @@
 #!/bin/bash
 # HMAxEMA Stock Scanner — macOS/Linux Launcher
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # Check Python
 if ! command -v python3 &> /dev/null; then
@@ -19,7 +19,7 @@ if [ $? -ne 0 ]; then
     echo ""
     echo "  First time setup - installing dependencies..."
     echo ""
-    pip3 install -r requirements.txt
+    pip3 install -r scanner/requirements.txt
     if [ $? -ne 0 ]; then
         echo "  [ERROR] Failed to install dependencies."
         read -p "  Press Enter to exit..."
@@ -31,4 +31,4 @@ fi
 
 # Launch
 echo "Starting HMAxEMA Stock Scanner..."
-python3 app.py
+python3 -m scanner.app

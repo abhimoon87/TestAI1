@@ -16,22 +16,19 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-# ── Ensure scanner dir is on path ───────────────────────────────────────────
-SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, SCANNER_DIR)
-
 import customtkinter as ctk
 from tkinter import messagebox
 
-from universes import UNIVERSES
-from data_fetcher import fetch_stock_data, fetch_index_data, resample_ohlcv
-from scoring import compute_scores
-from report import generate_html_report, save_report
+from .universes import UNIVERSES
+from .data_fetcher import fetch_stock_data, fetch_index_data, resample_ohlcv
+from .scoring import compute_scores
+from .report import generate_html_report, save_report
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("green")
 
+SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
@@ -199,7 +196,7 @@ class ScannerApp(ctk.CTk):
         self.trend_filter_var = ctk.StringVar(value="All")
         trend_menu = ctk.CTkOptionMenu(
             sidebar, variable=self.trend_filter_var,
-            values=["All", "Bullish Only", "Bearish Only"],
+            values=["All", "Bullish Only", "Bearish Only", "MA + POC Only"],
             width=280, height=32,
             fg_color="#153520", button_color="#1a4a2a",
             dropdown_fg_color="#0f2a1a"
@@ -402,6 +399,14 @@ class ScannerApp(ctk.CTk):
             font=ctk.CTkFont(size=11),
             command=self._export_csv, state="disabled")
         self.csv_btn.pack(side="right", padx=(0, 5))
+        
+        # Clear Results button
+        self.clear_btn = ctk.CTkButton(
+            header, text="Clear Results", width=100, height=30,
+            fg_color="#3a2a0a", hover_color="#4a3a1a",
+            font=ctk.CTkFont(size=11),
+            command=self._clear_results, state="disabled")
+        self.clear_btn.pack(side="right", padx=(0, 5))
 
         # ── Results Table (ScrolledFrame with custom rows) ───────────────────
         self.table_frame = ctk.CTkScrollableFrame(
@@ -503,6 +508,7 @@ class ScannerApp(ctk.CTk):
         self.run_btn.configure(state="disabled", text="SCANNING...", fg_color="#333333")
         self.html_btn.configure(state="disabled")
         self.csv_btn.configure(state="disabled")
+        self.clear_btn.configure(state="disabled")
         self.results = []
 
         # Clear previous results
@@ -581,6 +587,10 @@ class ScannerApp(ctk.CTk):
                                 continue
                             elif trend_filter == "Bearish Only" and scores["trend_dir"] != "Bear":
                                 continue
+                            elif trend_filter == "MA + POC Only":
+                                # Only show stocks with MA bullish alignment AND above POC
+                                if not (scores.get("ma_bullish", False) and scores.get("above_poc", False)):
+                                    continue
 
                             results.append(scores)
                             self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
@@ -598,7 +608,10 @@ class ScannerApp(ctk.CTk):
             # Update UI
             passed = len([r for r in results if r["total"] >= settings["min_score"]])
             filtered_out = total - len(results) if trend_filter != "All" else 0
-            filter_msg = f", {filtered_out} filtered by {trend_filter}" if filtered_out > 0 else ""
+            if trend_filter == "MA + POC Only":
+                filter_msg = f", {filtered_out} filtered (require MA bullish + above POC)" if filtered_out > 0 else ""
+            else:
+                filter_msg = f", {filtered_out} filtered by {trend_filter}" if filtered_out > 0 else ""
             self._log(f"\nScan complete: {len(results)} stocks scored, {passed} above {settings['min_score']} threshold{filter_msg}")
 
             self.after(0, lambda: self._display_results(results))
@@ -628,7 +641,7 @@ class ScannerApp(ctk.CTk):
         header_row.pack_propagate(False)
 
         headers = [("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90),
-                   ("Price", 80), ("Trend/15", 70), ("Mom/15", 70), ("RSI/8", 55),
+                   ("Price", 80), ("MA", 50), ("POC", 50), ("Trend/15", 70), ("Mom/15", 70), ("RSI/8", 55),
                    ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
                    ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Sideways", 55)]
 
@@ -665,10 +678,20 @@ class ScannerApp(ctk.CTk):
                           font=ctk.CTkFont(size=12, weight="bold"),
                           text_color=score_color).pack(side="left", padx=1)
 
-            # Rating badge
-            rating = "EXCELLENT" if score >= 70 else ("GOOD" if score >= 50 else ("MODERATE" if score >= 30 else "POOR"))
-            badge_color = "#0a3a1a" if score >= 70 else ("#1a3a0a" if score >= 50 else ("#3a2a0a" if score >= 30 else "#3a0a0a"))
-            badge_text = "#00ff88" if score >= 70 else ("#aaff00" if score >= 50 else ("#ffaa00" if score >= 30 else "#ff4444"))
+            # Rating badge (using combined rating)
+            rating = r.get('combined_rating', 'POOR')
+            if rating == "EXCELLENT":
+                badge_color = "#0a3a1a"
+                badge_text = "#00ff88"
+            elif rating == "GOOD":
+                badge_color = "#1a3a0a"
+                badge_text = "#aaff00"
+            elif rating == "MODERATE":
+                badge_color = "#3a2a0a"
+                badge_text = "#ffaa00"
+            else:  # POOR
+                badge_color = "#3a0a0a"
+                badge_text = "#ff4444"
             badge_frame = ctk.CTkFrame(row, fg_color=badge_color, corner_radius=3, height=20)
             badge_frame.pack(side="left", padx=2)
             ctk.CTkLabel(badge_frame, text=rating, width=85,
@@ -679,6 +702,35 @@ class ScannerApp(ctk.CTk):
             ctk.CTkLabel(row, text=f"\u20b9{r.get('close', 0):.1f}", width=80,
                           font=ctk.CTkFont(size=11),
                           text_color="#c8d8c0").pack(side="left", padx=1)
+
+            # MA Signal
+            ma_bullish = r.get('ma_bullish', False)
+            ma_crossed = r.get('ma_crossed_above', False)
+            if ma_crossed:
+                ma_text = "^ Cross"
+                ma_color = "#00ff88"
+            elif ma_bullish:
+                ma_text = "^ Bull"
+                ma_color = "#aaff00"
+            else:
+                ma_text = "v Bear"
+                ma_color = "#ff4444"
+            ctk.CTkLabel(row, text=ma_text, width=50,
+                          font=ctk.CTkFont(size=10),
+                          text_color=ma_color).pack(side="left", padx=1)
+
+            # POC Signal
+            above_poc = r.get('above_poc', False)
+            vp_poc = r.get('vp_poc', 0)
+            if above_poc:
+                poc_text = f"Above"
+                poc_color = "#00ff88"
+            else:
+                poc_text = f"Below"
+                poc_color = "#ff4444"
+            ctk.CTkLabel(row, text=poc_text, width=50,
+                          font=ctk.CTkFont(size=10),
+                          text_color=poc_color).pack(side="left", padx=1)
 
             # Category scores (with mini bar)
             for cat, max_val, color in [
@@ -747,6 +799,7 @@ class ScannerApp(ctk.CTk):
         if self.results:
             self.html_btn.configure(state="normal")
             self.csv_btn.configure(state="normal")
+            self.clear_btn.configure(state="normal")
 
     # ── Export ────────────────────────────────────────────────────────────────
 
@@ -808,6 +861,30 @@ class ScannerApp(ctk.CTk):
             self._log("Cache cleared successfully")
         except Exception as e:
             self._log(f"Failed to clear cache: {e}")
+    
+    def _clear_results(self):
+        """Clear the results table and reset state."""
+        # Clear the table
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+        
+        # Reset results
+        self.results = []
+        
+        # Update labels
+        self.result_count_label.configure(text="0 stocks scanned")
+        
+        # Reset progress
+        self.progress.set(0)
+        self.progress_label.configure(text="Ready")
+        
+        # Disable buttons
+        self.html_btn.configure(state="disabled")
+        self.csv_btn.configure(state="disabled")
+        self.clear_btn.configure(state="disabled")
+        
+        # Log
+        self._log("Results cleared")
 
     def _copy_selection(self):
         """Copy selected text from log to clipboard."""

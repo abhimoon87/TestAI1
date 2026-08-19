@@ -14,13 +14,10 @@ import sys
 import webbrowser
 from datetime import datetime
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(__file__))
-
-from universes import UNIVERSES, NIFTY_50
-from data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch, fetch_fundamentals
-from scoring import compute_scores
-from report import generate_html_report, save_report
+from .universes import UNIVERSES, NIFTY_50
+from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch, fetch_fundamentals
+from .scoring import compute_scores
+from .report import generate_html_report, save_report
 
 
 def print_banner():

@@ -1,6 +1,6 @@
 @echo off
 title HMAxEMA Stock Scanner
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 REM Check if Python is available
 python --version >nul 2>&1
@@ -20,11 +20,11 @@ if errorlevel 1 (
     echo.
     echo  First time setup - installing dependencies...
     echo.
-    pip install -r requirements.txt
+    pip install -r scanner/requirements.txt
     echo.
     if errorlevel 1 (
         echo  [ERROR] Failed to install dependencies.
-        echo  Please run: pip install -r requirements.txt
+        echo  Please run: pip install -r scanner/requirements.txt
         pause
         exit /b 1
     )
@@ -34,7 +34,7 @@ if errorlevel 1 (
 
 REM Launch the GUI
 echo Starting HMAxEMA Stock Scanner...
-python app.py
+python -m scanner.app
 
 if errorlevel 1 (
     echo.

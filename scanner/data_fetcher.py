@@ -13,7 +13,7 @@ import time
 import pandas as pd
 from typing import Optional
 
-from data_providers import DataProvider
+from .data_providers import DataProvider
 
 
 # ── OHLCV Resampling ───────────────────────────────────────────────────────

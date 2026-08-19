@@ -6,9 +6,9 @@ Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic exactly.
 import numpy as np
 import pandas as pd
 import math
-from indicators import (
+from .indicators import (
     hull_ma, ema, sma, vwma, kama, rsi, macd, stochastic,
-    obv, atr, adx, price_change, highest, lowest
+    obv, atr, adx, price_change, highest, lowest, volume_profile_poc
 )
 
 
@@ -155,17 +155,57 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "ll50": lowest(low, 50).iloc[-1],
         "is_sideways": is_sideways,
     }
+    
+    # ── Volume Profile POC (11-week) ──────────────────────────────────────
+    # 11 weeks = 55 trading days for daily data
+    vp_lookback_weeks = 11
+    if n >= 100:  # Daily data
+        vp_bars = vp_lookback_weeks * 5  # 55 bars for 11 weeks
+    elif n >= 40:  # Weekly data
+        vp_bars = vp_lookback_weeks  # 11 bars for 11 weeks
+    else:  # Monthly data
+        vp_bars = 3  # approximate
+    
+    vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
+    curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+    
+    # Check if price is above POC
+    curr["above_poc"] = curr["close"] >= curr["vp_poc"]
+    
+    # Check for MA crossover (Fast MA crossed above Slow MA)
+    # We check if Fast MA is above Slow MA NOW and was below or equal in previous bar
+    fast_ma_prev = fast_ma.iloc[-2] if len(fast_ma) > 1 else np.nan
+    slow_ma_prev = slow_ma.iloc[-2] if len(slow_ma) > 1 else np.nan
+    
+    curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
+    curr["ma_crossed_above"] = (
+        not np.isnan(fast_ma_prev) and not np.isnan(slow_ma_prev) and
+        curr["fast_ma"] > curr["slow_ma"] and
+        fast_ma_prev <= slow_ma_prev
+    )
 
     # ── Category 1: TREND (max 15 pts) ──────────────────────────────────────
+    # Priority: MA crossover and POC position are key signals
     trend_score = 0.0
-    if curr["close"] > curr["slow_ma"] and curr["fast_ma"] > curr["slow_ma"]:
-        trend_score += 10.0
-    elif curr["close"] > curr["slow_ma"]:
-        trend_score += 5.0
-    if curr["fast_ma"] > curr["slow_ma"]:
-        trend_score += 5.0
+    
+    # MA Crossover bonus (highest priority)
+    if curr["ma_crossed_above"]:
+        trend_score += 8.0  # Fresh crossover is very bullish
+    elif curr["ma_bullish"]:
+        trend_score += 5.0  # MA alignment is bullish
+    
+    # Price above POC bonus
+    if curr["above_poc"]:
+        trend_score += 4.0  # Price above volume support
+    
+    # Price above slow MA
+    if curr["close"] > curr["slow_ma"]:
+        trend_score += 3.0
+    
+    # ADX trend strength
     if not np.isnan(curr["adx"]) and curr["adx"] > 25:
         trend_score += 2.0
+    
     trend_score = min(trend_score, 15.0)
 
     # ── Category 2: MOMENTUM (max 15 pts) ───────────────────────────────────
@@ -338,6 +378,11 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "rel_str":   round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
+        # Key signals (priority indicators)
+        "ma_bullish": curr["ma_bullish"],
+        "ma_crossed_above": curr["ma_crossed_above"],
+        "above_poc": curr["above_poc"],
+        "vp_poc": round(curr["vp_poc"], 2),
         # Sideways filter info
         "is_sideways": is_sideways,
         "sideways_reasons": (
@@ -357,6 +402,62 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "trend_color": "bull" if curr["close"] > curr["slow_ma"] else "bear",
         # Fundamentals detail
         "fund_detail": fund_detail,
+        # Combined rating based on key signals + score
+        "combined_rating": _get_combined_rating(total, curr["ma_bullish"], curr["above_poc"]),
     }
 
     return result
+
+
+def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool) -> str:
+    """
+    Generate combined rating based on key signals and score.
+    
+    Priority:
+    1. MA crossover + above POC = strongest signal
+    2. MA bullish + above POC = strong signal
+    3. Score-based rating as fallback
+    
+    Args:
+        total_score: Total score (0-100)
+        ma_bullish: True if Fast MA > Slow MA
+        above_poc: True if price >= VP POC
+    
+    Returns:
+        'EXCELLENT', 'GOOD', 'MODERATE', or 'POOR'
+    """
+    # Strongest: Both conditions met
+    if ma_bullish and above_poc:
+        if total_score >= 60:
+            return "EXCELLENT"
+        elif total_score >= 40:
+            return "GOOD"
+        else:
+            return "MODERATE"
+    
+    # Strong: MA bullish only
+    elif ma_bullish:
+        if total_score >= 70:
+            return "EXCELLENT"
+        elif total_score >= 50:
+            return "GOOD"
+        else:
+            return "MODERATE"
+    
+    # Moderate: Above POC only
+    elif above_poc:
+        if total_score >= 80:
+            return "GOOD"
+        elif total_score >= 60:
+            return "MODERATE"
+        else:
+            return "POOR"
+    
+    # Weak: Neither condition met - rely on score
+    else:
+        if total_score >= 70:
+            return "GOOD"
+        elif total_score >= 50:
+            return "MODERATE"
+        else:
+            return "POOR"

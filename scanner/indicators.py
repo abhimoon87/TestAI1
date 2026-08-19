@@ -142,3 +142,72 @@ def highest(series: pd.Series, length: int) -> pd.Series:
 def lowest(series: pd.Series, length: int) -> pd.Series:
     """Rolling lowest value."""
     return series.rolling(length).min()
+
+
+def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
+                       volume: pd.Series, lookback: int = 55) -> pd.Series:
+    """
+    Volume Profile Point of Control (POC) - the price level with highest volume.
+    
+    Args:
+        high: High prices
+        low: Low prices
+        close: Close prices
+        volume: Volume data
+        lookback: Number of bars to look back (default 55 = ~11 weeks for daily)
+    
+    Returns:
+        Series with POC values for each bar
+    """
+    poc_series = pd.Series(index=close.index, dtype=float)
+    
+    for i in range(lookback - 1, len(close)):
+        # Get the lookback window
+        window_high = high.iloc[i - lookback + 1:i + 1]
+        window_low = low.iloc[i - lookback + 1:i + 1]
+        window_volume = volume.iloc[i - lookback + 1:i + 1]
+        
+        # Create price bins
+        price_min = window_low.min()
+        price_max = window_high.max()
+        
+        if price_max == price_min:
+            poc_series.iloc[i] = price_min
+            continue
+        
+        # Create bins (20 bins typically)
+        num_bins = min(20, int((price_max - price_min) / (close.iloc[i] * 0.001)) + 1)
+        num_bins = max(num_bins, 5)
+        
+        bin_edges = np.linspace(price_min, price_max, num_bins + 1)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        # Calculate volume for each bin
+        bin_volumes = np.zeros(num_bins)
+        
+        for j in range(len(window_high)):
+            bar_high = window_high.iloc[j]
+            bar_low = window_low.iloc[j]
+            bar_vol = window_volume.iloc[j]
+            
+            # Distribute volume across bins that overlap with this bar
+            for k in range(num_bins):
+                bin_low = bin_edges[k]
+                bin_high = bin_edges[k + 1]
+                
+                # Check if bar overlaps with this bin
+                if bar_high >= bin_low and bar_low <= bin_high:
+                    # Calculate overlap percentage
+                    overlap_low = max(bar_low, bin_low)
+                    overlap_high = min(bar_high, bin_high)
+                    bar_range = bar_high - bar_low
+                    
+                    if bar_range > 0:
+                        overlap_pct = (overlap_high - overlap_low) / bar_range
+                        bin_volumes[k] += bar_vol * overlap_pct
+        
+        # Find the bin with highest volume (POC)
+        poc_bin_idx = np.argmax(bin_volumes)
+        poc_series.iloc[i] = bin_centers[poc_bin_idx]
+    
+    return poc_series
