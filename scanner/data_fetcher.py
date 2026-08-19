@@ -58,13 +58,15 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     else:
         return df
 
-    resampled = df.resample(rule).agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum"
-    }).dropna()
+    # Build aggregation rules based on available columns
+    agg_rules = {}
+    for col in ["open", "high", "low", "close"]:
+        if col in df.columns:
+            agg_rules[col] = {"open": "first", "high": "max", "low": "min", "close": "last"}[col]
+    if "volume" in df.columns:
+        agg_rules["volume"] = "sum"
+
+    resampled = df.resample(rule).agg(agg_rules).dropna()
 
     return resampled
 
