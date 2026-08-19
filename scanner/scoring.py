@@ -454,27 +454,33 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool) 
     """
     # Strongest: Both conditions met
     if ma_bullish and above_poc:
-        if total_score >= 60:
+        if total_score >= 65:
             return "EXCELLENT"
-        elif total_score >= 40:
+        elif total_score >= 50:
             return "GOOD"
-        else:
+        elif total_score >= 35:
             return "MODERATE"
+        else:
+            return "POOR"
     
     # Strong: MA bullish only
     elif ma_bullish:
         if total_score >= 70:
             return "EXCELLENT"
-        elif total_score >= 50:
+        elif total_score >= 55:
             return "GOOD"
-        else:
+        elif total_score >= 40:
             return "MODERATE"
+        else:
+            return "POOR"
     
     # Moderate: Above POC only
     elif above_poc:
-        if total_score >= 80:
+        if total_score >= 70:
+            return "EXCELLENT"
+        elif total_score >= 55:
             return "GOOD"
-        elif total_score >= 60:
+        elif total_score >= 40:
             return "MODERATE"
         else:
             return "POOR"
@@ -482,8 +488,10 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool) 
     # Weak: Neither condition met - rely on score
     else:
         if total_score >= 70:
+            return "EXCELLENT"
+        elif total_score >= 55:
             return "GOOD"
-        elif total_score >= 50:
+        elif total_score >= 40:
             return "MODERATE"
         else:
             return "POOR"

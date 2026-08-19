@@ -371,10 +371,10 @@ class ScannerApp(ctk.CTk):
         """Right main area: results table and log."""
         main = ctk.CTkFrame(self, fg_color="#0a1a10", corner_radius=0)
         main.grid(row=0, column=1, sticky="nsew")
-        main.grid_rowconfigure(1, weight=1)  # Table - takes ALL extra space
-        main.grid_rowconfigure(0, weight=0)  # Header - fixed height
-        main.grid_rowconfigure(2, weight=0)  # Log - fixed height at bottom
         main.grid_columnconfigure(0, weight=1)
+        main.grid_rowconfigure(0, weight=0)  # Header - fixed height
+        main.grid_rowconfigure(1, weight=1)  # Table - takes ALL extra space
+        main.grid_rowconfigure(2, weight=0)  # Log - fixed height at bottom
 
         # ── Header bar ───────────────────────────────────────────────────────
         header = ctk.CTkFrame(main, fg_color="#0f2a1a", height=44)
@@ -413,11 +413,10 @@ class ScannerApp(ctk.CTk):
             command=self._clear_results, state="disabled")
         self.clear_btn.pack(side="right", padx=(0, 5))
 
-        # ── Log area (FIXED at bottom, ALWAYS visible) ──────────────────────
-        log_frame = ctk.CTkFrame(main, fg_color="#061208")
-        log_frame.grid(row=2, column=0, sticky="sew", padx=5, pady=5)
-        log_frame.grid_propagate(False)  # Don't resize - keep fixed height
-        log_frame.configure(height=150)  # Fixed 150px height
+        # ── Log area (FIXED at bottom, NEVER expands) ──────────────────────
+        log_frame = ctk.CTkFrame(main, fg_color="#061208", height=150)
+        log_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=5)
+        log_frame.grid_propagate(False)  # CRITICAL: Don't let it expand
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(1, weight=1)
         
@@ -443,6 +442,7 @@ class ScannerApp(ctk.CTk):
             main, fg_color="#0a1a10")
         self.table_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         self.table_frame.grid_columnconfigure(0, weight=1)
+        self.table_frame.grid_rowconfigure(0, weight=1)
 
     # ── Settings Management ──────────────────────────────────────────────────
 
