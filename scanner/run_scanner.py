@@ -15,7 +15,7 @@ import webbrowser
 from datetime import datetime
 
 from .universes import UNIVERSES, NIFTY_50
-from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch, fetch_fundamentals
+from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch_yfinance, fetch_fundamentals
 from .scoring import compute_scores
 from .report import generate_html_report, save_report
 
@@ -128,7 +128,7 @@ def run_scan():
 
     # ── Fetch stock data ─────────────────────────────────────────────────────
     print(f"━━━ Fetching stock data ━━━")
-    stock_data = fetch_batch(tickers, period=period, delay=0.15)
+    stock_data = fetch_batch_yfinance(tickers, period=period)
     print(f"\n  Fetched {len(stock_data)}/{len(tickers)} stocks successfully.\n")
 
     if not stock_data:

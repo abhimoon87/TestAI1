@@ -180,12 +180,19 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y") -> dict:
                            auto_adjust=True, progress=False, threads=True)
 
         results = {}
+        multi_idx = isinstance(data.columns, pd.MultiIndex)
         for yf_ticker, orig_ticker in ticker_map.items():
             try:
-                if len(tickers) == 1:
+                if len(tickers) == 1 and not multi_idx:
+                    # Single ticker returned as a flat (non-MultiIndex) DataFrame
                     df = data.copy()
-                else:
+                elif multi_idx:
+                    if yf_ticker not in data.columns.get_level_values(0):
+                        continue
                     df = data[yf_ticker].copy()
+                else:
+                    # Single ticker but returned flat anyway
+                    df = data.copy()
 
                 if df is None or df.empty or len(df) < 20:
                     continue

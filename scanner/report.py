@@ -259,7 +259,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     <select id="signalFilter" onchange="filterTable()">
         <option value="">All signals</option>
         <option value="both_ma+poc">Close &gt; Both MA + POC</option>
-        <option value="ma+poq">MA Bull + POC</option>
+        <option value="ma+poc">MA Bull + POC</option>
         <option value="crossed">Fresh Crossover</option>
         <option value="ma_bull">MA Bullish only</option>
         <option value="above_poc">Above POC only</option>
@@ -363,7 +363,7 @@ function filterTable() {{
         let matchSignal = true;
         if (signalFilter === "both_ma+poc") {{
             matchSignal = bothMa && abovePoc;
-        }} else if (signalFilter === "ma+poq") {{
+        }} else if (signalFilter === "ma+poc") {{
             matchSignal = maBull && abovePoc;
         }} else if (signalFilter === "crossed") {{
             matchSignal = crossed;

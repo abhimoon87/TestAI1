@@ -157,16 +157,10 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "is_sideways": is_sideways,
     }
     
-    # ── Volume Profile POC (11-week) ──────────────────────────────────────
-    # 11 weeks = 55 trading days for daily data
-    vp_lookback_weeks = 11
-    if n >= 100:  # Daily data
-        vp_bars = vp_lookback_weeks * 5  # 55 bars for 11 weeks
-    elif n >= 40:  # Weekly data
-        vp_bars = vp_lookback_weeks  # 11 bars for 11 weeks
-    else:  # Monthly data
-        vp_bars = 3  # approximate
-    
+    # ── Volume Profile POC ────────────────────────────────────────────────
+    # Honor the configured VP lookback (in candles) from settings, instead of
+    # a hardcoded 11-week window.
+    vp_bars = max(int(vp_lookback), 10)
     vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
     curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
     
