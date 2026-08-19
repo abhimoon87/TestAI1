@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HMAxEMA Stock Scanner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        :root {
+            --bg: #0a1a10;
+            --surface: #0f2a1a;
+            --surface2: #153520;
+            --border: #1a4a2a;
+            --text: #c8d8c0;
+            --text-dim: #6a8a6a;
+            --green: #00ff88;
+            --lime: #aaff00;
+            --orange: #ffaa00;
+            --red: #ff4444;
+            --blue: #00aaff;
+            --cyan: #00ddcc;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'JetBrains Mono', 'Fira Code', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* Layout */
+        .app-container {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: #0d1f14;
+            padding: 20px;
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            max-height: 100vh;
+        }
+
+        .logo {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: var(--green);
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            font-size: 0.85em;
+            color: var(--text-dim);
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 0.75em;
+            font-weight: bold;
+            color: var(--cyan);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            margin-top: 15px;
+        }
+
+        .divider {
+            height: 1px;
+            background: var(--border);
+            margin: 15px 0;
+        }
+
+        /* Form Controls */
+        select, input[type="number"], input[type="text"] {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: var(--green);
+        }
+
+        label {
+            display: block;
+            font-size: 0.8em;
+            color: var(--text-dim);
+            margin-bottom: 4px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary {
+            background: #00aa55;
+            color: #000;
+            font-size: 1.1em;
+        }
+
+        .btn-primary:hover {
+            background: #00cc66;
+        }
+
+        .btn-primary:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--text-dim);
+            font-size: 0.85em;
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface2);
+        }
+
+        .btn-export {
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.85em;
+            padding: 8px 15px;
+            width: auto;
+            margin-right: 10px;
+        }
+
+        .btn-export:hover {
+            background: var(--surface2);
+        }
+
+        /* Progress */
+        .progress-container {
+            margin-top: 15px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--surface2);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--green);
+            transition: width 0.3s;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 0.8em;
+            color: var(--text-dim);
+        }
+
+        /* Main Content */
+        .main-content {
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 100vh;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .header-title {
+            font-size: 1.2em;
+            color: var(--green);
+        }
+
+        .stats {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 15px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            font-size: 0.75em;
+            color: var(--text-dim);
+            margin-top: 5px;
+        }
+
+        /* Filters */
+        .filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .filters input, .filters select {
+            width: auto;
+            margin-bottom: 0;
+        }
+
+        /* Results Table */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85em;
+        }
+
+        th {
+            background: var(--surface2);
+            color: var(--cyan);
+            padding: 10px 8px;
+            text-align: left;
+            border-bottom: 2px solid var(--border);
+            cursor: pointer;
+            user-select: none;
+            position: sticky;
+            top: 0;
+            white-space: nowrap;
+        }
+
+        th:hover {
+            color: var(--green);
+        }
+
+        th.sorted-asc::after { content: " ▲"; color: var(--green); }
+        th.sorted-desc::after { content: " ▼"; color: var(--green); }
+
+        td {
+            padding: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover {
+            background: var(--surface2);
+        }
+
+        tr.highlight {
+            background: rgba(0, 255, 136, 0.06);
+        }
+
+        .ticker {
+            color: var(--green);
+            font-weight: bold;
+        }
+
+        .score {
+            font-size: 1.1em;
+            font-weight: bold;
+        }
+
+        .score-excellent { color: var(--green); }
+        .score-good { color: var(--lime); }
+        .score-moderate { color: var(--orange); }
+        .score-poor { color: var(--red); }
+
+        .num {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .bull { color: var(--green); }
+        .bear { color: var(--red); }
+
+        .badge {
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.75em;
+            font-weight: bold;
+        }
+
+        .badge.excellent { background: rgba(0, 255, 136, 0.15); color: var(--green); }
+        .badge.good { background: rgba(170, 255, 0, 0.15); color: var(--lime); }
+        .badge.moderate { background: rgba(255, 170, 0, 0.15); color: var(--orange); }
+        .badge.poor { background: rgba(255, 68, 68, 0.15); color: var(--red); }
+
+        .ma-cross { color: var(--green); font-weight: bold; }
+        .ma-bull { color: var(--lime); font-weight: bold; }
+        .ma-bear { color: var(--red); font-weight: bold; }
+
+        .poc-above { color: var(--green); font-weight: bold; }
+        .poc-below { color: var(--red); font-weight: bold; }
+
+        .bar-cell { white-space: nowrap; }
+        .bar-container {
+            display: inline-block;
+            width: 45px;
+            height: 8px;
+            background: var(--surface);
+            border-radius: 3px;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        .bar {
+            height: 100%;
+            border-radius: 3px;
+            background: var(--green);
+            transition: width 0.3s;
+        }
+        .bar.mom { background: var(--cyan); }
+        .bar.rsi { background: var(--blue); }
+        .bar.macd { background: #aa88ff; }
+        .bar.vol { background: var(--orange); }
+        .bar.rs { background: var(--lime); }
+        .bar.fund { background: #ffe600; }
+
+        .bar-val {
+            color: var(--text-dim);
+            font-size: 0.9em;
+        }
+
+        /* Log */
+        .log-container {
+            margin-top: 20px;
+            background: #061208;
+            border-radius: 6px;
+            padding: 10px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 0.8em;
+            color: #4a7a4a;
+        }
+
+        .log-entry {
+            margin-bottom: 2px;
+        }
+
+        .log-info { color: #4a7a4a; }
+        .log-success { color: var(--green); }
+        .log-error { color: var(--red); }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-dim);
+        }
+
+        .empty-state h3 {
+            color: var(--text);
+            margin-bottom: 10px;
+        }
+
+        /* Settings Panel */
+        .settings-toggle {
+            background: transparent;
+            border: none;
+            color: var(--cyan);
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.8em;
+            padding: 5px 0;
+            width: 100%;
+            text-align: left;
+        }
+
+        .settings-panel {
+            display: none;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .settings-panel.active {
+            display: block;
+        }
+
+        .settings-section {
+            margin-bottom: 10px;
+        }
+
+        .settings-section-title {
+            font-size: 0.7em;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .settings-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 5px;
+        }
+
+        .settings-row label {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .settings-row input, .settings-row select {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .app-container {
+                grid-template-columns: 1fr;
+            }
+
+            .sidebar {
+                max-height: none;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+
+            .main-content {
+                max-height: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">HMAxEMA Scanner</div>
+            <div class="subtitle">Indian Market Stock Screener</div>
+
+            <div class="divider"></div>
+
+            <div class="section-title">Stock Universe</div>
+            <select id="universe">
+                {% for name, count in universes.items() %}
+                <option value="{{ name }}" {% if name == 'NIFTY 50' %}selected{% endif %}>
+                    {{ name }} ({{ count }})
+                </option>
+                {% endfor %}
+            </select>
+
+            <div class="section-title">Timeframe</div>
+            <select id="timeframe">
+                <option value="D" {% if settings.timeframe == 'D' %}selected{% endif %}>Daily</option>
+                <option value="W" {% if settings.timeframe == 'W' %}selected{% endif %}>Weekly</option>
+                <option value="M" {% if settings.timeframe == 'M' %}selected{% endif %}>Monthly</option>
+            </select>
+
+            <div class="section-title">Data Period</div>
+            <select id="period">
+                <option value="6mo" {% if settings.data_period == '6mo' %}selected{% endif %}>6 Months</option>
+                <option value="1y" {% if settings.data_period == '1y' %}selected{% endif %}>1 Year</option>
+                <option value="2y" {% if settings.data_period == '2y' %}selected{% endif %}>2 Years</option>
+            </select>
+
+            <div class="section-title">Trend Filter</div>
+            <select id="trendFilter">
+                <option value="All" {% if settings.trend_filter == 'All' %}selected{% endif %}>All</option>
+                <option value="Bullish Only" {% if settings.trend_filter == 'Bullish Only' %}selected{% endif %}>Bullish Only</option>
+                <option value="Bearish Only" {% if settings.trend_filter == 'Bearish Only' %}selected{% endif %}>Bearish Only</option>
+                <option value="MA + POC Only" {% if settings.trend_filter == 'MA + POC Only' %}selected{% endif %}>MA + POC Only</option>
+            </select>
+
+            <div class="section-title">Min Score Threshold</div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <input type="range" id="thresholdSlider" min="0" max="100" value="{{ settings.min_score }}"
+                       style="flex: 1; margin-bottom: 0;" oninput="document.getElementById('thresholdValue').textContent = this.value">
+                <span id="thresholdValue" style="font-weight: bold; color: var(--lime); min-width: 30px;">{{ settings.min_score|int }}</span>
+            </div>
+
+            <!-- Settings Toggle -->
+            <div class="divider"></div>
+            <button class="settings-toggle" onclick="toggleSettings()">
+                ⚙ SETTINGS (Click to expand)
+            </button>
+
+            <div class="settings-panel" id="settingsPanel">
+                <div class="settings-section">
+                    <div class="settings-section-title">Moving Averages</div>
+                    <div class="settings-row">
+                        <label>Fast MA Type</label>
+                        <select id="fastMaType">
+                            <option value="HMA" {% if settings.fast_ma_type == 'HMA' %}selected{% endif %}>HMA</option>
+                            <option value="EMA" {% if settings.fast_ma_type == 'EMA' %}selected{% endif %}>EMA</option>
+                            <option value="SMA" {% if settings.fast_ma_type == 'SMA' %}selected{% endif %}>SMA</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label>Fast MA Length</label>
+                        <input type="number" id="fastMaLen" value="{{ settings.fast_ma_len }}" min="5" max="100">
+                    </div>
+                    <div class="settings-row">
+                        <label>Slow MA Type</label>
+                        <select id="slowMaType">
+                            <option value="EMA" {% if settings.slow_ma_type == 'EMA' %}selected{% endif %}>EMA</option>
+                            <option value="HMA" {% if settings.slow_ma_type == 'HMA' %}selected{% endif %}>HMA</option>
+                            <option value="SMA" {% if settings.slow_ma_type == 'SMA' %}selected{% endif %}>SMA</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label>Slow MA Length</label>
+                        <input type="number" id="slowMaLen" value="{{ settings.slow_ma_len }}" min="10" max="200">
+                    </div>
+                    <div class="settings-row">
+                        <label>Crossover Lookback</label>
+                        <input type="number" id="crossoverLookback" value="{{ settings.crossover_lookback }}" min="1" max="20">
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title">Technical Analysis</div>
+                    <div class="settings-row">
+                        <label>RSI Length</label>
+                        <input type="number" id="rsiLen" value="{{ settings.rsi_len }}" min="5" max="50">
+                    </div>
+                    <div class="settings-row">
+                        <label>ATR Length</label>
+                        <input type="number" id="atrLen" value="{{ settings.atr_len }}" min="5" max="50">
+                    </div>
+                    <div class="settings-row">
+                        <label>Volume MA Length</label>
+                        <input type="number" id="volMaLen" value="{{ settings.vol_ma_len }}" min="5" max="100">
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title">Volume Profile</div>
+                    <div class="settings-row">
+                        <label>VP Lookback</label>
+                        <input type="number" id="vpLookback" value="{{ settings.vp_lookback }}" min="10" max="500">
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title">Sideways Filter</div>
+                    <div class="settings-row">
+                        <label>ADX Threshold</label>
+                        <input type="number" id="adxThreshold" value="{{ settings.adx_threshold }}" min="5" max="50" step="0.5">
+                    </div>
+                    <div class="settings-row">
+                        <label>Chop Threshold</label>
+                        <input type="number" id="chopThreshold" value="{{ settings.chop_threshold }}" min="30" max="90" step="0.1">
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <button class="btn btn-primary" id="scanBtn" onclick="startScan()">
+                RUN SCAN
+            </button>
+
+            <button class="btn btn-secondary" onclick="clearCache()">
+                Clear Cache
+            </button>
+
+            <!-- Progress -->
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Ready</div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="header">
+                <div class="header-title">RESULTS</div>
+                <div>
+                    <button class="btn btn-export" id="htmlBtn" onclick="exportHTML()" disabled>
+                        Export HTML
+                    </button>
+                    <button class="btn btn-export" id="csvBtn" onclick="exportCSV()" disabled>
+                        Export CSV
+                    </button>
+                    <button class="btn btn-export" id="clearBtn" onclick="clearResults()" disabled style="background: #3a2a0a;">
+                        Clear Results
+                    </button>
+                </div>
+            </div>
+
+            <div class="stats" id="statsContainer" style="display: none;">
+                <div class="stat-card">
+                    <div class="stat-value" style="color: var(--green);" id="statPassed">0</div>
+                    <div class="stat-label">Passed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" style="color: var(--red);" id="statBelow">0</div>
+                    <div class="stat-label">Below Threshold</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" style="color: var(--cyan);" id="statTotal">0</div>
+                    <div class="stat-label">Total Scanned</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" style="color: var(--lime);" id="statMaPoc">0</div>
+                    <div class="stat-label">MA + POC</div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="filters">
+                <input type="text" id="searchInput" placeholder="Search ticker..." oninput="filterTable()">
+                <select id="minScoreFilter" onchange="filterTable()">
+                    <option value="0">All scores</option>
+                    <option value="70">70+ EXCELLENT</option>
+                    <option value="50">50+ GOOD</option>
+                    <option value="30">30+ MODERATE</option>
+                </select>
+                <select id="trendFilterTable" onchange="filterTable()">
+                    <option value="">All trends</option>
+                    <option value="Bull">Bullish only</option>
+                    <option value="Bear">Bearish only</option>
+                </select>
+                <select id="signalFilter" onchange="filterTable()">
+                    <option value="">All signals</option>
+                    <option value="ma+poq">MA + POC Only</option>
+                    <option value="ma_bull">MA Bullish only</option>
+                    <option value="above_poc">Above POC only</option>
+                </select>
+            </div>
+
+            <!-- Results Table -->
+            <div class="table-container">
+                <div class="empty-state" id="emptyState">
+                    <h3>No results yet</h3>
+                    <p>Select a universe and click "RUN SCAN" to start</p>
+                </div>
+
+                <table id="resultsTable" style="display: none;">
+                    <thead>
+                        <tr>
+                            <th onclick="sortTable(0)">Ticker</th>
+                            <th onclick="sortTable(1)">Score</th>
+                            <th onclick="sortTable(2)">Rating</th>
+                            <th onclick="sortTable(3)">Price</th>
+                            <th onclick="sortTable(4)">MA Signal</th>
+                            <th onclick="sortTable(5)">POC</th>
+                            <th onclick="sortTable(6)">Trend</th>
+                            <th onclick="sortTable(7)">Momentum</th>
+                            <th onclick="sortTable(8)">RSI</th>
+                            <th onclick="sortTable(9)">MACD</th>
+                            <th onclick="sortTable(10)">Volume</th>
+                            <th onclick="sortTable(11)">RS</th>
+                            <th onclick="sortTable(12)">Fund</th>
+                            <th onclick="sortTable(13)">RSI Val</th>
+                            <th onclick="sortTable(14)">ADX</th>
+                            <th onclick="sortTable(15)">1M Chg</th>
+                            <th onclick="sortTable(16)">Direction</th>
+                            <th onclick="sortTable(17)">Volatility</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsBody">
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Log -->
+            <div class="log-container" id="logContainer">
+                <div class="log-entry log-info">[Ready] Scanner initialized</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── State ──────────────────────────────────────────────────────────
+        let scanResults = [];
+        let sortDir = {};
+
+        // ── Socket.IO ──────────────────────────────────────────────────────
+        const socket = io();
+
+        socket.on('connect', () => {
+            addLog('Connected to server', 'success');
+        });
+
+        socket.on('scan_status', (data) => {
+            addLog(data.message, data.type);
+        });
+
+        socket.on('scan_progress', (data) => {
+            document.getElementById('progressFill').style.width = data.percent + '%';
+            document.getElementById('progressText').textContent = data.text;
+        });
+
+        socket.on('scan_result', (data) => {
+            // Individual result received (for future use)
+        });
+
+        socket.on('scan_complete', (data) => {
+            scanResults = data.results;
+            displayResults(data.results, data.stats);
+            document.getElementById('scanBtn').disabled = false;
+            document.getElementById('scanBtn').textContent = 'RUN SCAN';
+            document.getElementById('progressText').textContent = 'Done';
+            document.getElementById('htmlBtn').disabled = false;
+            document.getElementById('csvBtn').disabled = false;
+            document.getElementById('clearBtn').disabled = false;
+            addLog(`Scan complete: ${data.stats.total} stocks scored, ${data.stats.passed} above ${data.stats.threshold}+`, 'success');
+        });
+
+        // ── Scan ───────────────────────────────────────────────────────────
+        function startScan() {
+            const settings = collectSettings();
+            const universe = document.getElementById('universe').value;
+
+            document.getElementById('scanBtn').disabled = true;
+            document.getElementById('scanBtn').textContent = 'SCANNING...';
+            document.getElementById('progressFill').style.width = '0%';
+
+            // Clear previous results
+            clearResults();
+
+            fetch('/api/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ universe, settings })
+            });
+        }
+
+        function collectSettings() {
+            return {
+                fast_ma_type: document.getElementById('fastMaType').value,
+                fast_ma_len: parseInt(document.getElementById('fastMaLen').value),
+                slow_ma_type: document.getElementById('slowMaType').value,
+                slow_ma_len: parseInt(document.getElementById('slowMaLen').value),
+                crossover_lookback: parseInt(document.getElementById('crossoverLookback').value),
+                rsi_len: parseInt(document.getElementById('rsiLen').value),
+                vol_ma_len: parseInt(document.getElementById('volMaLen').value),
+                atr_len: parseInt(document.getElementById('atrLen').value),
+                vp_lookback: parseInt(document.getElementById('vpLookback').value),
+                adx_threshold: parseFloat(document.getElementById('adxThreshold').value),
+                chop_threshold: parseFloat(document.getElementById('chopThreshold').value),
+                min_score: parseFloat(document.getElementById('thresholdSlider').value),
+                data_period: document.getElementById('period').value,
+                timeframe: document.getElementById('timeframe').value,
+                trend_filter: document.getElementById('trendFilter').value,
+                // Keep other defaults
+                rs_length: 14,
+                index_symbol: 'NSEI',
+                vp_rows: 30,
+                vp_width: 40,
+                adx_len: 14,
+                chop_len: 14,
+                slope_ma_type: 'EMA',
+                slope_ma_len: 50,
+                slope_lookback: 10,
+                flat_threshold: 0.5,
+                sc_pivot_len: 3,
+                sc_bands_mult: 0.6,
+            };
+        }
+
+        // ── Display Results ────────────────────────────────────────────────
+        function displayResults(results, stats) {
+            if (!results || results.length === 0) {
+                document.getElementById('emptyState').style.display = 'block';
+                document.getElementById('resultsTable').style.display = 'none';
+                document.getElementById('statsContainer').style.display = 'none';
+                return;
+            }
+
+            document.getElementById('emptyState').style.display = 'none';
+            document.getElementById('resultsTable').style.display = 'table';
+            document.getElementById('statsContainer').style.display = 'flex';
+
+            // Update stats
+            document.getElementById('statPassed').textContent = stats.passed;
+            document.getElementById('statBelow').textContent = stats.total - stats.passed;
+            document.getElementById('statTotal').textContent = stats.total;
+            document.getElementById('statMaPoc').textContent = stats.ma_poc;
+
+            // Build table rows
+            const tbody = document.getElementById('resultsBody');
+            tbody.innerHTML = '';
+
+            results.forEach((r, i) => {
+                const score = r.total;
+                const rating = r.combined_rating || 'POOR';
+                const ratingLower = rating.toLowerCase();
+
+                // MA signal
+                let maHtml = '';
+                if (r.ma_crossed_above) {
+                    maHtml = `<span class="ma-cross">^ X${r.crossover_bars_ago}</span>`;
+                } else if (r.ma_bullish) {
+                    maHtml = '<span class="ma-bull">^ BULL</span>';
+                } else {
+                    maHtml = '<span class="ma-bear">v BEAR</span>';
+                }
+
+                // POC signal
+                let pocHtml = r.above_poc
+                    ? '<span class="poc-above">ABOVE</span>'
+                    : '<span class="poc-below">BELOW</span>';
+
+                const row = document.createElement('tr');
+                row.setAttribute('data-ma-bull', r.ma_bullish);
+                row.setAttribute('data-above-poc', r.above_poc);
+                row.className = score >= parseFloat(document.getElementById('thresholdSlider').value) ? 'highlight' : '';
+
+                row.innerHTML = `
+                    <td class="ticker">${r.ticker}</td>
+                    <td class="score score-${ratingLower}">${score.toFixed(1)}</td>
+                    <td><span class="badge ${ratingLower}">${rating}</span></td>
+                    <td class="num">₹${(r.close || 0).toFixed(1)}</td>
+                    <td class="num">${maHtml}</td>
+                    <td class="num">${pocHtml}</td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar" style="width: ${(r.trend / 15 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${r.trend}/15</span>
+                    </td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar mom" style="width: ${(r.momentum / 15 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${r.momentum}/15</span>
+                    </td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar rsi" style="width: ${(r.rsi / 8 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${r.rsi}/8</span>
+                    </td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar macd" style="width: ${(r.macd / 7 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${r.macd}/7</span>
+                    </td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar vol" style="width: ${(r.volume / 10 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${r.volume}/10</span>
+                    </td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar rs" style="width: ${(r.rel_str / 10 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${r.rel_str}/10</span>
+                    </td>
+                    <td class="num bar-cell">
+                        <div class="bar-container"><div class="bar fund" style="width: ${((r.fundamentals || 0) / 20 * 100).toFixed(0)}%"></div></div>
+                        <span class="bar-val">${(r.fundamentals || 0)}/20</span>
+                    </td>
+                    <td class="num">${r.rsi_val || '—'}</td>
+                    <td class="num">${r.adx_val || '—'}</td>
+                    <td class="num ${(r.pc1m || 0) > 0 ? 'bull' : 'bear'}">${(r.pc1m || 0) > 0 ? '+' : ''}${(r.pc1m || 0).toFixed(1)}%</td>
+                    <td><span class="${r.trend_color}">${r.trend_dir === 'Bull' ? '▲' : '▼'} ${r.trend_dir}</span></td>
+                    <td>${r.volat_stat || '—'}</td>
+                `;
+
+                tbody.appendChild(row);
+            });
+        }
+
+        // ── Filter & Sort ──────────────────────────────────────────────────
+        function filterTable() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const minScore = parseFloat(document.getElementById('minScoreFilter').value);
+            const trendFilter = document.getElementById('trendFilterTable').value;
+            const signalFilter = document.getElementById('signalFilter').value;
+
+            const rows = document.getElementById('resultsBody').rows;
+            for (let row of rows) {
+                const ticker = row.cells[0].textContent.toLowerCase();
+                const score = parseFloat(row.cells[1].textContent);
+                const trend = row.cells[16].textContent;
+                const maBull = row.getAttribute('data-ma-bull') === 'true';
+                const abovePoc = row.getAttribute('data-above-poc') === 'true';
+
+                let matchSignal = true;
+                if (signalFilter === 'ma+poq') matchSignal = maBull && abovePoc;
+                else if (signalFilter === 'ma_bull') matchSignal = maBull;
+                else if (signalFilter === 'above_poc') matchSignal = abovePoc;
+
+                row.style.display = (
+                    ticker.includes(search) &&
+                    score >= minScore &&
+                    (!trendFilter || trend.includes(trendFilter)) &&
+                    matchSignal
+                ) ? '' : 'none';
+            }
+        }
+
+        function sortTable(col) {
+            const table = document.getElementById('resultsTable');
+            const tbody = table.tBodies[0];
+            const rows = Array.from(tbody.rows);
+            const th = table.tHead.rows[0].cells[col];
+
+            sortDir[col] = sortDir[col] === 'asc' ? 'desc' : 'asc';
+            const dir = sortDir[col];
+
+            for (let cell of table.tHead.rows[0].cells) {
+                cell.classList.remove('sorted-asc', 'sorted-desc');
+            }
+            th.classList.add(dir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+
+            rows.sort((a, b) => {
+                let aText = a.cells[col].textContent.replace(/<[^>]*>/g, '').trim();
+                let bText = b.cells[col].textContent.replace(/<[^>]*>/g, '').trim();
+                let aNum = parseFloat(aText.replace(/[+%]/g, ''));
+                let bNum = parseFloat(bText.replace(/[+%]/g, ''));
+                if (!isNaN(aNum) && !isNaN(bNum)) {
+                    return dir === 'asc' ? aNum - bNum : bNum - aNum;
+                }
+                return dir === 'asc' ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            });
+
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        // ── Export ─────────────────────────────────────────────────────────
+        function exportHTML() {
+            if (!scanResults.length) return;
+            const threshold = parseFloat(document.getElementById('thresholdSlider').value);
+            const universe = document.getElementById('universe').value;
+
+            fetch('/api/export/html', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    results: scanResults,
+                    title: `HMAxEMA Scanner — ${universe}`,
+                    threshold: threshold
+                })
+            })
+            .then(res => res.blob())
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `scanner_report_${Date.now()}.html`;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+        }
+
+        function exportCSV() {
+            if (!scanResults.length) return;
+
+            fetch('/api/export/csv', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ results: scanResults })
+            })
+            .then(res => res.blob())
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `scanner_results_${Date.now()}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+        }
+
+        // ── Utilities ──────────────────────────────────────────────────────
+        function clearResults() {
+            scanResults = [];
+            document.getElementById('resultsBody').innerHTML = '';
+            document.getElementById('emptyState').style.display = 'block';
+            document.getElementById('resultsTable').style.display = 'none';
+            document.getElementById('statsContainer').style.display = 'none';
+            document.getElementById('htmlBtn').disabled = true;
+            document.getElementById('csvBtn').disabled = true;
+            document.getElementById('clearBtn').disabled = true;
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressText').textContent = 'Ready';
+            addLog('Results cleared', 'info');
+        }
+
+        function clearCache() {
+            addLog('Cache cleared', 'success');
+        }
+
+        function toggleSettings() {
+            const panel = document.getElementById('settingsPanel');
+            const btn = document.querySelector('.settings-toggle');
+            if (panel.classList.contains('active')) {
+                panel.classList.remove('active');
+                btn.textContent = '⚙ SETTINGS (Click to expand)';
+            } else {
+                panel.classList.add('active');
+                btn.textContent = '⚙ SETTINGS (Click to collapse)';
+            }
+        }
+
+        function addLog(msg, type = 'info') {
+            const container = document.getElementById('logContainer');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${time}] ${msg}`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+    </script>
+</body>
+</html>

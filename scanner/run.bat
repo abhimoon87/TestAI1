@@ -1,5 +1,5 @@
 @echo off
-title HMAxEMA Stock Scanner
+title HMAxEMA Stock Scanner — Web
 cd /d "%~dp0.."
 
 REM Check if Python is available
@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 REM Check if dependencies are installed
-python -c "import customtkinter" >nul 2>&1
+python -c "import flask" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo  First time setup - installing dependencies...
@@ -32,9 +32,10 @@ if errorlevel 1 (
     echo.
 )
 
-REM Launch the GUI
-echo Starting HMAxEMA Stock Scanner...
-python -m scanner.app
+REM Launch the Web App
+echo Starting HMAxEMA Stock Scanner (Web)...
+echo Browser will open automatically at http://localhost:5000
+python -m scanner.web_app
 
 if errorlevel 1 (
     echo.

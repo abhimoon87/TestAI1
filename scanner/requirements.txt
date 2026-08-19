@@ -1,8 +1,12 @@
 # Core dependencies
-customtkinter>=5.2.0
 pandas>=2.0.0
 numpy>=1.24.0
 yfinance>=0.2.30
+
+# Web framework
+flask>=3.0.0
+flask-socketio>=5.3.0
+eventlet>=0.33.0
 
 # Data providers (free, no auth needed)
 jugaad-data>=0.35.0

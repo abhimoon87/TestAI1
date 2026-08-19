@@ -1,5 +1,5 @@
 #!/bin/bash
-# HMAxEMA Stock Scanner — macOS/Linux Launcher
+# HMAxEMA Stock Scanner — Web Launcher
 cd "$(dirname "$0")/.."
 
 # Check Python
@@ -14,7 +14,7 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Check dependencies
-python3 -c "import customtkinter" &> /dev/null
+python3 -c "import flask" &> /dev/null
 if [ $? -ne 0 ]; then
     echo ""
     echo "  First time setup - installing dependencies..."
@@ -30,5 +30,6 @@ if [ $? -ne 0 ]; then
 fi
 
 # Launch
-echo "Starting HMAxEMA Stock Scanner..."
-python3 -m scanner.app
+echo "Starting HMAxEMA Stock Scanner (Web)..."
+echo "Browser will open automatically at http://localhost:5000"
+python3 -m scanner.web_app
