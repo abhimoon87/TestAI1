@@ -30,18 +30,45 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
     return ema(src, length)
 
 
+def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Resample an OHLCV DataFrame to weekly bars.
+
+    Used to evaluate the higher-timeframe (weekly) entry condition
+    independently of the analysis timeframe of the scan. If the data is
+    already weekly (or cannot be resampled), it is returned as-is / None.
+    """
+    if df is None or df.empty or "close" not in df.columns:
+        return None
+    d = df.copy()
+    if not isinstance(d.index, pd.DatetimeIndex):
+        return None
+    if d.index.tz is not None:
+        d.index = d.index.tz_localize(None)
+    agg = {}
+    for col in ["open", "high", "low", "close"]:
+        if col in d.columns:
+            agg[col] = {"open": "first", "high": "max", "low": "min", "close": "last"}[col]
+    if "volume" in d.columns:
+        agg["volume"] = "sum"
+    if not agg:
+        return None
+    resampled = d.resample("W").agg(agg).dropna()
+    return resampled if not resampled.empty else None
+
+
 def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
-                  fast_ma_type: str = "HMA", fast_ma_len: int = 40,
-                  slow_ma_type: str = "EMA", slow_ma_len: int = 50,
-                   rsi_len: int = 14, vol_ma_len: int = 20,
-                   atr_len: int = 14, rs_length: int = 14,
-                   adx_len: int = 14, adx_threshold: float = 20.0,
-                   chop_len: int = 14, chop_threshold: float = 61.8,
-                   slope_ma_type: str = "EMA", slope_ma_len: int = 50,
-                   slope_lookback: int = 10, flat_threshold: float = 0.5,
-                   sc_pivot_len: int = 3, sc_bands_mult: float = 0.6,
-                   vp_lookback: int = 200, vp_rows: int = 30,
-                   vp_width: int = 40, crossover_lookback: int = 4) -> dict:
+                   fast_ma_type: str = "HMA", fast_ma_len: int = 40,
+                   slow_ma_type: str = "EMA", slow_ma_len: int = 50,
+                    rsi_len: int = 14, vol_ma_len: int = 20,
+                    atr_len: int = 14, rs_length: int = 14,
+                    adx_len: int = 14, adx_threshold: float = 20.0,
+                    chop_len: int = 14, chop_threshold: float = 61.8,
+                    slope_ma_type: str = "EMA", slope_ma_len: int = 50,
+                    slope_lookback: int = 10, flat_threshold: float = 0.5,
+                    sc_pivot_len: int = 3, sc_bands_mult: float = 0.6,
+                    vp_lookback: int = 200, vp_rows: int = 30,
+                    vp_width: int = 40, crossover_lookback: int = 4) -> dict:
     """
     Compute the 10-category score for a stock.
 
@@ -52,17 +79,9 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
       (2) current close is above Volume Profile POC AND above the crossover level
       (3) techno-fundamental total score >= 50
 
-    Args:
-        df: OHLCV DataFrame with columns [open, high, low, close, volume]
-        index_df: NIFTY index OHLCV DataFrame for relative strength (optional)
-        fast_ma_type/slow_ma_type: MA types
-        fast_ma_len/slow_ma_len: MA lengths
-        rsi_len, vol_ma_len, atr_len: Indicator lengths
-        adx_len, adx_threshold: ADX sideways filter params
-        chop_len, chop_threshold: Choppiness index params
-        slope_ma_type, slope_ma_len: Slope MA params
-        slope_lookback, flat_threshold: Slope flatness params
-        sc_pivot_len, sc_bands_mult: Step Channel params (for reference)
+    Higher-timeframe (WEEKLY) buy condition (TradingView):
+      wma((2 * wma(close, 22)) - wma(close, 44), 6)  crossed_above  ema(close, 50)
+      i.e. the weekly HMA(44) crosses above the weekly EMA(50).
 
     Returns:
         Dictionary with all scores and metadata
@@ -72,8 +91,14 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     if n >= 100:  # Daily data
         min_required = max(slow_ma_len, slope_ma_len, atr_len) + 10
     elif n >= 40:  # Weekly data
-        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 5
+        min_required = None
     else:  # Monthly data
+        min_required = None
+    if n >= 100:
+        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 10
+    elif n >= 40:
+        min_required = max(slow_ma_len, slope_ma_len, atr_len) + 5
+    else:
         min_required = max(slow_ma_len, slope_ma_len, atr_len) + 3
     if n < min(min_required, 25):  # At least 25 bars
         return None  # Not enough data
@@ -95,11 +120,35 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     atr_val = atr(high, low, close, atr_len)
     adx_val = adx(high, low, close, adx_len)
 
+    # ── Weekly HMA(44) x EMA(50) Higher-Timeframe Crossover ─────────────────
+    # Matches the TradingView condition:
+    #   wma((2 * wma(close, 22)) - wma(close, 44), 6)  crossed_above  ema(close, 50)
+    # hull_ma(close, 44) computes exactly that WMA-of-WMA formula, so we
+    # evaluate it on weekly bars regardless of the analysis timeframe.
+    weekly_hma_bull = False
+    weekly_hma_cross = False
+    weekly_hma_cross_bars_ago = -1
+    weekly_df = to_weekly(df)
+    if weekly_df is not None and len(weekly_df) >= 60:
+        w_close = weekly_df["close"]
+        w_hma = hull_ma(w_close, 44)
+        w_ema = ema(w_close, 50)
+        if not np.isnan(w_hma.iloc[-1]) and not np.isnan(w_ema.iloc[-1]):
+            weekly_hma_bull = w_hma.iloc[-1] > w_ema.iloc[-1]
+        look = min(12, len(w_hma) - 1)  # up to 12 weekly bars (~3 months)
+        for i in range(1, look + 1):
+            ic, ip = -i, -i - 1
+            if ip < -len(w_hma):
+                break
+            hc, hp = w_hma.iloc[ic], w_hma.iloc[ip]
+            ec, ep = w_ema.iloc[ic], w_ema.iloc[ip]
+            if not (np.isnan(hc) or np.isnan(hp) or np.isnan(ec) or np.isnan(ep)):
+                if hc > ec and hp <= ep:
+                    weekly_hma_cross = True
+                    weekly_hma_cross_bars_ago = i
+                    break
+
     # Price changes (adaptive to data frequency)
-    # For daily: 21 bars ~1 month, 63 bars ~3 months
-    # For weekly: 4 bars ~1 month, 13 bars ~3 months  
-    # For monthly: 1 bar ~1 month, 3 bars ~3 months
-    n = len(close)
     if n >= 100:  # Daily data (~250 bars/year)
         pc1m_period, pc3m_period = 21, 63
     elif n >= 40:  # Weekly data (~52 bars/year)
@@ -110,10 +159,8 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     pc3m = price_change(close, pc3m_period)
 
     # ── Sideways Filter (matches Pine Script exactly) ────────────────────────
-    # ADX Trend Strength
     is_sideways_adx = adx_val.iloc[-1] < adx_threshold if not np.isnan(adx_val.iloc[-1]) else False
 
-    # Choppiness Index
     atr1 = atr(high, low, close, 1)
     chop_sum = atr1.rolling(chop_len).sum()
     chop_range = high.rolling(chop_len).max() - low.rolling(chop_len).min()
@@ -121,7 +168,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(chop_len)
     is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
 
-    # MA Slope Flatness
     selected_ma = get_ma(slope_ma_type, close, slope_ma_len, volume)
     if len(selected_ma) > slope_lookback and selected_ma.iloc[-1 - slope_lookback] != 0:
         ma_slope_pct = abs(
@@ -156,54 +202,41 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "ll50": lowest(low, 50).iloc[-1],
         "is_sideways": is_sideways,
     }
-    
+
     # ── Volume Profile POC ────────────────────────────────────────────────
-    # Honor the configured VP lookback (in candles) from settings, instead of
-    # a hardcoded 11-week window.
     vp_bars = max(int(vp_lookback), 10)
     vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
     curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
-    
-    # Check if price is above POC
+
     curr["above_poc"] = curr["close"] >= curr["vp_poc"]
-    
-    # Check for MA crossover (Fast MA crossed above Slow MA)
-    # This is used as a FILTER, not for scoring
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
-    
-    # Close above BOTH MAs — stricter entry confirmation
     curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
-    
+
     # Look for crossovers in last N bars (configurable)
     ma_crossed_above = False
-    crossover_bars_ago = -1  # -1 means no crossover found
-    crossover_count = 0  # Total crossovers found in lookback
-    crossover_dates = []  # List of bars where crossovers happened
-    crossover_level = None  # Price level where the most recent crossover occurred
+    crossover_bars_ago = -1
+    crossover_count = 0
+    crossover_dates = []
+    crossover_level = None
 
-    lookback = min(crossover_lookback, len(fast_ma) - 1)  # Check last N bars (or available bars)
+    lookback = min(crossover_lookback, len(fast_ma) - 1)
     for i in range(1, lookback + 1):
         idx_curr = -i
         idx_prev = -i - 1
-
         if idx_prev < -len(fast_ma):
             break
-
         fast_curr = fast_ma.iloc[idx_curr]
         fast_prev = fast_ma.iloc[idx_prev]
         slow_curr = slow_ma.iloc[idx_curr]
         slow_prev = slow_ma.iloc[idx_prev]
-
-        # Check if crossover happened at this bar
         if (not np.isnan(fast_curr) and not np.isnan(fast_prev) and
             not np.isnan(slow_curr) and not np.isnan(slow_prev)):
             if fast_curr > slow_curr and fast_prev <= slow_prev:
                 crossover_count += 1
-                crossover_dates.append(i)  # Store bars ago
-                if not ma_crossed_above:  # First (most recent) crossover
+                crossover_dates.append(i)
+                if not ma_crossed_above:
                     ma_crossed_above = True
                     crossover_bars_ago = i
-                    # Price level of the crossover (~ where Fast MA met Slow MA)
                     crossover_level = float(slow_curr)
 
     curr["ma_crossed_above"] = ma_crossed_above
@@ -211,35 +244,24 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     curr["crossover_count"] = crossover_count
     curr["crossover_dates"] = crossover_dates
     curr["crossover_level"] = crossover_level
-
-    # Criterion: current close must be above the crossover price level
     curr["close_above_crossover"] = (
         crossover_level is not None and curr["close"] > crossover_level
     )
 
     # ── Category 1: TREND (max 20 pts) ──────────────────────────────────────
-    # Priority: Crossover freshness + POC position are the key entry signals
     trend_score = 0.0
-    
-    # 1. MA alignment (0-5 pts)
     if curr["ma_bullish"]:
         trend_score += 5.0
-    
-    # 2. Above Volume Profile POC (0-5 pts) — key volume support
     if curr["above_poc"]:
         trend_score += 5.0
-    
-    # 3. Close above BOTH MAs (0-3 pts) — entry confirmation
     if curr["close_above_both_ma"]:
         trend_score += 3.0
     elif curr["close"] > curr["slow_ma"]:
-        trend_score += 1.5  # Partial credit if only above slow MA
-    
-    # 4. Crossover freshness (0-4 pts) — recent crossover = stronger signal
+        trend_score += 1.5
     if curr["ma_crossed_above"]:
         bars = curr["crossover_bars_ago"]
         if bars <= 1:
-            trend_score += 4.0  # Fresh crossover — strongest signal
+            trend_score += 4.0
         elif bars <= 2:
             trend_score += 3.0
         elif bars <= 3:
@@ -247,12 +269,9 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         elif bars <= 4:
             trend_score += 1.0
         else:
-            trend_score += 0.5  # Older crossover, diminishing value
-    
-    # 5. ADX trend strength (0-3 pts)
+            trend_score += 0.5
     if not np.isnan(curr["adx"]) and curr["adx"] > 25:
         trend_score += 3.0
-    
     trend_score = min(trend_score, 20.0)
 
     # ── Category 2: MOMENTUM (max 15 pts) ───────────────────────────────────
@@ -261,12 +280,12 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         if curr["pc1m"] > 0:
             mom_score += min(7.0, 7.0 * (curr["pc1m"] / 5.0))
         else:
-            mom_score += max(-3.0, 7.0 * (curr["pc1m"] / 10.0))
+            mom_score += max(-3.0, min(0.0, 7.0 * (curr["pc1m"] / 10.0)))
     if not np.isnan(curr["pc3m"]):
         if curr["pc3m"] > 0:
             mom_score += min(8.0, 8.0 * (curr["pc3m"] / 10.0))
         else:
-            mom_score += max(-4.0, 8.0 * (curr["pc3m"] / 20.0))
+            mom_score += max(-4.0, min(0.0, 8.0 * (curr["pc3m"] / 20.0)))
     mom_score = max(0.0, min(mom_score, 15.0))
 
     # ── Category 3: RSI (max 8 pts) ─────────────────────────────────────────
@@ -310,7 +329,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
             vol_score += 5.0
         if curr["volume"] > curr["vol_ma"] * 1.2:
             vol_score += 3.0
-        # Liquidity: good if volume > 50-day average
         vol_t = sma(volume, 50).iloc[-1]
         if not np.isnan(vol_t) and curr["volume"] > vol_t:
             vol_score += 2.0
@@ -327,7 +345,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         if stock_rs > 0:
             rs_score += 5.0
     else:
-        # Fallback: use raw momentum as proxy
         if not np.isnan(curr["pc1m"]) and curr["pc1m"] > 0:
             rs_score += 5.0
         if not np.isnan(curr["pc3m"]) and curr["pc3m"] > 0:
@@ -343,7 +360,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     fund_score = 0.0
     fund_detail = {}
 
-    # Try to get fundamental data from yfinance (passed via df attrs or dict)
     fundamentals = getattr(df, '_fundamentals', None)
     if fundamentals:
         calc_pe = fundamentals.get("pe_ratio")
@@ -351,7 +367,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         rev_growth = fundamentals.get("rev_growth")
         roe = fundamentals.get("roe")
 
-        # P/E: Lower is better (within reason)
         if calc_pe is not None and calc_pe > 0:
             if calc_pe < 15:
                 fund_score += 5.0
@@ -364,7 +379,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         else:
             fund_detail["pe"] = "N/A"
 
-        # EPS Growth: Higher is better
         if eps_growth is not None:
             if eps_growth > 20:
                 fund_score += 5.0
@@ -377,7 +391,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         else:
             fund_detail["eps_growth"] = "N/A"
 
-        # Revenue Growth: Higher is better
         if rev_growth is not None:
             if rev_growth > 15:
                 fund_score += 5.0
@@ -390,7 +403,6 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         else:
             fund_detail["rev_growth"] = "N/A"
 
-        # ROE: Higher is better
         if roe is not None:
             if roe > 20:
                 fund_score += 5.0
@@ -434,6 +446,10 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "crossover_dates": curr["crossover_dates"],
         "above_poc": curr["above_poc"],
         "vp_poc": round(curr["vp_poc"], 2),
+        # Weekly HMA(44) x EMA(50) higher-timeframe condition
+        "weekly_hma_bull": weekly_hma_bull,
+        "weekly_hma_cross": weekly_hma_cross,
+        "weekly_hma_cross_bars_ago": weekly_hma_cross_bars_ago,
         # Sideways filter info
         "is_sideways": is_sideways,
         "sideways_reasons": (
@@ -456,15 +472,14 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         # Combined rating based on key signals + score
         "combined_rating": _get_combined_rating(total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]),
         # Swing-trading ENTRY signal (per strategy):
-        #   (1) recent Fast MA crossed above Slow MA AND close above the crossover level
-        #   (2) close above Volume Profile POC AND above the crossover level
-        #   (3) techno-fundamental score >= 50
         "entry_signal": bool(
             curr["ma_crossed_above"]
             and curr["close_above_crossover"]
             and curr["above_poc"]
             and total >= 50
         ),
+        # Weekly HMA(44) x EMA(50) buy trigger (TradingView condition).
+        "weekly_entry_signal": bool(weekly_hma_cross),
     }
 
     return result
@@ -473,23 +488,7 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
 def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, close_above_both_ma: bool = False) -> str:
     """
     Generate combined rating based on key signals and score.
-    
-    Priority:
-    1. Close above BOTH MAs + above POC = strongest signal (ideal entry)
-    2. MA bullish + above POC = strong signal
-    3. MA bullish only or above POC only = moderate
-    4. Score-based rating as fallback
-    
-    Args:
-        total_score: Total score (0-100)
-        ma_bullish: True if Fast MA > Slow MA
-        above_poc: True if price >= VP POC
-        close_above_both_ma: True if close > Fast MA AND close > Slow MA
-    
-    Returns:
-        'EXCELLENT', 'GOOD', 'MODERATE', or 'POOR'
     """
-    # Strongest: Close above both MAs + above POC (ideal entry criteria)
     if close_above_both_ma and above_poc:
         if total_score >= 60:
             return "EXCELLENT"
@@ -499,8 +498,6 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, 
             return "MODERATE"
         else:
             return "POOR"
-    
-    # Strong: MA bullish + above POC (close may be between the MAs)
     elif ma_bullish and above_poc:
         if total_score >= 65:
             return "EXCELLENT"
@@ -510,8 +507,6 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, 
             return "MODERATE"
         else:
             return "POOR"
-    
-    # Moderate: MA bullish only
     elif ma_bullish:
         if total_score >= 70:
             return "EXCELLENT"
@@ -521,8 +516,6 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, 
             return "MODERATE"
         else:
             return "POOR"
-    
-    # Moderate: Above POC only
     elif above_poc:
         if total_score >= 70:
             return "EXCELLENT"
@@ -532,8 +525,6 @@ def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, 
             return "MODERATE"
         else:
             return "POOR"
-    
-    # Weak: Neither condition met - rely on score
     else:
         if total_score >= 70:
             return "EXCELLENT"
