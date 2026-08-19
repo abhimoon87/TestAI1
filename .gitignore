@@ -12,6 +12,7 @@ scanner/test_report_columns.html
 
 # Settings (user-specific)
 scanner/settings.json
+scanner/api_config.json
 
 # OS
 .DS_Store

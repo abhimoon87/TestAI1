@@ -7,8 +7,10 @@ Provider priority for OHLCV:
   3. nselib — NSE library, no auth needed
 
 Provider priority for Fundamentals:
-  1. yfinance .info — Detailed financial data
-  2. nselib pe_ratio — Bulk P/E ratio for all stocks
+  1. Finnhub — Institutional-grade data (free tier)
+  2. Alpha Vantage — Technical indicators + fundamentals (free API key)
+  3. yfinance .info — Detailed financial data
+  4. nselib pe_ratio — Bulk P/E ratio for all stocks
 
 All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
@@ -20,9 +22,22 @@ import time
 import hashlib
 from datetime import date, datetime, timedelta
 from typing import Optional
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
+
+# Load API keys from config file if exists
+_config_file = Path(__file__).parent / "api_config.json"
+if _config_file.exists():
+    try:
+        with open(_config_file, "r") as f:
+            _config = json.load(f)
+            for key, value in _config.items():
+                if key not in os.environ:  # Don't override existing env vars
+                    os.environ[key] = value
+    except Exception:
+        pass
 
 # ── Cache Directory ────────────────────────────────────────────────────────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
@@ -296,6 +311,97 @@ def _fetch_nselib(ticker: str, period: str) -> Optional[pd.DataFrame]:
 # FUNDAMENTAL DATA PROVIDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
+    """Fetch fundamentals from Finnhub (free tier, institutional-grade)."""
+    try:
+        import requests
+
+        # Finnhub uses .NS suffix for NSE stocks
+        finnhub_ticker = f"{ticker}.NS"
+        api_key = os.environ.get("FINNHUB_API_KEY", "")
+
+        if not api_key:
+            return None
+
+        # Get basic financials
+        url = f"https://finnhub.io/api/v1/stock/metric?symbol={finnhub_ticker}&metric=all&token={api_key}"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+
+        if not data or "metric" not in data:
+            return None
+
+        metric = data["metric"]
+
+        pe_ratio = metric.get("peTTM") or metric.get("peBasicExclExtraTTM")
+        roe = metric.get("roeTTM")
+        if roe is not None:
+            roe = roe * 100 if abs(roe) < 1 else roe
+
+        # Get earnings data for growth
+        eps_growth = None
+        rev_growth = None
+
+        try:
+            earnings_url = f"https://finnhub.io/api/v1/stock/earnings?symbol={finnhub_ticker}&token={api_key}"
+            earnings_resp = requests.get(earnings_url, timeout=10)
+            earnings_data = earnings_resp.json()
+
+            if earnings_data and len(earnings_data) >= 2:
+                # Compare latest two quarters
+                latest = earnings_data[0]
+                prev = earnings_data[1]
+                if prev.get("eps") and prev["eps"] != 0 and latest.get("eps"):
+                    eps_growth = ((latest["eps"] - prev["eps"]) / abs(prev["eps"])) * 100
+                if prev.get("revenue") and prev["revenue"] != 0 and latest.get("revenue"):
+                    rev_growth = ((latest["revenue"] - prev["revenue"]) / abs(prev["revenue"])) * 100
+        except Exception:
+            pass
+
+        return {
+            "pe_ratio": pe_ratio,
+            "eps_growth": eps_growth,
+            "rev_growth": rev_growth,
+            "roe": roe,
+        }
+
+    except Exception:
+        return None
+
+
+def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
+    """Fetch fundamentals from Alpha Vantage (free API key)."""
+    try:
+        import requests
+
+        api_key = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+        if not api_key:
+            return None
+
+        # Get overview data
+        url = f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}.NS&apikey={api_key}"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+
+        if not data or "PERatio" not in data:
+            return None
+
+        pe_ratio = float(data.get("PERatio", 0)) or None
+        roe = float(data.get("ReturnOnEquityTTM", 0)) * 100 if data.get("ReturnOnEquityTTM") else None
+        eps_growth = float(data.get("EPSGrowthTTM", 0)) * 100 if data.get("EPSGrowthTTM") else None
+        rev_growth = float(data.get("RevenueGrowthTTM", 0)) * 100 if data.get("RevenueGrowthTTM") else None
+
+        return {
+            "pe_ratio": pe_ratio,
+            "eps_growth": eps_growth,
+            "rev_growth": rev_growth,
+            "roe": roe,
+        }
+
+    except Exception:
+        return None
+
+
 def _fetch_fundamentals_yfinance(ticker: str) -> Optional[dict]:
     """Fetch fundamentals from yfinance .info."""
     try:
@@ -470,12 +576,16 @@ class DataProvider:
         Fetch fundamental data with provider fallback.
 
         Priority:
-          1. yfinance
-          2. nselib
+          1. Finnhub (institutional-grade, free tier)
+          2. Alpha Vantage (technical indicators + fundamentals)
+          3. yfinance (detailed financial data)
+          4. nselib (bulk P/E ratio)
         """
         self.last_provider = None
 
         providers = [
+            ("finnhub", lambda: _fetch_fundamentals_finnhub(ticker)),
+            ("alpha_vantage", lambda: _fetch_fundamentals_alpha_vantage(ticker)),
             ("yfinance", lambda: _fetch_fundamentals_yfinance(ticker)),
             ("nselib", lambda: _fetch_fundamentals_nselib(ticker)),
         ]
