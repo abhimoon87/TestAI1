@@ -78,15 +78,12 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     high = df["high"]
     low = df["low"]
     volume = df["volume"]
-    open_ = df["open"]
-
-    result = {}
 
     # ── Core Indicators ──────────────────────────────────────────────────────
     fast_ma = get_ma(fast_ma_type, close, fast_ma_len, volume)
     slow_ma = get_ma(slow_ma_type, close, slow_ma_len, volume)
     rsi_val = rsi(close, rsi_len)
-    macd_line, macd_sig, macd_hist = macd(close)
+    _, _, macd_hist = macd(close)
     stoch_k = stochastic(high, low, close)
     obv_val = obv(close, volume)
     obv_ma = sma(obv_val, 20)
@@ -173,12 +170,14 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
     curr["above_poc"] = curr["close"] >= curr["vp_poc"]
     
     # Check for MA crossover (Fast MA crossed above Slow MA)
-    # Check if crossover happened within last 4 candles
+    # This is used as a FILTER, not for scoring
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
     
-    # Look for crossover in last N bars (configurable)
+    # Look for crossovers in last N bars (configurable)
     ma_crossed_above = False
     crossover_bars_ago = -1  # -1 means no crossover found
+    crossover_count = 0  # Total crossovers found in lookback
+    crossover_dates = []  # List of bars where crossovers happened
     
     lookback = min(crossover_lookback, len(fast_ma) - 1)  # Check last N bars (or available bars)
     for i in range(1, lookback + 1):
@@ -197,28 +196,26 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         if (not np.isnan(fast_curr) and not np.isnan(fast_prev) and
             not np.isnan(slow_curr) and not np.isnan(slow_prev)):
             if fast_curr > slow_curr and fast_prev <= slow_prev:
-                ma_crossed_above = True
-                crossover_bars_ago = i  # How many bars ago the crossover happened
-                break  # Found the most recent crossover
+                crossover_count += 1
+                crossover_dates.append(i)  # Store bars ago
+                if not ma_crossed_above:  # First (most recent) crossover
+                    ma_crossed_above = True
+                    crossover_bars_ago = i
     
     curr["ma_crossed_above"] = ma_crossed_above
     curr["crossover_bars_ago"] = crossover_bars_ago if ma_crossed_above else -1
+    curr["crossover_count"] = crossover_count
+    curr["crossover_dates"] = crossover_dates
 
     # ── Category 1: TREND (max 15 pts) ──────────────────────────────────────
     # Priority: MA crossover and POC position are key signals
     trend_score = 0.0
     
-    # MA Crossover bonus (highest priority)
-    # Recent crossover (within lookback) gets full points
-    if curr["ma_crossed_above"]:
-        # Fresh if crossover happened in first half of lookback window
-        fresh_threshold = max(2, crossover_lookback // 2)
-        if curr["crossover_bars_ago"] <= fresh_threshold:
-            trend_score += 8.0  # Very fresh crossover
-        else:
-            trend_score += 6.0  # Recent crossover
-    elif curr["ma_bullish"]:
+    # MA Trend scoring (crossover is a filter, not scored)
+    if curr["ma_bullish"]:
         trend_score += 5.0  # MA alignment is bullish
+    else:
+        trend_score += 0.0  # MA bearish
     
     # Price above POC bonus
     if curr["above_poc"]:
@@ -408,6 +405,8 @@ def compute_scores(df: pd.DataFrame, index_df: pd.DataFrame = None,
         "ma_bullish": curr["ma_bullish"],
         "ma_crossed_above": curr["ma_crossed_above"],
         "crossover_bars_ago": curr["crossover_bars_ago"],
+        "crossover_count": curr["crossover_count"],
+        "crossover_dates": curr["crossover_dates"],
         "above_poc": curr["above_poc"],
         "vp_poc": round(curr["vp_poc"], 2),
         # Sideways filter info

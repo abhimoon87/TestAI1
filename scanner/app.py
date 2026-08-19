@@ -12,15 +12,14 @@ import json
 import os
 import sys
 import threading
+import time
 import webbrowser
 from datetime import datetime
-from pathlib import Path
 
 import customtkinter as ctk
-from tkinter import messagebox
 
 from .universes import UNIVERSES
-from .data_fetcher import fetch_stock_data, fetch_index_data, resample_ohlcv
+from .data_fetcher import fetch_stock_data, fetch_index_data
 from .scoring import compute_scores
 from .report import generate_html_report, save_report
 
@@ -198,7 +197,7 @@ class ScannerApp(ctk.CTk):
         self.trend_filter_var = ctk.StringVar(value="All")
         trend_menu = ctk.CTkOptionMenu(
             sidebar, variable=self.trend_filter_var,
-            values=["All", "Bullish Only", "Bearish Only", "MA + POC Only"],
+            values=["All", "Bullish Only", "Bearish Only", "MA + POC Only", "Crossover Only"],
             width=280, height=32,
             fg_color="#153520", button_color="#1a4a2a",
             dropdown_fg_color="#0f2a1a"
@@ -607,6 +606,10 @@ class ScannerApp(ctk.CTk):
                                 # Only show stocks with MA bullish alignment AND above POC
                                 if not (scores.get("ma_bullish", False) and scores.get("above_poc", False)):
                                     continue
+                            elif trend_filter == "Crossover Only":
+                                # Only show stocks that had a crossover in the lookback period
+                                if not scores.get("ma_crossed_above", False):
+                                    continue
 
                             results.append(scores)
                             self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
@@ -614,7 +617,6 @@ class ScannerApp(ctk.CTk):
                     self._log(f"  {ticker}: ERROR - {str(e)}")
 
                 # Rate limiting
-                import time
                 time.sleep(0.15)
 
             # Sort and store
@@ -723,8 +725,12 @@ class ScannerApp(ctk.CTk):
             ma_bullish = r.get('ma_bullish', False)
             ma_crossed = r.get('ma_crossed_above', False)
             crossover_ago = r.get('crossover_bars_ago', -1)
+            crossover_count = r.get('crossover_count', 0)
             if ma_crossed:
-                ma_text = f"^ X{crossover_ago}"
+                if crossover_count > 1:
+                    ma_text = f"^ X{crossover_ago}({crossover_count})"
+                else:
+                    ma_text = f"^ X{crossover_ago}"
                 ma_color = "#00ff88"
             elif ma_bullish:
                 ma_text = "^ Bull"
@@ -732,7 +738,7 @@ class ScannerApp(ctk.CTk):
             else:
                 ma_text = "v Bear"
                 ma_color = "#ff4444"
-            ctk.CTkLabel(row, text=ma_text, width=50,
+            ctk.CTkLabel(row, text=ma_text, width=70,
                           font=ctk.CTkFont(size=10),
                           text_color=ma_color).pack(side="left", padx=1)
 
