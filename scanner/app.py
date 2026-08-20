@@ -29,6 +29,8 @@ ctk.set_default_color_theme("green")
 
 SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
+LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
+LOG_ROTATE_HOURS = 12  # Overwrite log file after 12 hours
 
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
 DEFAULT_SETTINGS = {
@@ -119,6 +121,7 @@ class ScannerApp(ctk.CTk):
 
         self._build_ui()
         self._load_settings_to_ui()
+        self._rotate_log()
 
     # ── UI Construction ──────────────────────────────────────────────────────
 
@@ -638,6 +641,9 @@ class ScannerApp(ctk.CTk):
             trend_filter = settings.get("trend_filter", "All")
 
             tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
+            self._log(f"\n{'='*50}")
+            self._log(f"START SCAN | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            self._log(f"{'='*50}")
             self._log(f"Starting scan: {universe_name} ({len(tickers)} stocks)")
             self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
             self._log(f"FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
@@ -766,6 +772,9 @@ class ScannerApp(ctk.CTk):
             self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
             self._log(f"  Scored {settings['min_score']}+: {passed}")
+            self._log(f"{'='*50}")
+            self._log(f"END SCAN")
+            self._log(f"{'='*50}")
 
             self.after(0, lambda: self._display_results(results))
 
@@ -1046,10 +1055,27 @@ class ScannerApp(ctk.CTk):
         except Exception:
             pass
 
+    def _rotate_log(self):
+        """Overwrite log file if it's older than LOG_ROTATE_HOURS."""
+        try:
+            if os.path.exists(LOG_FILE):
+                age_hours = (datetime.now().timestamp() - os.path.getmtime(LOG_FILE)) / 3600
+                if age_hours >= LOG_ROTATE_HOURS:
+                    open(LOG_FILE, "w").close()  # Truncate
+        except Exception:
+            pass
+
     def _log(self, msg: str):
-        """Thread-safe log to the log textbox."""
+        """Thread-safe log to the log textbox and file."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {msg}\n"
+
+        # Write to file
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
 
         def _append():
             self.log_text.insert("end", line)
