@@ -99,10 +99,10 @@ def save_settings(settings: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 RESULT_COLS = [
-    ("Rank", 40), ("Ticker", 100), ("Score", 60), ("Rating", 90), ("ENTRY", 60),
-    ("Price", 80), ("MA", 70), ("POC", 50), ("Trend/15", 70), ("Mom/15", 70),
-    ("RSI/8", 55), ("MACD/7", 60), ("Vol/10", 60), ("RS/10", 55), ("Fund/20", 65),
-    ("1M Chg", 70), ("Direction", 75), ("ADX", 50), ("Sideways", 55),
+    ("#", 30), ("Ticker", 90), ("Score", 45), ("Rating", 65), ("ENTRY", 50),
+    ("Price", 70), ("MA", 55), ("T/15", 35), ("M/15", 35), ("R/8", 30),
+    ("V/7", 30), ("V/10", 30), ("RS/10", 35), ("F/20", 35),
+    ("1M", 50), ("Dir", 45), ("ADX", 35), ("Chop", 35),
 ]
 
 
@@ -441,24 +441,13 @@ class ScannerApp(ctk.CTk):
         results_container = ctk.CTkFrame(main, fg_color="transparent", corner_radius=0)
         results_container.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         results_container.grid_columnconfigure(0, weight=1)
-        results_container.grid_rowconfigure(0, weight=0)  # header (fixed)
-        results_container.grid_rowconfigure(1, weight=1)  # body (scrolls)
+        results_container.grid_rowconfigure(0, weight=1)  # table takes all space
 
         # Sticky header — stays visible while the list scrolls
-        self.results_header = ctk.CTkFrame(results_container, fg_color="#153520",
-                                            height=32, corner_radius=0)
-        self.results_header.grid(row=0, column=0, sticky="ew", padx=2, pady=(2, 0))
-        self.results_header.grid_propagate(False)
-        for i, (text, w) in enumerate(RESULT_COLS):
-            self.results_header.grid_columnconfigure(i, weight=w)
-            ctk.CTkLabel(self.results_header, text=text,
-                         font=ctk.CTkFont(size=10, weight="bold"),
-                         text_color="#00ddcc").grid(row=0, column=i, sticky="ew", padx=1)
-
-        # Scrolling stock list (takes the remaining height)
+        # Scrolling stock list (header is created inside _display_results)
         self.table_frame = ctk.CTkScrollableFrame(results_container, fg_color="#0a1a10",
                                                    corner_radius=0)
-        self.table_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=(0, 2))
+        self.table_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
         # ── Log area (FIXED at bottom, NEVER expands) ──────────────────────
         log_frame = ctk.CTkFrame(main, fg_color="#061208", height=150)
@@ -797,152 +786,81 @@ class ScannerApp(ctk.CTk):
 
         threshold = self.settings.get("min_score", 50)
 
-        COLS = RESULT_COLS
-        ncols = len(COLS)
+        # Column definitions: (header_text, width, extract_func)
+        def _make_cols():
+            return [
+                ("#",           30, lambda r, i: (str(i), "#c8d8c0", 10, True)),
+                ("Ticker",      90, lambda r, i: (r["ticker"], "#00ff88" if r["total"] >= threshold else "#c8d8c0", 10, True)),
+                ("Score",       45, lambda r, i: (f'{r["total"]:.0f}',
+                    "#00ff88" if r["total"] >= 70 else ("#aaff00" if r["total"] >= 50 else ("#ffaa00" if r["total"] >= 30 else "#ff4444")), 11, True)),
+                ("Rating",      65, lambda r, i: (r.get("combined_rating", "POOR"),
+                    {"EXCELLENT": "#00ff88", "GOOD": "#aaff00", "MODERATE": "#ffaa00"}.get(r.get("combined_rating"), "#ff4444"), 9, False)),
+                ("ENTRY",       50, lambda r, i: ("YES" if r.get("entry_signal") else "--",
+                    "#00ff88" if r.get("entry_signal") else "#ff4444", 9, False)),
+                ("Price",       70, lambda r, i: (f'\u20b9{r.get("close", 0):.0f}', "#c8d8c0", 10, True)),
+                ("MA",          55, lambda r, i: (self._ma_text(r), self._ma_color(r), 9, False)),
+                ("T/15",        35, lambda r, i: (f'{r.get("trend", 0):.0f}', "#00ff88", 9, False)),
+                ("M/15",        35, lambda r, i: (f'{r.get("momentum", 0):.0f}', "#00ddcc", 9, False)),
+                ("R/8",         30, lambda r, i: (f'{r.get("rsi", 0):.0f}', "#00aaff", 9, False)),
+                ("V/7",         30, lambda r, i: (f'{r.get("macd", 0):.0f}', "#aa88ff", 9, False)),
+                ("Vol/10",      35, lambda r, i: (f'{r.get("volume", 0):.0f}', "#ffaa00", 9, False)),
+                ("RS/10",       35, lambda r, i: (f'{r.get("rel_str", 0):.0f}', "#aaff00", 9, False)),
+                ("F/20",        35, lambda r, i: (f'{r.get("fundamentals", 0):.0f}', "#ffe600", 9, False)),
+                ("1M",          50, lambda r, i: (f'{r.get("pc1m", 0) or 0:+.1f}%',
+                    "#00ff88" if (r.get("pc1m", 0) or 0) > 0 else "#ff4444", 9, False)),
+                ("Dir",         45, lambda r, i: (("^ " if r["trend_dir"] == "Bull" else "v ") + r["trend_dir"],
+                    "#00ff88" if r["trend_dir"] == "Bull" else "#ff4444", 9, False)),
+                ("ADX",         35, lambda r, i: (f'{r.get("adx_val", 0) or 0:.0f}', "#c8d8c0", 9, False)),
+                ("Chop",        35, lambda r, i: ("Chop" if r.get("is_sideways") else "OK",
+                    "#ffaa00" if r.get("is_sideways") else "#00ff88", 9, False)),
+            ]
+
+        cols = _make_cols()
+
+        # Header row
+        hdr = ctk.CTkFrame(self.table_frame, fg_color="#153520", height=28)
+        hdr.pack(fill="x", padx=2, pady=(2, 0))
+        hdr.pack_propagate(False)
+        for text, width, _ in cols:
+            ctk.CTkLabel(hdr, text=text, width=width, anchor="w",
+                         font=ctk.CTkFont(size=9, weight="bold"),
+                         text_color="#00ddcc").pack(side="left", padx=1)
 
         # Data rows
         for rank, r in enumerate(results, 1):
             score = r["total"]
             is_above = score >= threshold
-
             row_bg = "#0f2a1a" if is_above else "#0a1a10"
-            row = ctk.CTkFrame(self.table_frame, fg_color=row_bg, height=30)
+
+            row = ctk.CTkFrame(self.table_frame, fg_color=row_bg, height=26)
             row.pack(fill="x", padx=2, pady=1)
             row.pack_propagate(False)
-            for i in range(ncols):
-                row.grid_columnconfigure(i, weight=COLS[i][1])
 
-            col = 0
-            # Rank
-            rank_color = "#00ff88" if score >= 70 else ("#aaff00" if score >= 50 else ("#ffaa00" if score >= 30 else "#ff4444"))
-            ctk.CTkLabel(row, text=str(rank),
-                          font=ctk.CTkFont(size=11, weight="bold"),
-                          text_color=rank_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # Ticker
-            ctk.CTkLabel(row, text=r["ticker"],
-                          font=ctk.CTkFont(size=11, weight="bold"),
-                          text_color="#00ff88" if is_above else "#c8d8c0",
-                          anchor="w").grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # Score
-            score_color = "#00ff88" if score >= 70 else ("#aaff00" if score >= 50 else ("#ffaa00" if score >= 30 else "#ff4444"))
-            ctk.CTkLabel(row, text=f"{score:.1f}",
-                          font=ctk.CTkFont(size=12, weight="bold"),
-                          text_color=score_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # Rating badge (using combined rating)
-            rating = r.get('combined_rating', 'POOR')
-            if rating == "EXCELLENT":
-                badge_color = "#0a3a1a"; badge_text = "#00ff88"
-            elif rating == "GOOD":
-                badge_color = "#1a3a0a"; badge_text = "#aaff00"
-            elif rating == "MODERATE":
-                badge_color = "#3a2a0a"; badge_text = "#ffaa00"
-            else:  # POOR
-                badge_color = "#3a0a0a"; badge_text = "#ff4444"
-            badge_frame = ctk.CTkFrame(row, fg_color=badge_color, corner_radius=3, height=20)
-            badge_frame.grid(row=0, column=col, sticky="ew", padx=2)
-            ctk.CTkLabel(badge_frame, text=rating,
-                          font=ctk.CTkFont(size=9, weight="bold"),
-                          text_color=badge_text).pack(padx=4, pady=2)
-            col += 1
-
-            # ENTRY signal badge (full swing-entry strategy met?)
-            entry_signal = r.get("entry_signal", False)
-            entry_badge = ctk.CTkFrame(row, fg_color="#0a3a1a" if entry_signal else "#3a0a0a",
-                                       corner_radius=3, height=20)
-            entry_badge.grid(row=0, column=col, sticky="ew", padx=2)
-            ctk.CTkLabel(entry_badge, text="ENTRY" if entry_signal else "—",
-                          font=ctk.CTkFont(size=9, weight="bold"),
-                          text_color="#00ff88" if entry_signal else "#ff4444").pack(padx=4, pady=2)
-            col += 1
-
-            # Price
-            ctk.CTkLabel(row, text=f"\u20b9{r.get('close', 0):.1f}",
-                          font=ctk.CTkFont(size=11),
-                          text_color="#c8d8c0").grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # MA Signal
-            ma_bullish = r.get('ma_bullish', False)
-            ma_crossed = r.get('ma_crossed_above', False)
-            crossover_ago = r.get('crossover_bars_ago', -1)
-            crossover_count = r.get('crossover_count', 0)
-            if ma_crossed:
-                ma_text = f"^ X{crossover_ago}({crossover_count})" if crossover_count > 1 else f"^ X{crossover_ago}"
-                ma_color = "#00ff88"
-            elif ma_bullish:
-                ma_text = "^ Bull"; ma_color = "#aaff00"
-            else:
-                ma_text = "v Bear"; ma_color = "#ff4444"
-            ctk.CTkLabel(row, text=ma_text,
-                          font=ctk.CTkFont(size=10),
-                          text_color=ma_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # POC Signal
-            above_poc = r.get('above_poc', False)
-            if above_poc:
-                poc_text = "Above"; poc_color = "#00ff88"
-            else:
-                poc_text = "Below"; poc_color = "#ff4444"
-            ctk.CTkLabel(row, text=poc_text,
-                          font=ctk.CTkFont(size=10),
-                          text_color=poc_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # Category scores (with mini bar)
-            for cat, max_val, color in [
-                ("trend", 15, "#00ff88"), ("momentum", 15, "#00ddcc"),
-                ("rsi", 8, "#00aaff"), ("macd", 7, "#aa88ff"),
-                ("volume", 10, "#ffaa00"), ("rel_str", 10, "#aaff00"),
-                ("fundamentals", 20, "#ffe600")
-            ]:
-                val = r.get(cat, 0)
-                bar_width = int((val / max_val) * 50) if max_val > 0 else 0
-
-                cat_frame = ctk.CTkFrame(row, fg_color="transparent", height=20)
-                cat_frame.grid(row=0, column=col, sticky="ew", padx=1)
-                ctk.CTkFrame(cat_frame, fg_color="#153520",
-                              width=50, height=6, corner_radius=2).place(x=0, y=7)
-                if bar_width > 0:
-                    ctk.CTkFrame(cat_frame, fg_color=color,
-                                  width=max(bar_width, 2), height=6, corner_radius=2).place(x=0, y=7)
-                ctk.CTkLabel(cat_frame, text=f"{val:.0f}",
-                              font=ctk.CTkFont(size=9),
-                              text_color="#6a8a6a").place(x=52, y=1)
-                col += 1
-
-            # 1M Change
-            pc1m = r.get("pc1m", 0) or 0
-            pc1m_color = "#00ff88" if pc1m > 0 else "#ff4444"
-            ctk.CTkLabel(row, text=f"{pc1m:+.1f}%",
-                          font=ctk.CTkFont(size=11),
-                          text_color=pc1m_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # Direction
-            dir_color = "#00ff88" if r["trend_dir"] == "Bull" else "#ff4444"
-            dir_icon = "^" if r["trend_dir"] == "Bull" else "v"
-            ctk.CTkLabel(row, text=f"{dir_icon} {r['trend_dir']}",
-                          font=ctk.CTkFont(size=11),
-                          text_color=dir_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # ADX
-            adx_val = r.get("adx_val")
-            adx_text = f"{adx_val:.0f}" if adx_val is not None else "---"
-            ctk.CTkLabel(row, text=adx_text,
-                          font=ctk.CTkFont(size=11),
-                          text_color="#c8d8c0").grid(row=0, column=col, sticky="ew", padx=1); col += 1
-
-            # Sideways indicator
-            is_sideways = r.get("is_sideways", False)
-            sideways_text = "\u26a0 Chop" if is_sideways else "\u2713"
-            sideways_color = "#ffaa00" if is_sideways else "#00ff88"
-            ctk.CTkLabel(row, text=sideways_text,
-                          font=ctk.CTkFont(size=10),
-                          text_color=sideways_color).grid(row=0, column=col, sticky="ew", padx=1); col += 1
+            for i, (_, width, extract) in enumerate(cols):
+                text, color, fsize, bold = extract(r, rank)
+                ctk.CTkLabel(row, text=text, width=width, anchor="w",
+                             font=ctk.CTkFont(size=fsize, weight="bold" if bold else "normal"),
+                             text_color=color).pack(side="left", padx=1)
 
         # Update header
         self.result_count_label.configure(
             text=f"{len(results)} stocks scanned  |  {len([r for r in results if r['total'] >= threshold])} above {threshold}+")
+
+    def _ma_text(self, r):
+        if r.get("ma_crossed_above"):
+            ago = r.get("crossover_bars_ago", -1)
+            cnt = r.get("crossover_count", 0)
+            return f"^ X{ago}({cnt})" if cnt > 1 else f"^ X{ago}"
+        elif r.get("ma_bullish"):
+            return "^ Bull"
+        return "v Bear"
+
+    def _ma_color(self, r):
+        if r.get("ma_crossed_above"):
+            return "#00ff88"
+        elif r.get("ma_bullish"):
+            return "#aaff00"
+        return "#ff4444"
 
         # Update summary stat cards
         self.after(0, lambda: self._update_summary(results))

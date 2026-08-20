@@ -184,11 +184,11 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFram
     Returns:
         Dictionary with all scores and metadata
     """
-    # Minimum required bars scales with the analysis timeframe.
-    # Daily ~1y (220 bars), Weekly ~2y (110 bars), Monthly ~5y (60 bars).
+    # Minimum required bars: enough for the slowest MA + indicator context.
+    # With default settings (fast_ma=44, slow_ma=50, vp=11), ~100 bars is enough.
     n = len(df)
-    min_required = {"D": 220, "W": 110, "M": 60}.get(timeframe, 220)
-    if n < min_required:  # At least the slowest MA length + context
+    min_required = {"D": 100, "W": 50, "M": 25}.get(timeframe, 100)
+    if n < min_required:
         return None  # Not enough data
 
     close = df["close"]
