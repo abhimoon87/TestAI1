@@ -99,10 +99,10 @@ def save_settings(settings: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 RESULT_COLS = [
-    ("#", 30), ("Ticker", 90), ("Score", 45), ("Rating", 65), ("ENTRY", 50),
-    ("Price", 70), ("MA", 55), ("T/15", 35), ("M/15", 35), ("R/8", 30),
-    ("V/7", 30), ("V/10", 30), ("RS/10", 35), ("F/20", 35),
-    ("1M", 50), ("Dir", 45), ("ADX", 35), ("Chop", 35),
+    ("#", 35), ("Ticker", 100), ("Score", 50), ("Rating", 75), ("ENTRY", 55),
+    ("Price", 80), ("MA", 60), ("T/15", 40), ("M/15", 40), ("R/8", 35),
+    ("V/7", 35), ("Vol/10", 40), ("RS/10", 40), ("F/20", 40),
+    ("1M", 55), ("Dir", 55), ("ADX", 40), ("Chop", 40),
 ]
 
 
@@ -654,18 +654,6 @@ class ScannerApp(ctk.CTk):
             batch_data = fetch_batch_yfinance(tickers, period=period, timeframe=timeframe)
             self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
 
-            # Attach fundamentals to each stock (yfinance batch download doesn't include them)
-            self._set_progress(0.08, "Fetching fundamentals...")
-            self._log("Fetching fundamental data...")
-            for ticker in batch_data:
-                try:
-                    fund = fetch_fundamentals(ticker)
-                    if fund is not None:
-                        batch_data[ticker]._fundamentals = fund
-                except Exception:
-                    pass
-            self._log("Fundamentals fetch complete")
-
             # ── 3-Model Pipeline ────────────────────────────────────────────
             results = []
             total = len(batch_data)
@@ -708,7 +696,15 @@ class ScannerApp(ctk.CTk):
                     direction_counts[direction] = direction_counts.get(direction, 0) + 1
 
                     # ── MODEL 3: Techno-Fundamental Scoring ─────────────────
-                    # Only stocks that passed the filter get scored.
+                    # Fetch fundamentals only for stocks that passed the filter
+                    if not hasattr(df, '_fundamentals') or df._fundamentals is None:
+                        try:
+                            fund = fetch_fundamentals(ticker)
+                            if fund is not None:
+                                df._fundamentals = fund
+                        except Exception:
+                            pass
+
                     scores = compute_scores(
                         df, timeframe=timeframe, index_df=index_df,
                         fast_ma_type=settings["fast_ma_type"],
@@ -789,41 +785,41 @@ class ScannerApp(ctk.CTk):
         # Column definitions: (header_text, width, extract_func)
         def _make_cols():
             return [
-                ("#",           30, lambda r, i: (str(i), "#c8d8c0", 10, True)),
-                ("Ticker",      90, lambda r, i: (r["ticker"], "#00ff88" if r["total"] >= threshold else "#c8d8c0", 10, True)),
-                ("Score",       45, lambda r, i: (f'{r["total"]:.0f}',
-                    "#00ff88" if r["total"] >= 70 else ("#aaff00" if r["total"] >= 50 else ("#ffaa00" if r["total"] >= 30 else "#ff4444")), 11, True)),
-                ("Rating",      65, lambda r, i: (r.get("combined_rating", "POOR"),
-                    {"EXCELLENT": "#00ff88", "GOOD": "#aaff00", "MODERATE": "#ffaa00"}.get(r.get("combined_rating"), "#ff4444"), 9, False)),
-                ("ENTRY",       50, lambda r, i: ("YES" if r.get("entry_signal") else "--",
-                    "#00ff88" if r.get("entry_signal") else "#ff4444", 9, False)),
-                ("Price",       70, lambda r, i: (f'\u20b9{r.get("close", 0):.0f}', "#c8d8c0", 10, True)),
-                ("MA",          55, lambda r, i: (self._ma_text(r), self._ma_color(r), 9, False)),
-                ("T/15",        35, lambda r, i: (f'{r.get("trend", 0):.0f}', "#00ff88", 9, False)),
-                ("M/15",        35, lambda r, i: (f'{r.get("momentum", 0):.0f}', "#00ddcc", 9, False)),
-                ("R/8",         30, lambda r, i: (f'{r.get("rsi", 0):.0f}', "#00aaff", 9, False)),
-                ("V/7",         30, lambda r, i: (f'{r.get("macd", 0):.0f}', "#aa88ff", 9, False)),
-                ("Vol/10",      35, lambda r, i: (f'{r.get("volume", 0):.0f}', "#ffaa00", 9, False)),
-                ("RS/10",       35, lambda r, i: (f'{r.get("rel_str", 0):.0f}', "#aaff00", 9, False)),
-                ("F/20",        35, lambda r, i: (f'{r.get("fundamentals", 0):.0f}', "#ffe600", 9, False)),
-                ("1M",          50, lambda r, i: (f'{r.get("pc1m", 0) or 0:+.1f}%',
-                    "#00ff88" if (r.get("pc1m", 0) or 0) > 0 else "#ff4444", 9, False)),
-                ("Dir",         45, lambda r, i: (("^ " if r["trend_dir"] == "Bull" else "v ") + r["trend_dir"],
-                    "#00ff88" if r["trend_dir"] == "Bull" else "#ff4444", 9, False)),
-                ("ADX",         35, lambda r, i: (f'{r.get("adx_val", 0) or 0:.0f}', "#c8d8c0", 9, False)),
-                ("Chop",        35, lambda r, i: ("Chop" if r.get("is_sideways") else "OK",
-                    "#ffaa00" if r.get("is_sideways") else "#00ff88", 9, False)),
+                ("#",           35, lambda r, i: (str(i), "#c8d8c0", 12, True)),
+                ("Ticker",     100, lambda r, i: (r["ticker"], "#00ff88" if r["total"] >= threshold else "#c8d8c0", 12, True)),
+                ("Score",       50, lambda r, i: (f'{r["total"]:.0f}',
+                    "#00ff88" if r["total"] >= 70 else ("#aaff00" if r["total"] >= 50 else ("#ffaa00" if r["total"] >= 30 else "#ff4444")), 13, True)),
+                ("Rating",      75, lambda r, i: (r.get("combined_rating", "POOR"),
+                    {"EXCELLENT": "#00ff88", "GOOD": "#aaff00", "MODERATE": "#ffaa00"}.get(r.get("combined_rating"), "#ff4444"), 11, False)),
+                ("ENTRY",       55, lambda r, i: ("YES" if r.get("entry_signal") else "--",
+                    "#00ff88" if r.get("entry_signal") else "#ff4444", 11, False)),
+                ("Price",       80, lambda r, i: (f'\u20b9{r.get("close", 0):.0f}', "#c8d8c0", 12, True)),
+                ("MA",          60, lambda r, i: (self._ma_text(r), self._ma_color(r), 11, False)),
+                ("T/15",        40, lambda r, i: (f'{r.get("trend", 0):.0f}', "#00ff88", 11, False)),
+                ("M/15",        40, lambda r, i: (f'{r.get("momentum", 0):.0f}', "#00ddcc", 11, False)),
+                ("R/8",         35, lambda r, i: (f'{r.get("rsi", 0):.0f}', "#00aaff", 11, False)),
+                ("V/7",         35, lambda r, i: (f'{r.get("macd", 0):.0f}', "#aa88ff", 11, False)),
+                ("Vol/10",      40, lambda r, i: (f'{r.get("volume", 0):.0f}', "#ffaa00", 11, False)),
+                ("RS/10",       40, lambda r, i: (f'{r.get("rel_str", 0):.0f}', "#aaff00", 11, False)),
+                ("F/20",        40, lambda r, i: (f'{r.get("fundamentals", 0):.0f}', "#ffe600", 11, False)),
+                ("1M",          55, lambda r, i: (f'{r.get("pc1m", 0) or 0:+.1f}%',
+                    "#00ff88" if (r.get("pc1m", 0) or 0) > 0 else "#ff4444", 11, False)),
+                ("Dir",         55, lambda r, i: (("^ " if r["trend_dir"] == "Bull" else "v ") + r["trend_dir"],
+                    "#00ff88" if r["trend_dir"] == "Bull" else "#ff4444", 11, False)),
+                ("ADX",         40, lambda r, i: (f'{r.get("adx_val", 0) or 0:.0f}', "#c8d8c0", 11, False)),
+                ("Chop",        40, lambda r, i: ("Chop" if r.get("is_sideways") else "OK",
+                    "#ffaa00" if r.get("is_sideways") else "#00ff88", 11, False)),
             ]
 
         cols = _make_cols()
 
         # Header row
-        hdr = ctk.CTkFrame(self.table_frame, fg_color="#153520", height=28)
+        hdr = ctk.CTkFrame(self.table_frame, fg_color="#153520", height=32)
         hdr.pack(fill="x", padx=2, pady=(2, 0))
         hdr.pack_propagate(False)
         for text, width, _ in cols:
             ctk.CTkLabel(hdr, text=text, width=width, anchor="w",
-                         font=ctk.CTkFont(size=9, weight="bold"),
+                         font=ctk.CTkFont(size=11, weight="bold"),
                          text_color="#00ddcc").pack(side="left", padx=1)
 
         # Data rows
@@ -832,7 +828,7 @@ class ScannerApp(ctk.CTk):
             is_above = score >= threshold
             row_bg = "#0f2a1a" if is_above else "#0a1a10"
 
-            row = ctk.CTkFrame(self.table_frame, fg_color=row_bg, height=26)
+            row = ctk.CTkFrame(self.table_frame, fg_color=row_bg, height=30)
             row.pack(fill="x", padx=2, pady=1)
             row.pack_propagate(False)
 
