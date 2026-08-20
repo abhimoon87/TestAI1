@@ -16,8 +16,22 @@ from datetime import datetime
 
 from .universes import UNIVERSES, NIFTY_50
 from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch_yfinance, fetch_fundamentals
-from .scoring import compute_scores
+from .scoring import compute_scores, check_filter, get_direction
 from .report import generate_html_report, save_report
+
+# Load settings (same as app.py)
+import json as _json
+import os as _os
+_SETTINGS_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "settings.json")
+def _load_settings():
+    s = {}
+    if _os.path.exists(_SETTINGS_FILE):
+        try:
+            with open(_SETTINGS_FILE, "r") as f:
+                s = _json.load(f)
+        except Exception:
+            pass
+    return s
 
 
 def print_banner():
@@ -117,13 +131,17 @@ def run_scan():
     print(f"  Period:     {period}")
     print()
 
-    # ── Fetch NIFTY index for relative strength ──────────────────────────────
-    print("━━━ Fetching NIFTY 50 index data ━━━")
-    index_df = fetch_index_data("^NSEI", period=period)
+    # ── Load settings for index symbol ──────────────────────────────────────
+    settings = _load_settings()
+    index_symbol = settings.get("index_symbol", "NSEI")
+
+    # ── Fetch index for relative strength ──────────────────────────────────
+    print(f"━━━ Fetching {index_symbol} index data ━━━")
+    index_df = fetch_index_data(f"^{index_symbol}", period=period)
     if index_df is not None:
-        print(f"  ✓ NIFTY 50 loaded ({len(index_df)} bars)")
+        print(f"  ✓ {index_symbol} loaded ({len(index_df)} bars)")
     else:
-        print("  ⚠ NIFTY data unavailable — RS will use proxy")
+        print(f"  ⚠ {index_symbol} data unavailable — RS will use proxy")
     print()
 
     # ── Fetch stock data ─────────────────────────────────────────────────────
@@ -135,30 +153,61 @@ def run_scan():
         print("  ✗ No data fetched. Check your internet connection.")
         return
 
-    # ── Score each stock ─────────────────────────────────────────────────────
-    print("━━━ Computing scores ━━━")
+    # ── 3-Model Pipeline ──────────────────────────────────────────────────
+    print("━━━ 3-Model Pipeline ━━━")
     results = []
+    filtered_out = 0
+    direction_counts = {"Bull": 0, "Bear": 0}
+    min_score_threshold = 50.0  # Swing trading threshold
+
     for i, (ticker, df) in enumerate(stock_data.items(), 1):
-        print(f"  [{i}/{len(stock_data)}] Scoring {ticker}...", end="", flush=True)
+        print(f"  [{i}/{len(stock_data)}] {ticker}...", end="", flush=True)
+
         # Attach fundamentals if not already present
         if not hasattr(df, '_fundamentals') or df._fundamentals is None:
             fund = fetch_fundamentals(ticker)
             if fund is not None:
                 df._fundamentals = fund
+
+        # ── MODEL 1: Stock Filter ──────────────────────────────────────────
+        filter_result = check_filter(df)
+        if filter_result is None:
+            filtered_out += 1
+            print(" \u2716 filtered")
+            continue
+
+        # ── MODEL 2: Bullish / Bearish ────────────────────────────────────
+        direction = get_direction(filter_result)
+        direction_counts[direction] = direction_counts.get(direction, 0) + 1
+        dir_icon = "\u25b2" if direction == "Bull" else "\u25bc"
+
+        # ── MODEL 3: Techno-Fundamental Scoring ───────────────────────────
         scores = compute_scores(df, index_df=index_df)
-        if scores is not None:
-            scores["ticker"] = ticker
-            results.append(scores)
-            total = scores["total"]
-            icon = "🟢" if total >= 70 else ("🟡" if total >= 50 else ("🟠" if total >= 30 else "🔴"))
-            sideways = " [CHOP]" if scores.get("is_sideways") else ""
-            print(f" {icon} {total:.1f}{sideways}")
-        else:
-            print(" ⚠ insufficient data")
+        if scores is None:
+            print(" \u26a0 insufficient data")
+            continue
+
+        scores["ticker"] = ticker
+        scores["trend_dir"] = direction
+        results.append(scores)
+
+        total = scores["total"]
+        icon = "\U0001f7e2" if total >= 70 else ("\U0001f7e1" if total >= 50 else ("\U0001f7e0" if total >= 30 else "\U0001f534"))
+        tag = "\u2713" if total >= min_score_threshold else "\u2717"
+        sideways = " [CHOP]" if scores.get("is_sideways") else ""
+        print(f" {dir_icon} {tag} {icon} {total:.1f}{sideways}")
 
     if not results:
-        print("\n  ✗ No stocks could be scored.")
+        print("\n  \u2717 No stocks passed the filter.")
         return
+
+    # ── Pipeline Summary ──────────────────────────────────────────────────
+    print(f"\n━━━ Pipeline Summary ━━━")
+    print(f"  Total stocks:  {len(stock_data)}")
+    print(f"  Filtered out:  {filtered_out} (no recent crossover)")
+    print(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
+    passed = len([r for r in results if r["total"] >= min_score_threshold])
+    print(f"  Scored {min_score_threshold}+: {passed}")
 
     # ── Generate report ──────────────────────────────────────────────────────
     print(f"\n━━━ Generating report ━━━")

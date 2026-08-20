@@ -49,12 +49,104 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["open", "high", "low", "close"]:
         if col in d.columns:
             agg[col] = {"open": "first", "high": "max", "low": "min", "close": "last"}[col]
-    if "volume" in d.columns:
+    if "volume" in df.columns:
         agg["volume"] = "sum"
     if not agg:
         return None
     resampled = d.resample("W").agg(agg).dropna()
     return resampled if not resampled.empty else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL 1: STOCK FILTER
+# Lightweight check — returns filter info or None if stock is filtered out.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def check_filter(df: pd.DataFrame,
+                 fast_ma_type: str = "HMA", fast_ma_len: int = 40,
+                 slow_ma_type: str = "EMA", slow_ma_len: int = 50,
+                 crossover_lookback: int = 20) -> dict:
+    """
+    Model 1 — Stock Filter.
+
+    Checks for a recent MA crossover on the given OHLCV data:
+      1. A recent MA crossover occurred (within crossover_lookback bars)
+
+    Returns:
+        dict with filter metadata if the crossover condition is met,
+        or None if the stock is filtered out.
+    """
+    if df is None or df.empty:
+        return None
+
+    n = len(df)
+    min_bars = max(fast_ma_len, slow_ma_len) + crossover_lookback + 10
+    if n < min_bars:
+        return None
+
+    close = df["close"]
+    volume = df["volume"]
+
+    # ── Compute MAs ──────────────────────────────────────────────────────────
+    fast_ma = get_ma(fast_ma_type, close, fast_ma_len, volume)
+    slow_ma = get_ma(slow_ma_type, close, slow_ma_len, volume)
+
+    if np.isnan(fast_ma.iloc[-1]) or np.isnan(slow_ma.iloc[-1]):
+        return None
+
+    # ── Check for recent crossover ──────────────────────────────────────────
+    ma_crossed_above = False
+    crossover_level = None
+    crossover_bars_ago = -1
+
+    lb = min(crossover_lookback, len(fast_ma) - 1)
+    for i in range(1, lb + 1):
+        ic, ip = -i, -i - 1
+        if ip < -len(fast_ma):
+            break
+        fc, fp = fast_ma.iloc[ic], fast_ma.iloc[ip]
+        sc, sp = slow_ma.iloc[ic], slow_ma.iloc[ip]
+        if (not np.isnan(fc) and not np.isnan(fp) and
+                not np.isnan(sc) and not np.isnan(sp)):
+            if fc > sc and fp <= sp:
+                ma_crossed_above = True
+                crossover_level = float(sc)
+                crossover_bars_ago = i
+                break
+
+    if not ma_crossed_above:
+        return None  # No recent crossover → filtered out
+
+    return {
+        "ma_crossed_above": ma_crossed_above,
+        "crossover_level": crossover_level,
+        "crossover_bars_ago": crossover_bars_ago,
+        "ma_bullish": bool(fast_ma.iloc[-1] > slow_ma.iloc[-1]),
+        "close": float(close.iloc[-1]),
+        "fast_ma": float(fast_ma.iloc[-1]),
+        "slow_ma": float(slow_ma.iloc[-1]),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL 2: BULLISH / BEARISH
+# Direction classification based on MA crossover direction.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_direction(filter_result: dict) -> str:
+    """
+    Model 2 — Bullish / Bearish classification.
+
+    Args:
+        filter_result: Output dict from check_filter().
+
+    Returns:
+        "Bull" if Fast MA crossed above Slow MA (bullish crossover),
+        "Bear" if Fast MA crossed below Slow MA (bearish crossover).
+    """
+    if filter_result is None:
+        return None
+    return "Bull" if filter_result["ma_bullish"] else "Bear"
 
 
 def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFrame = None,
@@ -68,7 +160,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFram
                     slope_lookback: int = 10, flat_threshold: float = 0.5,
                     sc_pivot_len: int = 3, sc_bands_mult: float = 0.6,
                     vp_lookback: int = 200, vp_rows: int = 30,
-                    vp_width: int = 40, crossover_lookback: int = 4) -> dict:
+                    vp_width: int = 40, crossover_lookback: int = 20) -> dict:
     """
     Compute the 10-category score for a stock.
 
@@ -79,7 +171,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFram
                    evaluated on weekly bars regardless of the analysis timeframe.
 
     Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
-    Max total = 105 pts (capped at 100), with Trend weighted at 20 pts.
+    Max total = 100 pts, with Trend weighted at 15 pts (matches Pine Script).
     Entry signal (swing-trading strategy):
       (1) recent Fast MA crossed above Slow MA AND current close is above the crossover level
       (2) current close is above Volume Profile POC AND above the crossover level
@@ -245,31 +337,34 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFram
         crossover_level is not None and curr["close"] > crossover_level
     )
 
-    # ── Category 1: TREND (max 20 pts) ──────────────────────────────────────
+    # ── Category 1: TREND (max 15 pts) ──────────────────────────────────────
+    # Pine Script: close>slow+fast(10), fast>slow(5), ADX>25(2), cap=15
+    # Scanner adds above_poc, close_above_both_ma, crossover_freshness.
+    # Weights adjusted so max = 15 (scanner total max = 100).
     trend_score = 0.0
     if curr["ma_bullish"]:
-        trend_score += 5.0
+        trend_score += 4.0  # Pine: fast>slow = 5 (part of 10)
     if curr["above_poc"]:
-        trend_score += 5.0
+        trend_score += 2.5  # Scanner extra: above Volume Profile POC
     if curr["close_above_both_ma"]:
-        trend_score += 3.0
+        trend_score += 2.5  # Pine: close>slow+fast = 10 (combined with ma_bullish)
     elif curr["close"] > curr["slow_ma"]:
-        trend_score += 1.5
+        trend_score += 1.0
     if curr["ma_crossed_above"]:
         bars = curr["crossover_bars_ago"]
         if bars <= 1:
-            trend_score += 4.0
+            trend_score += 3.0  # Fresh crossover bonus
         elif bars <= 2:
-            trend_score += 3.0
-        elif bars <= 3:
             trend_score += 2.0
-        elif bars <= 4:
+        elif bars <= 3:
             trend_score += 1.0
-        else:
+        elif bars <= 4:
             trend_score += 0.5
+        else:
+            trend_score += 0.25
     if not np.isnan(curr["adx"]) and curr["adx"] > 25:
-        trend_score += 3.0
-    trend_score = min(trend_score, 20.0)
+        trend_score += 2.0  # Pine: ADX>25 = 2
+    trend_score = min(trend_score, 15.0)
 
     # ── Category 2: MOMENTUM (max 15 pts) ───────────────────────────────────
     mom_score = 0.0

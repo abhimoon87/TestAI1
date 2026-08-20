@@ -83,6 +83,22 @@ def _get_provider() -> DataProvider:
     return _provider
 
 
+def _extend_period_for_timeframe(period: str, timeframe: str) -> str:
+    """Extend data period for higher timeframes.
+
+    yfinance only provides daily data. When resampling to weekly/monthly,
+    we need more daily bars so the result has enough bars for analysis.
+    Monthly needs 60+ bars, so 1y daily (~252 bars) -> 5y daily (~1260 bars) -> 60 months.
+    """
+    if timeframe == "D":
+        return period
+    if timeframe == "W":
+        return {"6mo": "1y", "1y": "2y", "2y": "5y", "5y": "5y"}.get(period, "2y")
+    if timeframe == "M":
+        return {"6mo": "2y", "1y": "5y", "2y": "5y", "5y": "5y"}.get(period, "5y")
+    return period
+
+
 def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
                      retries: int = 2) -> Optional[pd.DataFrame]:
     """
@@ -101,10 +117,11 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
         DataFrame with columns [open, high, low, close, volume] or None
     """
     provider = _get_provider()
+    download_period = _extend_period_for_timeframe(period, timeframe)
 
     for attempt in range(retries):
         try:
-            df = provider.fetch_stock(ticker, period)
+            df = provider.fetch_stock(ticker, download_period)
             if df is not None and not df.empty and len(df) >= 50:
                 # Resample to requested timeframe
                 df = resample_ohlcv(df, timeframe)
@@ -162,6 +179,7 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D"
     Args:
         tickers: List of NSE symbols
         period: Data period
+        timeframe: 'D' daily, 'W' weekly, 'M' monthly
 
     Returns:
         Dict mapping ticker -> DataFrame
@@ -170,13 +188,15 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D"
         import yfinance as yf
         import pandas as pd
 
+        download_period = _extend_period_for_timeframe(period, timeframe)
+
         # Add .NS suffix for NSE stocks
         yf_tickers = [f"{t}.NS" for t in tickers]
         ticker_map = {f"{t}.NS": t for t in tickers}  # Map back to original
 
         # Single batch download
         print(f"  Batch downloading {len(tickers)} stocks via yfinance...", flush=True)
-        data = yf.download(yf_tickers, period=period, group_by="ticker",
+        data = yf.download(yf_tickers, period=download_period, group_by="ticker",
                            auto_adjust=True, progress=False, threads=True)
 
         results = {}
@@ -228,8 +248,9 @@ def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> O
     Fast single stock fetch using cache-first approach.
     """
     provider = _get_provider()
+    download_period = _extend_period_for_timeframe(period, timeframe)
     try:
-        df = provider.fetch_stock(ticker, period)
+        df = provider.fetch_stock(ticker, download_period)
         if df is not None and not df.empty and len(df) >= 50:
             df = resample_ohlcv(df, timeframe)
             if df is not None and not df.empty:

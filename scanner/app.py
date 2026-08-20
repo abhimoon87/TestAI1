@@ -19,8 +19,8 @@ from datetime import datetime
 import customtkinter as ctk
 
 from .universes import UNIVERSES
-from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, fetch_batch_yfinance
-from .scoring import compute_scores
+from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, fetch_batch_yfinance, fetch_fundamentals
+from .scoring import compute_scores, check_filter, get_direction
 from .report import generate_html_report, save_report
 
 # ── Theme ────────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ DEFAULT_SETTINGS = {
     "adx_threshold": 20.0,
     "chop_len": 14,
     "chop_threshold": 61.8,
-    "slope_ma_type": "EMA",
+    "slope_ma_type": "KAMA",
     "slope_ma_len": 50,
     "slope_lookback": 10,
     "flat_threshold": 0.5,
@@ -61,7 +61,7 @@ DEFAULT_SETTINGS = {
     "sc_pivot_len": 3,
     "sc_bands_mult": 0.6,
     # MA Crossover
-    "crossover_lookback": 4,
+    "crossover_lookback": 20,
     # Scanner
     "min_score": 50.0,
     "data_period": "1y",
@@ -206,7 +206,7 @@ class ScannerApp(ctk.CTk):
         self.trend_filter_var = ctk.StringVar(value="All")
         trend_menu = ctk.CTkOptionMenu(
             sidebar, variable=self.trend_filter_var,
-            values=["All", "Bullish Only", "Bearish Only", "MA + POC Only", "Crossover Only", "Entry Signals Only"],
+            values=["All", "Bullish Only", "Bearish Only"],
             width=280, height=32,
             fg_color="#153520", button_color="#1a4a2a",
             dropdown_fg_color="#0f2a1a"
@@ -646,11 +646,12 @@ class ScannerApp(ctk.CTk):
 
             # Fetch NIFTY index
             self._set_progress(0, "Fetching NIFTY 50 index...")
-            index_df = fetch_index_data("^NSEI", period=period)
+            index_symbol = settings.get("index_symbol", "NSEI")
+            index_df = fetch_index_data(f"^{index_symbol}", period=period)
             if index_df is not None:
-                self._log(f"NIFTY 50 index loaded ({len(index_df)} bars)")
+                self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
             else:
-                self._log("Warning: NIFTY index unavailable, using proxy for RS")
+                self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
 
             # FAST: Batch download all stocks at once via yfinance
             self._set_progress(0.05, f"Batch downloading {len(tickers)} stocks...")
@@ -658,70 +659,99 @@ class ScannerApp(ctk.CTk):
             batch_data = fetch_batch_yfinance(tickers, period=period, timeframe=timeframe)
             self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
 
-            # Score stocks from batch data
+            # Attach fundamentals to each stock (yfinance batch download doesn't include them)
+            self._set_progress(0.08, "Fetching fundamentals...")
+            self._log("Fetching fundamental data...")
+            for ticker in batch_data:
+                try:
+                    fund = fetch_fundamentals(ticker)
+                    if fund is not None:
+                        batch_data[ticker]._fundamentals = fund
+                except Exception:
+                    pass
+            self._log("Fundamentals fetch complete")
+
+            # ── 3-Model Pipeline ────────────────────────────────────────────
             results = []
             total = len(batch_data)
-            scored = 0
+            filtered_out = 0
+            direction_counts = {"Bull": 0, "Bear": 0}
 
             for i, (ticker, df) in enumerate(batch_data.items(), 1):
                 progress = 0.1 + (i / total * 0.9) if total > 0 else 0.5
-                self._set_progress(progress, f"[{i}/{total}] Scoring {ticker}")
+                self._set_progress(progress, f"[{i}/{total}] {ticker}")
 
                 try:
-                    if df is not None and not df.empty:
-                        scores = compute_scores(
-                            df, timeframe=timeframe, index_df=index_df,
-                            fast_ma_type=settings["fast_ma_type"],
-                            fast_ma_len=settings["fast_ma_len"],
-                            slow_ma_type=settings["slow_ma_type"],
-                            slow_ma_len=settings["slow_ma_len"],
-                            rsi_len=settings["rsi_len"],
-                            vol_ma_len=settings["vol_ma_len"],
-                            atr_len=settings["atr_len"],
-                            rs_length=settings["rs_length"],
-                            adx_len=settings["adx_len"],
-                            adx_threshold=settings["adx_threshold"],
-                            chop_len=settings["chop_len"],
-                            chop_threshold=settings["chop_threshold"],
-                            slope_ma_type=settings["slope_ma_type"],
-                            slope_ma_len=settings["slope_ma_len"],
-                            slope_lookback=settings["slope_lookback"],
-                            flat_threshold=settings["flat_threshold"],
-                            sc_pivot_len=settings["sc_pivot_len"],
-                            sc_bands_mult=settings["sc_bands_mult"],
-                            vp_lookback=settings["vp_lookback"],
-                            vp_rows=settings["vp_rows"],
-                            vp_width=settings["vp_width"],
-                            crossover_lookback=settings["crossover_lookback"],
-                        )
-                        if scores is not None:
-                            scores["ticker"] = ticker
+                    if df is None or df.empty:
+                        continue
 
-                            # Apply trend filter
-                            if trend_filter == "Bullish Only" and scores["trend_dir"] != "Bull":
-                                continue
-                            elif trend_filter == "Bearish Only" and scores["trend_dir"] != "Bear":
-                                continue
-                            elif trend_filter == "MA + POC Only":
-                                # Only show stocks with MA bullish alignment AND above POC
-                                if not (scores.get("ma_bullish", False) and scores.get("above_poc", False)):
-                                    continue
-                            elif trend_filter == "Crossover Only":
-                                # Only show stocks that had a crossover in the lookback period
-                                if not scores.get("ma_crossed_above", False):
-                                    continue
-                            elif trend_filter == "Entry Signals Only":
-                                # Only show stocks that meet the full swing-entry strategy:
-                                # (1) Fast MA crossed above Slow MA AND close above crossover level
-                                # (2) close above Volume Profile POC AND above crossover level
-                                # (3) techno-fundamental score >= 50
-                                if not scores.get("entry_signal", False):
-                                    continue
+                    # ── MODEL 1: Stock Filter ────────────────────────────────
+                    # Check for recent MA crossover. Skip if none found.
+                    filter_result = check_filter(
+                        df,
+                        fast_ma_type=settings["fast_ma_type"],
+                        fast_ma_len=settings["fast_ma_len"],
+                        slow_ma_type=settings["slow_ma_type"],
+                        slow_ma_len=settings["slow_ma_len"],
+                        crossover_lookback=settings["crossover_lookback"],
+                    )
+                    if filter_result is None:
+                        filtered_out += 1
+                        continue
 
-                            results.append(scores)
-                            scored += 1
-                            if scored % 10 == 0 or scored <= 5:
-                                self._log(f"  {ticker}: {scores['total']:.1f}/100 ({scores['trend_dir']})")
+                    # ── MODEL 2: Bullish / Bearish ──────────────────────────
+                    direction = get_direction(filter_result)
+
+                    # Apply trend filter (direction-based)
+                    if trend_filter == "Bullish Only" and direction != "Bull":
+                        filtered_out += 1
+                        continue
+                    elif trend_filter == "Bearish Only" and direction != "Bear":
+                        filtered_out += 1
+                        continue
+
+                    direction_counts[direction] = direction_counts.get(direction, 0) + 1
+
+                    # ── MODEL 3: Techno-Fundamental Scoring ─────────────────
+                    # Only stocks that passed the filter get scored.
+                    scores = compute_scores(
+                        df, timeframe=timeframe, index_df=index_df,
+                        fast_ma_type=settings["fast_ma_type"],
+                        fast_ma_len=settings["fast_ma_len"],
+                        slow_ma_type=settings["slow_ma_type"],
+                        slow_ma_len=settings["slow_ma_len"],
+                        rsi_len=settings["rsi_len"],
+                        vol_ma_len=settings["vol_ma_len"],
+                        atr_len=settings["atr_len"],
+                        rs_length=settings["rs_length"],
+                        adx_len=settings["adx_len"],
+                        adx_threshold=settings["adx_threshold"],
+                        chop_len=settings["chop_len"],
+                        chop_threshold=settings["chop_threshold"],
+                        slope_ma_type=settings["slope_ma_type"],
+                        slope_ma_len=settings["slope_ma_len"],
+                        slope_lookback=settings["slope_lookback"],
+                        flat_threshold=settings["flat_threshold"],
+                        sc_pivot_len=settings["sc_pivot_len"],
+                        sc_bands_mult=settings["sc_bands_mult"],
+                        vp_lookback=settings["vp_lookback"],
+                        vp_rows=settings["vp_rows"],
+                        vp_width=settings["vp_width"],
+                        crossover_lookback=settings["crossover_lookback"],
+                    )
+                    if scores is None:
+                        continue
+
+                    scores["ticker"] = ticker
+                    scores["trend_dir"] = direction  # Override with pipeline direction
+                    scores["trend_color"] = direction.lower()
+                    results.append(scores)
+
+                    if len(results) % 10 == 0 or len(results) <= 5:
+                        score_val = scores["total"]
+                        tag = "\u2713" if score_val >= settings["min_score"] else "\u2717"
+                        self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
+
                 except Exception as e:
                     pass  # Silently skip errors in batch mode
 
@@ -731,12 +761,11 @@ class ScannerApp(ctk.CTk):
 
             # Update UI
             passed = len([r for r in results if r["total"] >= settings["min_score"]])
-            filtered_out = len(tickers) - len(results) if trend_filter != "All" else 0
-            if trend_filter == "MA + POC Only":
-                filter_msg = f", {filtered_out} filtered (require MA bullish + above POC)" if filtered_out > 0 else ""
-            else:
-                filter_msg = f", {filtered_out} filtered by {trend_filter}" if filtered_out > 0 else ""
-            self._log(f"\nScan complete: {len(results)} stocks scored, {passed} above {settings['min_score']} threshold{filter_msg}")
+            self._log(f"\n\u2501\u2501\u2501 Scan Complete \u2501\u2501\u2501")
+            self._log(f"  Total stocks:  {len(tickers)}")
+            self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
+            self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
+            self._log(f"  Scored {settings['min_score']}+: {passed}")
 
             self.after(0, lambda: self._display_results(results))
 
@@ -973,7 +1002,7 @@ class ScannerApp(ctk.CTk):
     def _clear_cache(self):
         """Clear the disk cache for all data providers."""
         try:
-            from data_providers import DataProvider
+            from .data_providers import DataProvider
             provider = DataProvider()
             provider.clear_cache()
             self._log("Cache cleared successfully")
