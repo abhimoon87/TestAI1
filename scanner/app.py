@@ -23,14 +23,77 @@ from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, 
 from .scoring import compute_scores, check_filter, get_direction
 from .report import generate_html_report, save_report, _sentiment, SENTIMENT_GOOD, SENTIMENT_BAD
 
-# ── Theme ────────────────────────────────────────────────────────────────────
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("green")
-
 SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12  # Overwrite log file after 12 hours
+
+# ── Theme Definitions ───────────────────────────────────────────────────────
+THEMES = {
+    "dark": {
+        "ctk_mode": "dark",
+        # Base
+        "bg": "#0a1a10", "surface": "#0f2a1a", "surface2": "#153520",
+        "border": "#1a4a2a", "text": "#c8d8c0", "text_dim": "#6a8a6a",
+        # Accents
+        "green": "#00ff88", "lime": "#aaff00", "cyan": "#00ddcc",
+        "orange": "#ffaa00", "red": "#ff4444", "blue": "#00aaff",
+        # Sidebar
+        "sidebar_bg": "#0d1f14",
+        # Buttons
+        "run_bg": "#00aa55", "run_hover": "#00cc66", "run_text": "#000000",
+        "btn_bg": "#1a4a2a", "btn_hover": "#2a6a3a",
+        "theme_btn_bg": "transparent", "theme_btn_hover": "#153520",
+        "clear_btn_bg": "#5a2a0a", "clear_btn_hover": "#7a3a1a",
+        "export_btn_bg": "#0a3a5a", "export_btn_hover": "#1a4a6a",
+        # Widgets
+        "option_bg": "#153520", "option_btn": "#1a4a2a", "option_drop": "#0f2a1a",
+        "entry_bg": "#153520", "entry_border": "#1a4a2a",
+        "slider_btn": "#00ff88", "slider_prog": "#00aa55",
+        "progress_bg": "#153520", "progress_fg": "#00ff88",
+        # Table
+        "header_bg": "#0f2a1a", "row_hover": "#153520",
+        "row_highlight": "rgba(0,255,136,0.06)",
+        # Log
+        "log_bg": "#0a1a10",
+    },
+    "light": {
+        "ctk_mode": "light",
+        # Base
+        "bg": "#f0f2f5", "surface": "#ffffff", "surface2": "#e4e8ec",
+        "border": "#c8d0d8", "text": "#1a2030", "text_dim": "#4a5568",
+        # Accents
+        "green": "#16a34a", "lime": "#65a30d", "cyan": "#0284c7",
+        "orange": "#d97706", "red": "#dc2626", "blue": "#2563eb",
+        # Sidebar
+        "sidebar_bg": "#e8ecf0",
+        # Buttons
+        "run_bg": "#2563eb", "run_hover": "#1d4ed8", "run_text": "#ffffff",
+        "btn_bg": "#c8d0d8", "btn_hover": "#b0b8c4",
+        "theme_btn_bg": "transparent", "theme_btn_hover": "#d0d8e0",
+        "clear_btn_bg": "#fee2e2", "clear_btn_hover": "#fecaca",
+        "export_btn_bg": "#dbeafe", "export_btn_hover": "#bfdbfe",
+        # Widgets
+        "option_bg": "#ffffff", "option_btn": "#c8d0d8", "option_drop": "#f0f2f5",
+        "entry_bg": "#ffffff", "entry_border": "#b0b8c4",
+        "slider_btn": "#2563eb", "slider_prog": "#3b82f6",
+        "progress_bg": "#d0d8e0", "progress_fg": "#2563eb",
+        # Table
+        "header_bg": "#e4e8ec", "row_hover": "#eef0f3",
+        "row_highlight": "rgba(37,99,235,0.06)",
+        # Log
+        "log_bg": "#f0f2f5",
+    },
+}
+
+
+def apply_theme(app, theme_name: str):
+    """Apply a theme to the entire application."""
+    ctk.set_appearance_mode(THEMES[theme_name]["ctk_mode"])
+    app.current_theme = theme_name
+    app.theme_colors = THEMES[theme_name]
+    app.settings["theme"] = theme_name
+    save_settings(app.settings)
 
 
 
@@ -71,6 +134,8 @@ DEFAULT_SETTINGS = {
     "data_period": "1y",
     "timeframe": "D",
     "trend_filter": "All",
+    # UI
+    "theme": "dark",
 }
 
 
@@ -121,6 +186,12 @@ class ScannerApp(ctk.CTk):
         self.results = []
         self.scanning = False
 
+        # Apply saved theme
+        theme_name = self.settings.get("theme", "dark")
+        ctk.set_appearance_mode(THEMES[theme_name]["ctk_mode"])
+        self.current_theme = theme_name
+        self.theme_colors = THEMES[theme_name]
+
         self._build_ui()
         self._load_settings_to_ui()
         self._rotate_log()
@@ -136,160 +207,156 @@ class ScannerApp(ctk.CTk):
         self._build_main_area()
 
     def _build_sidebar(self):
-        """Left sidebar: universe, settings, run button."""
-        sidebar = ctk.CTkFrame(self, width=320, corner_radius=0, fg_color="#0d1f14")
-        sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_propagate(False)
+        """Left sidebar: scrollable controls + pinned run button at bottom."""
+        c = self.theme_colors
+        self._sidebar = ctk.CTkFrame(self, width=320, corner_radius=0, fg_color=c["sidebar_bg"])
+        self._sidebar.grid(row=0, column=0, sticky="nsew")
+        self._sidebar.grid_propagate(False)
+        self._sidebar.grid_rowconfigure(0, weight=1)  # scrollable content
+        self._sidebar.grid_rowconfigure(1, weight=0)  # pinned bottom
 
-        # ── Logo / Title ─────────────────────────────────────────────────────
-        ctk.CTkLabel(sidebar, text="HMAxEMA Scanner",
+        # ═══ Scrollable content area ═════════════════════════════════════════
+        scrollable = ctk.CTkScrollableFrame(self._sidebar, fg_color="transparent")
+        scrollable.grid(row=0, column=0, sticky="nsew")
+
+        # Logo / Title
+        title_row = ctk.CTkFrame(scrollable, fg_color="transparent")
+        title_row.pack(fill="x", padx=20, pady=(20, 2))
+        ctk.CTkLabel(title_row, text="HMAxEMA Scanner",
                       font=ctk.CTkFont(size=20, weight="bold"),
-                      text_color="#00ff88").pack(pady=(20, 2), padx=20, anchor="w")
-        ctk.CTkLabel(sidebar, text="Indian Market Stock Screener",
+                      text_color=c["blue"]).pack(side="left")
+        self.theme_btn = ctk.CTkButton(
+            title_row, text="\u2600\ufe0f" if self.current_theme == "dark" else "\U0001f319",
+            font=ctk.CTkFont(size=18), width=36, height=36,
+            fg_color=c["theme_btn_bg"], hover_color=c["theme_btn_hover"],
+            command=self._switch_theme)
+        self.theme_btn.pack(side="right")
+
+        ctk.CTkLabel(scrollable, text="Indian Market Stock Screener",
                       font=ctk.CTkFont(size=12),
-                      text_color="#6a8a6a").pack(padx=20, anchor="w")
+                      text_color=c["text_dim"]).pack(padx=20, anchor="w")
+        ctk.CTkFrame(scrollable, height=1, fg_color=c["border"]).pack(fill="x", padx=15, pady=12)
 
-        ctk.CTkFrame(sidebar, height=1, fg_color="#1a4a2a").pack(fill="x", padx=15, pady=12)
-
-        # ── Universe Selector ────────────────────────────────────────────────
-        ctk.CTkLabel(sidebar, text="STOCK UNIVERSE",
+        # Universe
+        ctk.CTkLabel(scrollable, text="STOCK UNIVERSE",
                       font=ctk.CTkFont(size=11, weight="bold"),
-                      text_color="#00ddcc").pack(padx=20, anchor="w")
-
+                      text_color=c["cyan"]).pack(padx=20, anchor="w")
         self.universe_var = ctk.StringVar(value="NIFTY 50")
-        universe_names = list(UNIVERSES.keys())
         self.universe_menu = ctk.CTkOptionMenu(
-            sidebar, variable=self.universe_var,
-            values=universe_names,
+            scrollable, variable=self.universe_var, values=list(UNIVERSES.keys()),
             command=self._on_universe_change,
             width=280, height=32,
-            fg_color="#153520", button_color="#1a4a2a",
-            dropdown_fg_color="#0f2a1a"
-        )
+            fg_color=c["option_bg"], button_color=c["option_btn"],
+            dropdown_fg_color=c["option_drop"])
         self.universe_menu.pack(padx=20, pady=(4, 8))
-
         self.universe_count_label = ctk.CTkLabel(
-            sidebar, text=f"{len(UNIVERSES['NIFTY 50'])} stocks",
-            font=ctk.CTkFont(size=11), text_color="#6a8a6a")
+            scrollable, text=f"{len(UNIVERSES['NIFTY 50'])} stocks",
+            font=ctk.CTkFont(size=11), text_color=c["text_dim"])
         self.universe_count_label.pack(padx=20, anchor="w")
 
-        # ── Timeframe ──────────────────────────────────────────────────────
-        ctk.CTkLabel(sidebar, text="TIMEFRAME",
+        # Timeframe
+        ctk.CTkLabel(scrollable, text="TIMEFRAME",
                       font=ctk.CTkFont(size=11, weight="bold"),
-                      text_color="#00ddcc").pack(padx=20, pady=(12, 0), anchor="w")
-
+                      text_color=c["cyan"]).pack(padx=20, pady=(12, 0), anchor="w")
         self.timeframe_var = ctk.StringVar(value="Daily")
-        timeframe_menu = ctk.CTkOptionMenu(
-            sidebar, variable=self.timeframe_var,
+        ctk.CTkOptionMenu(
+            scrollable, variable=self.timeframe_var,
             values=["Daily", "Weekly", "Monthly"],
             width=280, height=32,
-            fg_color="#153520", button_color="#1a4a2a",
-            dropdown_fg_color="#0f2a1a"
-        )
-        timeframe_menu.pack(padx=20, pady=(4, 8))
+            fg_color=c["option_bg"], button_color=c["option_btn"],
+            dropdown_fg_color=c["option_drop"]
+        ).pack(padx=20, pady=(4, 8))
 
-        # ── Data Period ──────────────────────────────────────────────────────
-        ctk.CTkLabel(sidebar, text="DATA PERIOD",
+        # Data Period
+        ctk.CTkLabel(scrollable, text="DATA PERIOD",
                       font=ctk.CTkFont(size=11, weight="bold"),
-                      text_color="#00ddcc").pack(padx=20, pady=(8, 0), anchor="w")
-
+                      text_color=c["cyan"]).pack(padx=20, pady=(8, 0), anchor="w")
         self.period_var = ctk.StringVar(value="1 Year")
-        period_menu = ctk.CTkOptionMenu(
-            sidebar, variable=self.period_var,
+        ctk.CTkOptionMenu(
+            scrollable, variable=self.period_var,
             values=["6 Months", "1 Year", "2 Years"],
             width=280, height=32,
-            fg_color="#153520", button_color="#1a4a2a",
-            dropdown_fg_color="#0f2a1a"
-        )
-        period_menu.pack(padx=20, pady=(4, 8))
+            fg_color=c["option_bg"], button_color=c["option_btn"],
+            dropdown_fg_color=c["option_drop"]
+        ).pack(padx=20, pady=(4, 8))
 
-        # ── Trend Filter ─────────────────────────────────────────────────────
-        ctk.CTkLabel(sidebar, text="TREND FILTER",
+        # Trend Filter
+        ctk.CTkLabel(scrollable, text="TREND FILTER",
                       font=ctk.CTkFont(size=11, weight="bold"),
-                      text_color="#00ddcc").pack(padx=20, pady=(8, 0), anchor="w")
-
+                      text_color=c["cyan"]).pack(padx=20, pady=(8, 0), anchor="w")
         self.trend_filter_var = ctk.StringVar(value="All")
-        trend_menu = ctk.CTkOptionMenu(
-            sidebar, variable=self.trend_filter_var,
+        ctk.CTkOptionMenu(
+            scrollable, variable=self.trend_filter_var,
             values=["All", "Bullish Only", "Bearish Only"],
             width=280, height=32,
-            fg_color="#153520", button_color="#1a4a2a",
-            dropdown_fg_color="#0f2a1a"
-        )
-        trend_menu.pack(padx=20, pady=(4, 8))
+            fg_color=c["option_bg"], button_color=c["option_btn"],
+            dropdown_fg_color=c["option_drop"]
+        ).pack(padx=20, pady=(4, 8))
 
-        # ── Score Threshold ──────────────────────────────────────────────────
-        ctk.CTkLabel(sidebar, text="MIN SCORE THRESHOLD",
+        # Score Threshold
+        ctk.CTkLabel(scrollable, text="MIN SCORE THRESHOLD",
                       font=ctk.CTkFont(size=11, weight="bold"),
-                      text_color="#00ddcc").pack(padx=20, pady=(8, 0), anchor="w")
-
-        self.threshold_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
+                      text_color=c["cyan"]).pack(padx=20, pady=(8, 0), anchor="w")
+        self.threshold_frame = ctk.CTkFrame(scrollable, fg_color="transparent")
         self.threshold_frame.pack(padx=20, pady=(4, 8), fill="x")
-
         self.threshold_var = ctk.DoubleVar(value=50.0)
         self.threshold_slider = ctk.CTkSlider(
             self.threshold_frame, from_=0, to=100,
             variable=self.threshold_var, number_of_steps=20,
             command=self._on_threshold_change,
             width=200, height=16,
-            button_color="#00ff88", progress_color="#00aa55"
-        )
+            button_color=c["slider_btn"], progress_color=c["slider_prog"])
         self.threshold_slider.pack(side="left")
         self.threshold_label = ctk.CTkLabel(
             self.threshold_frame, text="50",
             font=ctk.CTkFont(size=14, weight="bold"),
-            text_color="#aaff00", width=40)
+            text_color=c["lime"], width=40)
         self.threshold_label.pack(side="right")
 
-        # ── Settings Section (Collapsible) ───────────────────────────────────
-        ctk.CTkFrame(sidebar, height=1, fg_color="#1a4a2a").pack(fill="x", padx=15, pady=10)
-
+        # Settings (Collapsible)
+        ctk.CTkFrame(scrollable, height=1, fg_color=c["border"]).pack(fill="x", padx=15, pady=10)
         self.settings_toggle = ctk.CTkButton(
-            sidebar, text="  SETTINGS  (Click to expand)",
+            scrollable, text="  SETTINGS  (Click to expand)",
             font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="#00ddcc", fg_color="transparent",
-            hover_color="#0f2a1a", anchor="w",
+            text_color=c["cyan"], fg_color="transparent",
+            hover_color=c["surface2"], anchor="w",
             command=self._toggle_settings, height=28)
         self.settings_toggle.pack(padx=20, fill="x")
-
         self.settings_frame = ctk.CTkScrollableFrame(
-            sidebar, fg_color="transparent", height=0)
+            scrollable, fg_color="transparent", height=0)
         self.settings_frame.pack(padx=10, fill="x")
-
         self._build_settings_panel(self.settings_frame)
 
-        # ── Spacer ───────────────────────────────────────────────────────────
-        ctk.CTkFrame(sidebar, fg_color="transparent").pack(fill="both", expand=True)
+        # ═══ Pinned bottom: Run + Progress ═══════════════════════════════════
+        bottom = ctk.CTkFrame(self._sidebar, fg_color=c["sidebar_bg"])
+        bottom.grid(row=1, column=0, sticky="sew")
 
-        # ── Run Button ───────────────────────────────────────────────────────
         self.run_btn = ctk.CTkButton(
-            sidebar, text="RUN SCAN",
+            bottom, text="RUN SCAN",
             font=ctk.CTkFont(size=16, weight="bold"),
-            fg_color="#00aa55", hover_color="#00cc66",
-            text_color="#000000", height=48,
+            fg_color=c["run_bg"], hover_color=c["run_hover"],
+            text_color=c["run_text"], height=48,
             corner_radius=8,
             command=self._start_scan)
-        self.run_btn.pack(padx=20, pady=(0, 8), fill="x")
+        self.run_btn.pack(padx=20, pady=(8, 4), fill="x")
 
-        # ── Clear Cache Button ───────────────────────────────────────────────
         self.cache_btn = ctk.CTkButton(
-            sidebar, text="Clear Cache",
+            bottom, text="Clear Cache",
             font=ctk.CTkFont(size=11),
-            fg_color="#1a4a2a", hover_color="#2a6a3a",
-            text_color="#6a8a6a", height=24,
+            fg_color=c["btn_bg"], hover_color=c["btn_hover"],
+            text_color=c["text_dim"], height=24,
             command=self._clear_cache)
         self.cache_btn.pack(padx=20, pady=(0, 4))
 
-        # ── Progress Bar ─────────────────────────────────────────────────────
-        self.progress = ctk.CTkProgressBar(sidebar, width=280, height=8,
-                                            fg_color="#153520", progress_color="#00ff88")
+        self.progress = ctk.CTkProgressBar(bottom, width=280, height=8,
+                                            fg_color=c["progress_bg"], progress_color=c["progress_fg"])
         self.progress.pack(padx=20, pady=(0, 4))
         self.progress.set(0)
 
         self.progress_label = ctk.CTkLabel(
-            sidebar, text="Ready",
-            font=ctk.CTkFont(size=11), text_color="#6a8a6a")
-        self.progress_label.pack(padx=20, pady=(0, 15))
+            bottom, text="Ready",
+            font=ctk.CTkFont(size=11), text_color=c["text_dim"])
+        self.progress_label.pack(padx=20, pady=(0, 8))
 
     def _build_settings_panel(self, parent):
         """Build the settings form inside the scrollable frame."""
@@ -333,10 +400,11 @@ class ScannerApp(ctk.CTk):
             ]),
         ]
 
+        c = self.theme_colors
         for section_title, fields in sections:
             ctk.CTkLabel(parent, text=section_title.upper(),
                           font=ctk.CTkFont(size=10, weight="bold"),
-                          text_color="#6a8a6a").pack(padx=8, pady=(8, 2), anchor="w")
+                          text_color=c["text_dim"]).pack(padx=8, pady=(8, 2), anchor="w")
 
             for label, key, field_type, constraints in fields:
                 row = ctk.CTkFrame(parent, fg_color="transparent", height=28)
@@ -345,36 +413,36 @@ class ScannerApp(ctk.CTk):
 
                 ctk.CTkLabel(row, text=label,
                               font=ctk.CTkFont(size=11),
-                              text_color="#c8d8c0", width=130, anchor="w").pack(side="left")
+                              text_color=c["text"], width=130, anchor="w").pack(side="left")
 
                 if field_type == "option":
                     var = ctk.StringVar(value=str(self.settings.get(key, "")))
                     widget = ctk.CTkOptionMenu(
                         row, variable=var, values=constraints,
                         width=120, height=24,
-                        fg_color="#153520", button_color="#1a4a2a",
-                        dropdown_fg_color="#0f2a1a",
+                        fg_color=c["option_bg"], button_color=c["option_btn"],
+                        dropdown_fg_color=c["option_drop"],
                         font=ctk.CTkFont(size=11))
                     widget.pack(side="right")
                 elif field_type == "int":
                     var = ctk.StringVar(value=str(self.settings.get(key, 0)))
                     widget = ctk.CTkEntry(
                         row, textvariable=var, width=80, height=24,
-                        fg_color="#153520", border_color="#1a4a2a",
+                        fg_color=c["entry_bg"], border_color=c["entry_border"],
                         font=ctk.CTkFont(size=11))
                     widget.pack(side="right")
                 elif field_type == "float":
                     var = ctk.StringVar(value=str(self.settings.get(key, 0.0)))
                     widget = ctk.CTkEntry(
                         row, textvariable=var, width=80, height=24,
-                        fg_color="#153520", border_color="#1a4a2a",
+                        fg_color=c["entry_bg"], border_color=c["entry_border"],
                         font=ctk.CTkFont(size=11))
                     widget.pack(side="right")
                 elif field_type == "text":
                     var = ctk.StringVar(value=str(self.settings.get(key, "")))
                     widget = ctk.CTkEntry(
                         row, textvariable=var, width=120, height=24,
-                        fg_color="#153520", border_color="#1a4a2a",
+                        fg_color=c["entry_bg"], border_color=c["entry_border"],
                         font=ctk.CTkFont(size=10))
                     widget.pack(side="right")
 
@@ -382,53 +450,57 @@ class ScannerApp(ctk.CTk):
 
     def _build_main_area(self):
         """Right main area: results table, summary stats, and log."""
-        main = ctk.CTkFrame(self, fg_color="#0a1a10", corner_radius=0)
-        main.grid(row=0, column=1, sticky="nsew")
-        main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(0, weight=0)  # Header - fixed height
-        main.grid_rowconfigure(1, weight=0)  # Summary stats - fixed height
-        main.grid_rowconfigure(2, weight=1)  # Table - takes ALL extra space
-        main.grid_rowconfigure(3, weight=0)  # Log - fixed height at bottom
+        c = self.theme_colors
+        self._main = ctk.CTkFrame(self, fg_color=c["bg"], corner_radius=0)
+        self._main.grid(row=0, column=1, sticky="nsew")
+        self._main.grid_columnconfigure(0, weight=1)
+        self._main.grid_rowconfigure(0, weight=0)  # Header - fixed height
+        self._main.grid_rowconfigure(1, weight=0)  # Summary stats - fixed height
+        self._main.grid_rowconfigure(2, weight=1)  # Table - takes ALL extra space
+        self._main.grid_rowconfigure(3, weight=0)  # Log - fixed height at bottom
 
         # ── Header bar ───────────────────────────────────────────────────────
-        header = ctk.CTkFrame(main, fg_color="#0f2a1a", height=44)
-        header.grid(row=0, column=0, sticky="ew")
-        header.grid_columnconfigure(1, weight=1)
+        self._header = ctk.CTkFrame(self._main, fg_color=c["surface"], height=44)
+        self._header.grid(row=0, column=0, sticky="ew")
+        self._header.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(header, text="RESULTS",
+        ctk.CTkLabel(self._header, text="RESULTS",
                       font=ctk.CTkFont(size=14, weight="bold"),
-                      text_color="#00ff88").pack(padx=15, side="left")
+                      text_color=c["green"]).pack(padx=15, side="left")
 
         self.result_count_label = ctk.CTkLabel(
-            header, text="0 stocks scanned",
-            font=ctk.CTkFont(size=12), text_color="#6a8a6a")
+            self._header, text="0 stocks scanned",
+            font=ctk.CTkFont(size=12), text_color=c["text_dim"])
         self.result_count_label.pack(side="left", padx=10)
 
         # Export buttons
         self.html_btn = ctk.CTkButton(
-            header, text="Export HTML", width=100, height=30,
-            fg_color="#1a4a2a", hover_color="#2a6a3a",
-            font=ctk.CTkFont(size=11),
+            self._header, text="Export HTML", width=100, height=30,
+            fg_color=c["export_btn_bg"], hover_color=c["export_btn_hover"],
+            text_color=c["blue"],
+            font=ctk.CTkFont(size=11, weight="bold"),
             command=self._export_html, state="disabled")
         self.html_btn.pack(side="right", padx=(0, 10))
 
         self.csv_btn = ctk.CTkButton(
-            header, text="Export CSV", width=100, height=30,
-            fg_color="#1a4a2a", hover_color="#2a6a3a",
-            font=ctk.CTkFont(size=11),
+            self._header, text="Export CSV", width=100, height=30,
+            fg_color=c["export_btn_bg"], hover_color=c["export_btn_hover"],
+            text_color=c["blue"],
+            font=ctk.CTkFont(size=11, weight="bold"),
             command=self._export_csv, state="disabled")
         self.csv_btn.pack(side="right", padx=(0, 5))
         
         # Clear Results button
         self.clear_btn = ctk.CTkButton(
-            header, text="Clear Results", width=100, height=30,
-            fg_color="#3a2a0a", hover_color="#4a3a1a",
-            font=ctk.CTkFont(size=11),
+            self._header, text="Clear Results", width=100, height=30,
+            fg_color=c["clear_btn_bg"], hover_color=c["clear_btn_hover"],
+            text_color=c["red"],
+            font=ctk.CTkFont(size=11, weight="bold"),
             command=self._clear_results, state="disabled")
         self.clear_btn.pack(side="right", padx=(0, 5))
 
         # ── Summary Stats Panel ─────────────────────────────────────────────
-        self.summary_frame = ctk.CTkFrame(main, fg_color="#0f2a1a", corner_radius=0)
+        self.summary_frame = ctk.CTkFrame(self._main, fg_color=c["surface"], corner_radius=0)
         self.summary_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(5, 0))
         self.summary_frame.grid_columnconfigure(0, weight=1)
 
@@ -440,35 +512,35 @@ class ScannerApp(ctk.CTk):
         self._build_summary_panel(self.summary_inner)
 
         # ── Results Table: sticky header + scrollable body ──────────────────
-        results_container = ctk.CTkFrame(main, fg_color="transparent", corner_radius=0)
+        results_container = ctk.CTkFrame(self._main, fg_color="transparent", corner_radius=0)
         results_container.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         results_container.grid_columnconfigure(0, weight=1)
         results_container.grid_rowconfigure(0, weight=1)  # table takes all space
 
         # Sticky header — stays visible while the list scrolls
         # Scrolling stock list (header is created inside _display_results)
-        self.table_frame = ctk.CTkScrollableFrame(results_container, fg_color="#0a1a10",
+        self.table_frame = ctk.CTkScrollableFrame(results_container, fg_color=c["bg"],
                                                    corner_radius=0)
         self.table_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
         # ── Log area (FIXED at bottom, NEVER expands) ──────────────────────
-        log_frame = ctk.CTkFrame(main, fg_color="#061208", height=150)
-        log_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=5)
-        log_frame.grid_propagate(False)
-        log_frame.grid_columnconfigure(0, weight=1)
-        log_frame.grid_rowconfigure(1, weight=1)
+        self._log_frame = ctk.CTkFrame(self._main, fg_color=c["surface"], height=150)
+        self._log_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=5)
+        self._log_frame.grid_propagate(False)
+        self._log_frame.grid_columnconfigure(0, weight=1)
+        self._log_frame.grid_rowconfigure(1, weight=1)
         
-        log_header = ctk.CTkFrame(log_frame, fg_color="#0a1a0a", height=24)
+        log_header = ctk.CTkFrame(self._log_frame, fg_color=c["surface2"], height=24)
         log_header.grid(row=0, column=0, sticky="ew")
         log_header.grid_propagate(False)
         
         ctk.CTkLabel(log_header, text="  LOG",
                       font=ctk.CTkFont(size=10, weight="bold"),
-                      text_color="#4a7a4a").pack(side="left", padx=5)
+                      text_color=c["text_dim"]).pack(side="left", padx=5)
         
         self.log_text = ctk.CTkTextbox(
-            log_frame, fg_color="#061208",
-            text_color="#4a7a4a",
+            self._log_frame, fg_color=c["surface"],
+            text_color=c["text_dim"],
             font=ctk.CTkFont(family="Consolas", size=10),
             state="normal")
         self.log_text.bind("<Control-a>", lambda e: self.log_text.tag_add("sel", "1.0", "end"))
@@ -479,18 +551,20 @@ class ScannerApp(ctk.CTk):
 
     def _build_summary_panel(self, parent):
         """Build the summary statistics cards (values updated after a scan)."""
+        c = self.theme_colors
         stats = [
-            ("TOTAL", "total", "#00ddcc"),
-            ("PASSED", "passed", "#00ff88"),
-            ("ENTRY", "entry", "#00ff88"),
-            ("AVG", "avg", "#aaff00"),
-            ("HIGH", "high", "#00ff88"),
-            ("BULL", "bull", "#00ff88"),
-            ("BEAR", "bear", "#ff4444"),
+            ("TOTAL", "total", c["cyan"]),
+            ("PASSED", "passed", c["green"]),
+            ("ENTRY", "entry", c["green"]),
+            ("AVG", "avg", c["lime"]),
+            ("HIGH", "high", c["green"]),
+            ("BULL", "bull", c["green"]),
+            ("BEAR", "bear", c["red"]),
         ]
+        c = self.theme_colors
         self.summary_cards = {}
         for label, key, color in stats:
-            card = ctk.CTkFrame(parent, fg_color="#0a1a10", corner_radius=6)
+            card = ctk.CTkFrame(parent, fg_color=c["bg"], corner_radius=6)
             card.pack(side="left", fill="both", expand=True, padx=4)
             val_label = ctk.CTkLabel(card, text="—",
                                     font=ctk.CTkFont(size=20, weight="bold"),
@@ -498,7 +572,7 @@ class ScannerApp(ctk.CTk):
             val_label.pack(pady=(6, 0))
             ctk.CTkLabel(card, text=label,
                          font=ctk.CTkFont(size=9),
-                         text_color="#6a8a6a").pack(pady=(0, 6))
+                         text_color=c["text_dim"]).pack(pady=(0, 6))
             self.summary_cards[key] = val_label
 
     def _update_summary(self, results):
@@ -608,7 +682,7 @@ class ScannerApp(ctk.CTk):
         save_settings(self.settings)
 
         self.scanning = True
-        self.run_btn.configure(state="disabled", text="SCANNING...", fg_color="#333333")
+        self.run_btn.configure(state="disabled", text="SCANNING...", fg_color=self.theme_colors["btn_bg"])
         self.html_btn.configure(state="disabled")
         self.csv_btn.configure(state="disabled")
         self.clear_btn.configure(state="disabled")
@@ -757,57 +831,60 @@ class ScannerApp(ctk.CTk):
 
         if not results:
             ctk.CTkLabel(self.table_frame, text="No results found.",
-                          text_color="#ff4444",
+                          text_color=c["red"],
                           font=ctk.CTkFont(size=14)).pack(pady=40)
             return
 
         threshold = self.settings.get("min_score", 50)
 
         # Column definitions: (header_text, width, extract_func)
+        # Use theme colors for all data cells
+        tc = self.theme_colors
         def _make_cols():
             return [
-                ("#",           35, lambda r, i: (str(i), "#c8d8c0", 12, True)),
-                ("Ticker",     100, lambda r, i: (r["ticker"], "#00ff88" if r["total"] >= threshold else "#c8d8c0", 12, True)),
+                ("#",           35, lambda r, i: (str(i), tc["text"], 12, True)),
+                ("Ticker",     100, lambda r, i: (r["ticker"], tc["green"] if r["total"] >= threshold else tc["text"], 12, True)),
                 ("Score",       50, lambda r, i: (f'{r["total"]:.0f}',
-                    "#00ff88" if r["total"] >= 70 else ("#aaff00" if r["total"] >= 50 else ("#ffaa00" if r["total"] >= 30 else "#ff4444")), 13, True)),
+                    tc["green"] if r["total"] >= 70 else (tc["lime"] if r["total"] >= 50 else (tc["orange"] if r["total"] >= 30 else tc["red"])), 13, True)),
                 ("Rating",      75, lambda r, i: (r.get("combined_rating", "POOR"),
-                    {"EXCELLENT": "#00ff88", "GOOD": "#aaff00", "MODERATE": "#ffaa00"}.get(r.get("combined_rating"), "#ff4444"), 11, False)),
+                    {"EXCELLENT": tc["green"], "GOOD": tc["lime"], "MODERATE": tc["orange"]}.get(r.get("combined_rating"), tc["red"]), 11, False)),
                 ("ENTRY",       55, lambda r, i: ("YES" if r.get("entry_signal") else "--",
-                    "#00ff88" if r.get("entry_signal") else "#ff4444", 11, False)),
-                ("Price",       80, lambda r, i: (f'\u20b9{r.get("close", 0):.0f}', "#c8d8c0", 12, True)),
+                    tc["green"] if r.get("entry_signal") else tc["red"], 11, False)),
+                ("Price",       80, lambda r, i: (f'\u20b9{r.get("close", 0):.0f}', tc["text"], 12, True)),
                 ("MA",          60, lambda r, i: (self._ma_text(r), self._ma_color(r), 11, False)),
-                ("T/15",        40, lambda r, i: (f'{r.get("trend", 0):.0f}', "#00ff88", 11, False)),
-                ("M/15",        40, lambda r, i: (f'{r.get("momentum", 0):.0f}', "#00ddcc", 11, False)),
-                ("R/8",         35, lambda r, i: (f'{r.get("rsi", 0):.0f}', "#00aaff", 11, False)),
+                ("T/15",        40, lambda r, i: (f'{r.get("trend", 0):.0f}', tc["green"], 11, False)),
+                ("M/15",        40, lambda r, i: (f'{r.get("momentum", 0):.0f}', tc["cyan"], 11, False)),
+                ("R/8",         35, lambda r, i: (f'{r.get("rsi", 0):.0f}', tc["blue"], 11, False)),
                 ("V/7",         35, lambda r, i: (f'{r.get("macd", 0):.0f}', "#aa88ff", 11, False)),
-                ("Vol/10",      40, lambda r, i: (f'{r.get("volume", 0):.0f}', "#ffaa00", 11, False)),
-                ("RS/10",       40, lambda r, i: (f'{r.get("rel_str", 0):.0f}', "#aaff00", 11, False)),
-                ("F/20",        40, lambda r, i: (f'{r.get("fundamentals", 0):.0f}', "#ffe600", 11, False)),
+                ("Vol/10",      40, lambda r, i: (f'{r.get("volume", 0):.0f}', tc["orange"], 11, False)),
+                ("RS/10",       40, lambda r, i: (f'{r.get("rel_str", 0):.0f}', tc["lime"], 11, False)),
+                ("F/20",        40, lambda r, i: (f'{r.get("fundamentals", 0):.0f}', tc["orange"], 11, False)),
                 ("1M",          55, lambda r, i: (f'{r.get("pc1m", 0) or 0:+.1f}%',
-                    "#00ff88" if (r.get("pc1m", 0) or 0) > 0 else "#ff4444", 11, False)),
+                    tc["green"] if (r.get("pc1m", 0) or 0) > 0 else tc["red"], 11, False)),
                 ("Dir",         55, lambda r, i: (("^ " if r["trend_dir"] == "Bull" else "v ") + r["trend_dir"],
-                    "#00ff88" if r["trend_dir"] == "Bull" else "#ff4444", 11, False)),
-                ("ADX",         40, lambda r, i: (f'{r.get("adx_val", 0) or 0:.0f}', "#c8d8c0", 11, False)),
+                    tc["green"] if r["trend_dir"] == "Bull" else tc["red"], 11, False)),
+                ("ADX",         40, lambda r, i: (f'{r.get("adx_val", 0) or 0:.0f}', tc["text"], 11, False)),
                 ("Chop",        40, lambda r, i: ("Chop" if r.get("is_sideways") else "OK",
-                    "#ffaa00" if r.get("is_sideways") else "#00ff88", 11, False)),
+                    tc["orange"] if r.get("is_sideways") else tc["green"], 11, False)),
             ]
 
         cols = _make_cols()
 
+        c = self.theme_colors
         # Header row
-        hdr = ctk.CTkFrame(self.table_frame, fg_color="#153520", height=32)
+        hdr = ctk.CTkFrame(self.table_frame, fg_color=c["surface2"], height=32)
         hdr.pack(fill="x", padx=2, pady=(2, 0))
         hdr.pack_propagate(False)
         for text, width, _ in cols:
             ctk.CTkLabel(hdr, text=text, width=width, anchor="w",
                          font=ctk.CTkFont(size=11, weight="bold"),
-                         text_color="#00ddcc").pack(side="left", padx=1)
+                         text_color=c["cyan"]).pack(side="left", padx=1)
 
         # Data rows
         for rank, r in enumerate(results, 1):
             score = r["total"]
             is_above = score >= threshold
-            row_bg = "#0f2a1a" if is_above else "#0a1a10"
+            row_bg = c["surface"] if is_above else c["bg"]
 
             row = ctk.CTkFrame(self.table_frame, fg_color=row_bg, height=30)
             row.pack(fill="x", padx=2, pady=1)
@@ -841,11 +918,12 @@ class ScannerApp(ctk.CTk):
         return "v Bear"
 
     def _ma_color(self, r):
+        c = self.theme_colors
         if r.get("ma_crossed_above"):
-            return "#00ff88"
+            return c["green"]
         elif r.get("ma_bullish"):
-            return "#aaff00"
-        return "#ff4444"
+            return c["lime"]
+        return c["red"]
 
     def _toggle_stock_news(self, ticker: str, row_frame, rank):
         """Expand/collapse news inline below the stock row."""
@@ -861,15 +939,16 @@ class ScannerApp(ctk.CTk):
             if getattr(child, '_news_ticker', None):
                 child.destroy()
 
+        c = self.theme_colors
         # Create news frame below the row
-        news_frame = ctk.CTkFrame(row_frame.master, fg_color="#0a1a15", corner_radius=4)
+        news_frame = ctk.CTkFrame(row_frame.master, fg_color=c["surface"], corner_radius=4)
         news_frame._news_ticker = ticker
         news_frame.pack(after=row_frame, fill="x", padx=8, pady=(0, 2))
 
         # Loading
         loading = ctk.CTkLabel(news_frame, text="Loading news...",
                                font=ctk.CTkFont(size=11),
-                               text_color="#6a8a6a")
+                               text_color=c["text_dim"])
         loading.pack(pady=10)
 
         def _parse_date(date_str):
@@ -929,7 +1008,7 @@ class ScannerApp(ctk.CTk):
             if not items:
                 ctk.CTkLabel(news_frame, text="No recent news found.",
                              font=ctk.CTkFont(size=11),
-                             text_color="#ff4444").pack(pady=8)
+                             text_color=c["text_dim"]).pack(pady=8)
                 return
             # Sentiment summary
             good = sum(1 for i in items if i["sentiment"] == "Good")
@@ -938,14 +1017,14 @@ class ScannerApp(ctk.CTk):
             summary_text = f"{good} Good  |  {bad} Bad  |  {neu} Neutral"
             ctk.CTkLabel(news_frame, text=summary_text,
                          font=ctk.CTkFont(size=11, weight="bold"),
-                         text_color="#aaff00").pack(pady=(4, 6))
+                         text_color=c["lime"]).pack(pady=(4, 6))
 
             for item in items:
                 sent = item["sentiment"]
-                sent_color = {"Good": "#00ff88", "Bad": "#ff4444", "Neutral": "#6a8a6a"}[sent]
-                sent_bg = {"Good": "#0a3a1a", "Bad": "#3a0a0a", "Neutral": "#1a1a1a"}[sent]
+                sent_color = {"Good": c["green"], "Bad": c["red"], "Neutral": c["text_dim"]}[sent]
+                sent_bg = {"Good": "#0a3a1a", "Bad": "#3a0a0a", "Neutral": c["surface"]}[sent]
 
-                card = ctk.CTkFrame(news_frame, fg_color="#0f2a1a", corner_radius=4)
+                card = ctk.CTkFrame(news_frame, fg_color=c["surface2"], corner_radius=4)
                 card.pack(fill="x", padx=6, pady=2)
 
                 # Top row: Good/Bad badge + date + provider
@@ -961,31 +1040,31 @@ class ScannerApp(ctk.CTk):
                 meta = f"{item['date']}  {item['provider']}" if item['provider'] else item['date']
                 ctk.CTkLabel(top, text=meta,
                              font=ctk.CTkFont(size=9),
-                             text_color="#6a8a6a").pack(side="left", padx=6)
+                             text_color=c["text_dim"]).pack(side="left", padx=6)
 
                 # Title
                 ctk.CTkLabel(card, text=item["title"],
                              font=ctk.CTkFont(size=11, weight="bold"),
-                             text_color="#c8d8c0", wraplength=900,
+                             text_color=c["text"], wraplength=900,
                              anchor="w", justify="left").pack(anchor="w", padx=8, pady=(1, 0))
 
                 # Summary
                 if item["summary"]:
                     ctk.CTkLabel(card, text=item["summary"],
                                  font=ctk.CTkFont(size=10),
-                                 text_color="#8aaa8a", wraplength=900,
+                                 text_color=c["text_dim"], wraplength=900,
                                  anchor="w", justify="left").pack(anchor="w", padx=8, pady=(1, 4))
 
         def _show_error(msg):
             if news_frame.winfo_exists():
-                loading.configure(text=f"Error: {msg}", text_color="#ff4444")
+                loading.configure(text=f"Error: {msg}", text_color=c["red"])
 
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _scan_complete(self):
         """Re-enable UI after scan finishes."""
         self.scanning = False
-        self.run_btn.configure(state="normal", text="RUN SCAN", fg_color="#00aa55")
+        self.run_btn.configure(state="normal", text="RUN SCAN", fg_color=self.theme_colors["run_bg"])
         self.progress_label.configure(text="Done")
         if self.results:
             self.html_btn.configure(state="normal")
@@ -1054,6 +1133,52 @@ class ScannerApp(ctk.CTk):
             self._log("Cache cleared successfully")
         except Exception as e:
             self._log(f"Failed to clear cache: {e}")
+
+    def _switch_theme(self):
+        """Toggle between dark and light themes (in-place, no rebuild)."""
+        new_theme = "light" if self.current_theme == "dark" else "dark"
+        self.current_theme = new_theme
+        self.theme_colors = THEMES[new_theme]
+        self.settings["theme"] = new_theme
+        save_settings(self.settings)
+        ctk.set_appearance_mode(THEMES[new_theme]["ctk_mode"])
+
+        c = self.theme_colors
+
+        # ── Top-level frames ──────────────────────────────────────────────
+        self._sidebar.configure(fg_color=c["sidebar_bg"])
+        self._main.configure(fg_color=c["bg"])
+        self._header.configure(fg_color=c["surface"])
+        self.summary_frame.configure(fg_color=c["surface"])
+        self._log_frame.configure(fg_color=c["surface"])
+        self.table_frame.configure(fg_color=c["bg"])
+
+        # ── Sidebar widgets ───────────────────────────────────────────────
+        self.theme_btn.configure(text="\u2600\ufe0f" if new_theme == "dark" else "\U0001f319",
+                                 fg_color=c["theme_btn_bg"], hover_color=c["theme_btn_hover"])
+        self.run_btn.configure(fg_color=c["run_bg"], hover_color=c["run_hover"], text_color=c["run_text"])
+        self.cache_btn.configure(fg_color=c["btn_bg"], hover_color=c["btn_hover"], text_color=c["text_dim"])
+        self.progress.configure(fg_color=c["progress_bg"], progress_color=c["progress_fg"])
+        self.progress_label.configure(text_color=c["text_dim"])
+        self.universe_count_label.configure(text_color=c["text_dim"])
+        self.threshold_label.configure(text_color=c["lime"])
+        self.settings_toggle.configure(text_color=c["cyan"], hover_color=c["surface2"])
+
+        # ── Header widgets ────────────────────────────────────────────────
+        self.result_count_label.configure(text_color=c["text_dim"])
+        self.html_btn.configure(fg_color=c["export_btn_bg"], hover_color=c["export_btn_hover"], text_color=c["blue"])
+        self.csv_btn.configure(fg_color=c["export_btn_bg"], hover_color=c["export_btn_hover"], text_color=c["blue"])
+        self.clear_btn.configure(fg_color=c["clear_btn_bg"], hover_color=c["clear_btn_hover"], text_color=c["red"])
+
+        # ── Settings widgets ──────────────────────────────────────────────
+        for key, (var, ftype, _) in self.setting_widgets.items():
+            pass  # Entry/OptionMenu bg handled by ctk mode change
+
+        # ── Rebuild result rows with new colors ───────────────────────────
+        if self.results:
+            self._display_results(self.results)
+
+        self._log(f"Theme switched to {new_theme}")
     
     def _clear_results(self):
         """Clear the results table and reset state."""

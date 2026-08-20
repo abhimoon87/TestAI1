@@ -8,5 +8,5 @@ yfinance>=0.2.30
 jugaad-data>=0.35.0
 nselib>=2.5.0
 
-# Enhanced data providers (optional, for better fundamentals)
-requests>=2.28.0  # For Finnhub and Alpha Vantage APIs
+# HTTP requests (for API calls and news fetching)
+requests>=2.28.0
