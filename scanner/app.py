@@ -21,7 +21,7 @@ import customtkinter as ctk
 from .universes import UNIVERSES
 from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, fetch_batch_yfinance, fetch_fundamentals
 from .scoring import compute_scores, check_filter, get_direction
-from .report import generate_html_report, save_report
+from .report import generate_html_report, save_report, _sentiment, SENTIMENT_GOOD, SENTIMENT_BAD
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("dark")
@@ -32,21 +32,7 @@ SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12  # Overwrite log file after 12 hours
 
-# ── Sentiment keywords for news analysis ────────────────────────────────────
-SENTIMENT_GOOD = frozenset([
-    "profit", "growth", "record", "gain", "surge", "rally",
-    "strong", "beat", "bullish", "outperform", "order", "deal",
-    "win", "partnership", "expansion", "dividend", "upgrade",
-    "buy", "positive", "surpass", "boost", "rise", "jump",
-    "high", "best", "stronger", "approval", "contract",
-])
-SENTIMENT_BAD = frozenset([
-    "loss", "decline", "fall", "drop", "crash", "bearish",
-    "underperform", "miss", "downgrade", "sell", "debt", "default",
-    "fraud", "investigation", "lawsuit", "warning", "negative",
-    "slump", "cut", "risk", "ban", "penalty", "fines",
-    "slowdown", "weak", "weaker", "worst", "lower",
-])
+
 
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
 DEFAULT_SETTINGS = {
@@ -886,17 +872,6 @@ class ScannerApp(ctk.CTk):
                                text_color="#6a8a6a")
         loading.pack(pady=10)
 
-        def _sentiment(title, summary=""):
-            """Simple keyword-based sentiment: Good / Bad / Neutral."""
-            words = set((title + " " + summary).lower().split())
-            g = len(words & SENTIMENT_GOOD)
-            b = len(words & SENTIMENT_BAD)
-            if g > b:
-                return "Good"
-            elif b > g:
-                return "Bad"
-            return "Neutral"
-
         def _parse_date(date_str):
             """Parse ISO date string to date object, return None on failure."""
             try:
@@ -1025,10 +1000,12 @@ class ScannerApp(ctk.CTk):
         threshold = self.settings.get("min_score", 50)
         tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
         tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
+        self._log("Fetching news sentiment for exported stocks...")
         html = generate_html_report(
             self.results,
             title=f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}",
-            threshold=threshold)
+            threshold=threshold,
+            fetch_news=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"scanner_report_{timestamp}.html"
         filepath = os.path.join(SCANNER_DIR, filename)

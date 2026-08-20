@@ -1,13 +1,103 @@
 """
 HTML report generator for stock scanner results.
-Produces a sortable, filterable table with color-coded scores.
+Produces a sortable, filterable table with color-coded scores and news sentiment.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
+
+# ─── Sentiment keywords ──────────────────────────────────────────────────────
+SENTIMENT_GOOD = frozenset([
+    "profit", "growth", "record", "gain", "surge", "rally",
+    "strong", "beat", "bullish", "outperform", "order", "deal",
+    "buy", "upgrade", "partner", "expand", "launch", "innovate",
+    "dividend", "revenue", "acquire", "breakout", "resilient",
+    "optimistic", "recovery", "momentum", "approval", "milestone",
+    "boom", "soar", "jump", "climb",
+])
+
+SENTIMENT_BAD = frozenset([
+    "loss", "decline", "crash", "drop", "fall", "weak",
+    "bearish", "underperform", "sell", "downgrade", "fraud",
+    "lawsuit", "investigation", "debt", "recession", "warning",
+    "cut", "slump", "miss", "risk", "concern", "delay",
+    "ban", "penalty", "probe", "resign", "volatile", "crisis",
+    "shortage", "slowdown", "shrink", "tumble",
+])
+
+
+def _sentiment(title: str, summary: str = "") -> str:
+    """Simple keyword-based sentiment: Good / Bad / Neutral."""
+    words = set((title + " " + summary).lower().split())
+    g = len(words & SENTIMENT_GOOD)
+    b = len(words & SENTIMENT_BAD)
+    if g > b:
+        return "Good"
+    elif b > g:
+        return "Bad"
+    return "Neutral"
+
+
+def _parse_date(date_str: str) -> Optional[datetime]:
+    """Parse ISO date string to datetime, return None on failure."""
+    if not date_str:
+        return None
+    clean = date_str.rstrip("Z").strip()[:19]
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(clean, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def fetch_stock_news(ticker: str, max_items: int = 10,
+                     months_back: int = 2) -> list:
+    """
+    Fetch recent news for a stock from Yahoo Finance.
+
+    Args:
+        ticker: Stock ticker symbol (e.g. 'RELIANCE.NS')
+        max_items: Maximum news items to return
+        months_back: Only include news from the last N months
+
+    Returns:
+        List of dicts with 'title', 'summary', 'date', 'publisher', 'sentiment'
+    """
+    try:
+        import yfinance as yf
+        # Auto-append .NS suffix for Indian stocks if not present
+        yf_ticker = ticker if any(ticker.endswith(s) for s in ('.NS', '.BO', '.NSE', '.BSE')) else f'{ticker}.NS'
+        t = yf.Ticker(yf_ticker)
+        news_items = t.news or []
+        cutoff = datetime.now() - timedelta(days=months_back * 30)
+        results = []
+        for item in news_items:
+            content = item.get("content", {})
+            title = content.get("title", "")
+            summary = content.get("summary", "")
+            pub_date = content.get("pubDate", "")
+            provider = content.get("provider", {}).get("displayName", "")
+            dt = _parse_date(pub_date)
+            if dt and dt < cutoff:
+                continue
+            results.append({
+                "title": title,
+                "summary": summary,
+                "date": dt.strftime("%Y-%m-%d") if dt else "—",
+                "publisher": provider,
+                "sentiment": _sentiment(title, summary),
+            })
+            if len(results) >= max_items:
+                break
+        return results
+    except Exception:
+        return []
 
 
 def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
-                         threshold: float = 50.0) -> str:
+                         threshold: float = 50.0,
+                         fetch_news: bool = True) -> str:
     """
     Generate a complete HTML report from scan results.
 
@@ -15,6 +105,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         results: List of dicts with 'ticker', 'total', scores, and metadata
         title: Report title
         threshold: Minimum score threshold
+        fetch_news: Whether to fetch news sentiment for each stock
 
     Returns:
         Complete HTML string
@@ -29,7 +120,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     rows_html = ""
     for r in results:
         score = r["total"]
-        
+        ticker = r["ticker"]
+
         # Use combined rating if available, else fall back to score-based
         combined_rating = r.get('combined_rating', None)
         if combined_rating:
@@ -81,13 +173,61 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         sideways_reasons = ', '.join(r.get('sideways_reasons', []))
         sideways_label = f'⚠ Chop' if sideways else '✓ Trend'
 
+        # ─── News sentiment (fetched per stock) ────────────────────────────
+        news_html = ""
+        if fetch_news:
+            news_items = fetch_stock_news(ticker)
+            if news_items:
+                good_count = sum(1 for n in news_items if n["sentiment"] == "Good")
+                bad_count = sum(1 for n in news_items if n["sentiment"] == "Bad")
+                neutral_count = sum(1 for n in news_items if n["sentiment"] == "Neutral")
+                summary_parts = []
+                if good_count:
+                    summary_parts.append(f'<span class="news-good">{good_count} Good</span>')
+                if bad_count:
+                    summary_parts.append(f'<span class="news-bad">{bad_count} Bad</span>')
+                if neutral_count:
+                    summary_parts.append(f'<span class="news-neutral">{neutral_count} Neutral</span>')
+
+                news_rows = ""
+                for n in news_items:
+                    sent_cls = n["sentiment"].lower()
+                    news_rows += f"""
+                        <div class="news-item">
+                            <span class="news-sentiment {sent_cls}">[{n["sentiment"]}]</span>
+                            <span class="news-date">{n["date"]}</span>
+                            <span class="news-pub">{n["publisher"]}</span>
+                            <div class="news-title">{n["title"]}</div>
+                            <div class="news-summary">{n["summary"][:200]}</div>
+                        </div>"""
+
+                news_html = f"""
+                <tr class="news-row" id="news-{ticker.replace(".", "_")}" style="display:none">
+                    <td colspan="20">
+                        <div class="news-panel">
+                            <div class="news-summary-line">{" | ".join(summary_parts)}</div>
+                            {news_rows}
+                        </div>
+                    </td>
+                </tr>"""
+            else:
+                news_html = f"""
+                <tr class="news-row" id="news-{ticker.replace(".", "_")}" style="display:none">
+                    <td colspan="20">
+                        <div class="news-panel">
+                            <div class="news-item"><span class="news-title">No recent news found</span></div>
+                        </div>
+                    </td>
+                </tr>"""
+
         rows_html += f"""
         <tr class="{'highlight' if score >= threshold else ''}" 
             data-ma-bull="{'true' if ma_bullish else 'false'}" 
             data-above-poc="{'true' if above_poc else 'false'}"
             data-both-ma="{'true' if close_above_both else 'false'}"
-            data-crossed="{'true' if ma_crossed else 'false'}">
-            <td class="ticker">{r['ticker']}</td>
+            data-crossed="{'true' if ma_crossed else 'false'}"
+            data-ticker="{ticker}">
+            <td class="ticker" onclick="toggleNews('{ticker.replace(".", "_")}')">{ticker}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
             <td class="num">{r.get('close', '—')}</td>
@@ -142,7 +282,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             <td><span class="{trend_class}">{trend_icon} {r['trend_dir']}</span></td>
             <td>{r.get('volat_stat', '—')}</td>
             <td><span class="{sideways_cls}" title="{sideways_reasons}">{sideways_label}</span></td>
-        </tr>"""
+        </tr>
+        {news_html}"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -161,11 +302,11 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     body {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; background: var(--bg); color: var(--text); padding: 20px; }}
     h1 {{ color: var(--green); font-size: 1.4em; margin-bottom: 5px; }}
     .meta {{ color: var(--text-dim); font-size: 0.85em; margin-bottom: 15px; }}
-    .summary {{ display: flex; gap: 20px; margin-bottom: 15px; }}
+    .summary {{ display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap; }}
     .stat {{ background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px 18px; }}
     .stat .num {{ font-size: 1.8em; font-weight: bold; }}
     .stat .label {{ color: var(--text-dim); font-size: 0.8em; margin-top: 2px; }}
-    .filters {{ margin-bottom: 15px; display: flex; gap: 10px; align-items: center; }}
+    .filters {{ margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
     .filters input, .filters select {{
         background: var(--surface); border: 1px solid var(--border); color: var(--text);
         padding: 6px 12px; border-radius: 4px; font-family: inherit; font-size: 0.85em;
@@ -180,7 +321,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     td {{ padding: 6px; border-bottom: 1px solid var(--border); }}
     tr:hover {{ background: var(--surface2); }}
     tr.highlight {{ background: rgba(0,255,136,0.06); }}
-    .ticker {{ color: var(--green); font-weight: bold; }}
+    .ticker {{ color: var(--green); font-weight: bold; cursor: pointer; }}
+    .ticker:hover {{ text-decoration: underline; color: #ffffff; }}
     .score {{ font-size: 1.1em; font-weight: bold; }}
     .score-excellent {{ color: var(--green); }}
     .score-good {{ color: var(--lime); }}
@@ -217,6 +359,43 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .fresh {{ color: #00ff88; }}
     .stale {{ color: var(--text-dim); }}
     .footer {{ margin-top: 20px; color: var(--text-dim); font-size: 0.75em; text-align: center; }}
+
+    /* ─── News panel styles ─────────────────────────────── */
+    .news-row td {{ padding: 0; border-bottom: 1px solid var(--border); }}
+    .news-panel {{
+        background: var(--surface);
+        border-left: 3px solid var(--cyan);
+        padding: 10px 16px;
+        margin: 4px 12px 8px 40px;
+        border-radius: 4px;
+    }}
+    .news-summary-line {{
+        color: var(--text);
+        font-size: 0.85em;
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--border);
+    }}
+    .news-item {{
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(26,74,42,0.5);
+    }}
+    .news-item:last-child {{ border-bottom: none; }}
+    .news-sentiment {{
+        font-weight: bold;
+        font-size: 0.8em;
+        margin-right: 6px;
+    }}
+    .news-sentiment.good {{ color: var(--green); }}
+    .news-sentiment.bad {{ color: var(--red); }}
+    .news-sentiment.neutral {{ color: var(--text-dim); }}
+    .news-date {{ color: var(--text-dim); font-size: 0.78em; margin-right: 8px; }}
+    .news-pub {{ color: var(--cyan); font-size: 0.78em; }}
+    .news-title {{ color: var(--text); font-size: 0.85em; margin-top: 3px; font-weight: bold; }}
+    .news-summary {{ color: var(--text-dim); font-size: 0.78em; margin-top: 2px; }}
+    .news-good {{ color: var(--green); font-weight: bold; }}
+    .news-bad {{ color: var(--red); font-weight: bold; }}
+    .news-neutral {{ color: var(--text-dim); font-weight: bold; }}
 </style>
 </head>
 <body>
@@ -265,6 +444,11 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         <option value="above_poc">Above POC only</option>
         <option value="both_ma">Close &gt; Both MA</option>
     </select>
+    <select id="newsFilter" onchange="filterTable()">
+        <option value="">All</option>
+        <option value="good_news">With Good News</option>
+        <option value="bad_news">With Bad News</option>
+    </select>
 </div>
 
 <table id="stockTable">
@@ -298,7 +482,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 </table>
 
 <div class="footer">
-    Generated by HMAxEMA Stock Scanner &nbsp;|&nbsp; Scoring engine mirrors the Pine Script indicator
+    Generated by HMAxEMA Stock Scanner &nbsp;|&nbsp; Scoring engine mirrors the Pine Script indicator<br>
+    Click any ticker to expand/collapse news sentiment
 </div>
 
 <script>
@@ -309,11 +494,9 @@ function sortTable(col) {{
     const rows = Array.from(tbody.rows);
     const th = table.tHead.rows[0].cells[col];
 
-    // Toggle direction
     sortDir[col] = sortDir[col] === "asc" ? "desc" : "asc";
     const dir = sortDir[col];
 
-    // Clear sorted classes
     for (let cell of table.tHead.rows[0].cells) {{
         cell.classList.remove("sorted-asc", "sorted-desc");
     }}
@@ -322,11 +505,8 @@ function sortTable(col) {{
     rows.sort((a, b) => {{
         let aVal = a.cells[col].textContent.trim();
         let bVal = b.cells[col].textContent.trim();
-        
-        // Handle HTML content (strip tags for sorting)
         let aText = aVal.replace(/<[^>]*>/g, "").trim();
         let bText = bVal.replace(/<[^>]*>/g, "").trim();
-        
         let aNum = parseFloat(aText.replace(/[+%]/g, ""));
         let bNum = parseFloat(bText.replace(/[+%]/g, ""));
         if (!isNaN(aNum) && !isNaN(bNum)) {{
@@ -338,19 +518,37 @@ function sortTable(col) {{
     rows.forEach(row => tbody.appendChild(row));
 }}
 
+function toggleNews(tickerId) {{
+    const newsRow = document.getElementById("news-" + tickerId);
+    if (!newsRow) return;
+
+    // Collapse any other open news panels
+    document.querySelectorAll(".news-row").forEach(row => {{
+        if (row.id !== "news-" + tickerId) {{
+            row.style.display = "none";
+        }}
+    }});
+
+    // Toggle this one
+    newsRow.style.display = newsRow.style.display === "none" ? "" : "none";
+}}
+
 function filterTable() {{
     const search = document.getElementById("search").value.toLowerCase();
     const minScore = parseFloat(document.getElementById("minScore").value);
     const trendFilter = document.getElementById("trendFilter").value;
     const signalFilter = document.getElementById("signalFilter").value;
+    const newsFilter = document.getElementById("newsFilter").value;
     const rows = document.getElementById("stockTable").tBodies[0].rows;
 
-    for (let row of rows) {{
+    for (let i = 0; i < rows.length; i++) {{
+        const row = rows[i];
+        // Skip news rows — they follow their parent
+        if (row.classList.contains("news-row")) continue;
+
         const ticker = row.cells[0].textContent.toLowerCase();
         const score = parseFloat(row.cells[1].textContent);
-        const trend = row.cells[17].textContent;  // Trend column shifted to index 17
-        
-        // Get data attributes
+        const trend = row.cells[17].textContent;
         const maBull = row.getAttribute("data-ma-bull") === "true";
         const abovePoc = row.getAttribute("data-above-poc") === "true";
         const bothMa = row.getAttribute("data-both-ma") === "true";
@@ -359,23 +557,33 @@ function filterTable() {{
         const matchSearch = ticker.includes(search);
         const matchScore = score >= minScore;
         const matchTrend = !trendFilter || trend.includes(trendFilter);
-        
+
         let matchSignal = true;
-        if (signalFilter === "both_ma+poc") {{
-            matchSignal = bothMa && abovePoc;
-        }} else if (signalFilter === "ma+poc") {{
-            matchSignal = maBull && abovePoc;
-        }} else if (signalFilter === "crossed") {{
-            matchSignal = crossed;
-        }} else if (signalFilter === "ma_bull") {{
-            matchSignal = maBull;
-        }} else if (signalFilter === "above_poc") {{
-            matchSignal = abovePoc;
-        }} else if (signalFilter === "both_ma") {{
-            matchSignal = bothMa;
+        if (signalFilter === "both_ma+poc") matchSignal = bothMa && abovePoc;
+        else if (signalFilter === "ma+poc") matchSignal = maBull && abovePoc;
+        else if (signalFilter === "crossed") matchSignal = crossed;
+        else if (signalFilter === "ma_bull") matchSignal = maBull;
+        else if (signalFilter === "above_poc") matchSignal = abovePoc;
+        else if (signalFilter === "both_ma") matchSignal = bothMa;
+
+        let matchNews = true;
+        if (newsFilter) {{
+            const newsRow = rows[i + 1];
+            if (newsRow && newsRow.classList.contains("news-row")) {{
+                const newsText = newsRow.textContent.toLowerCase();
+                if (newsFilter === "good_news") matchNews = newsText.includes("good");
+                else if (newsFilter === "bad_news") matchNews = newsText.includes("bad");
+            }} else {{
+                matchNews = false;
+            }}
         }}
 
-        row.style.display = (matchSearch && matchScore && matchTrend && matchSignal) ? "" : "none";
+        const visible = matchSearch && matchScore && matchTrend && matchSignal && matchNews;
+        row.style.display = visible ? "" : "none";
+        // Also hide/show the news row that follows
+        if (i + 1 < rows.length && rows[i + 1].classList.contains("news-row")) {{
+            rows[i + 1].style.display = "none";
+        }}
     }}
 }}
 </script>
@@ -396,8 +604,24 @@ def _score_class(score: float) -> str:
     return "poor"
 
 
-def save_report(html: str, filename: str = "scanner_report.html") -> str:
-    """Save HTML report to file."""
+def save_report(html: str, filename: str = "scanner_report.html",
+                max_reports: int = 4) -> str:
+    """Save HTML report to file and keep only the last max_reports files."""
+    import glob as _glob
+    import os as _os
+
+    # Save the report
     with open(filename, "w", encoding="utf-8") as f:
         f.write(html)
+
+    # Clean up old reports — keep only the newest max_reports
+    report_dir = _os.path.dirname(filename) or "."
+    pattern = _os.path.join(report_dir, "scanner_report_*.html")
+    reports = sorted(_glob.glob(pattern), key=_os.path.getmtime, reverse=True)
+    for old in reports[max_reports:]:
+        try:
+            _os.remove(old)
+        except OSError:
+            pass
+
     return filename
