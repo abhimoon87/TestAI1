@@ -3,6 +3,10 @@
 Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic exactly.
 """
 
+from __future__ import annotations
+
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 import math
@@ -13,7 +17,7 @@ from .indicators import (
 
 
 def get_ma(ma_type: str, src: pd.Series, length: int,
-           volume: pd.Series = None) -> pd.Series:
+           volume: Optional[pd.Series] = None) -> pd.Series:
     """Universal MA selector matching the Pine Script get_ma function."""
     if ma_type == "HMA":
         return hull_ma(src, length)
@@ -30,7 +34,7 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
     return ema(src, length)
 
 
-def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
+def to_weekly(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """
     Resample an OHLCV DataFrame to weekly bars.
 
@@ -65,7 +69,7 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
 def check_filter(df: pd.DataFrame,
                  fast_ma_type: str = "HMA", fast_ma_len: int = 40,
                  slow_ma_type: str = "EMA", slow_ma_len: int = 50,
-                 crossover_lookback: int = 20) -> dict:
+                 crossover_lookback: int = 20) -> Optional[dict]:
     """
     Model 1 — Stock Filter.
 
@@ -133,7 +137,7 @@ def check_filter(df: pd.DataFrame,
 # Direction classification based on MA crossover direction.
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_direction(filter_result: dict) -> str:
+def get_direction(filter_result: Optional[dict]) -> Optional[str]:
     """
     Model 2 — Bullish / Bearish classification.
 
@@ -149,41 +153,51 @@ def get_direction(filter_result: dict) -> str:
     return "Bull" if filter_result["ma_bullish"] else "Bear"
 
 
-def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFrame = None,
-                   fast_ma_type: str = "HMA", fast_ma_len: int = 40,
-                   slow_ma_type: str = "EMA", slow_ma_len: int = 50,
-                    rsi_len: int = 14, vol_ma_len: int = 20,
-                    atr_len: int = 14, rs_length: int = 14,
-                    adx_len: int = 14, adx_threshold: float = 20.0,
-                    chop_len: int = 14, chop_threshold: float = 61.8,
-                    slope_ma_type: str = "EMA", slope_ma_len: int = 50,
-                    slope_lookback: int = 10, flat_threshold: float = 0.5,
-                    sc_pivot_len: int = 3, sc_bands_mult: float = 0.6,
-                    vp_lookback: int = 200, vp_rows: int = 30,
-                    vp_width: int = 40, crossover_lookback: int = 20) -> dict:
+def compute_scores(df: pd.DataFrame, timeframe: str = "D",
+                   index_df: Optional[pd.DataFrame] = None,
+                   settings: Optional[dict] = None) -> Optional[dict]:
     """
     Compute the 10-category score for a stock.
 
     Args:
         df: OHLCV DataFrame with columns [open, high, low, close, volume]
         timeframe: Analysis timeframe ('D' daily, 'W' weekly, 'M' monthly).
-                   Drives the higher-timeframe HMA/EMA check, which is always
-                   evaluated on weekly bars regardless of the analysis timeframe.
+        index_df: Index DataFrame for relative strength comparison.
+        settings: Dict with scoring parameters (see DEFAULT_SETTINGS in app.py).
+                  Falls back to defaults if not provided.
 
     Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
     Max total = 100 pts, with Trend weighted at 15 pts (matches Pine Script).
-    Entry signal (swing-trading strategy):
-      (1) recent Fast MA crossed above Slow MA AND current close is above the crossover level
-      (2) current close is above Volume Profile POC AND above the crossover level
-      (3) techno-fundamental total score >= 50
-
-    Higher-timeframe (WEEKLY) buy condition (TradingView):
-      wma((2 * wma(close, 22)) - wma(close, 44), 6)  crossed_above  ema(close, 50)
-      i.e. the weekly HMA(44) crosses above the weekly EMA(50).
 
     Returns:
-        Dictionary with all scores and metadata
+        Dictionary with all scores and metadata, or None if insufficient data.
     """
+    if settings is None:
+        settings = {}
+
+    # Extract parameters from settings with defaults
+    fast_ma_type = settings.get("fast_ma_type", "HMA")
+    fast_ma_len = settings.get("fast_ma_len", 40)
+    slow_ma_type = settings.get("slow_ma_type", "EMA")
+    slow_ma_len = settings.get("slow_ma_len", 50)
+    rsi_len = settings.get("rsi_len", 14)
+    vol_ma_len = settings.get("vol_ma_len", 20)
+    atr_len = settings.get("atr_len", 14)
+    rs_length = settings.get("rs_length", 14)
+    adx_len = settings.get("adx_len", 14)
+    adx_threshold = settings.get("adx_threshold", 20.0)
+    chop_len = settings.get("chop_len", 14)
+    chop_threshold = settings.get("chop_threshold", 61.8)
+    slope_ma_type = settings.get("slope_ma_type", "EMA")
+    slope_ma_len = settings.get("slope_ma_len", 50)
+    slope_lookback = settings.get("slope_lookback", 10)
+    flat_threshold = settings.get("flat_threshold", 0.5)
+    sc_pivot_len = settings.get("sc_pivot_len", 3)
+    sc_bands_mult = settings.get("sc_bands_mult", 0.6)
+    vp_lookback = settings.get("vp_lookback", 200)
+    vp_rows = settings.get("vp_rows", 30)
+    vp_width = settings.get("vp_width", 40)
+    crossover_lookback = settings.get("crossover_lookback", 20)
     # Minimum required bars: enough for the slowest MA + indicator context.
     # With default settings (fast_ma=44, slow_ma=50, vp=11), ~100 bars is enough.
     n = len(df)
@@ -577,7 +591,8 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D", index_df: pd.DataFram
     return result
 
 
-def _get_combined_rating(total_score: float, ma_bullish: bool, above_poc: bool, close_above_both_ma: bool = False) -> str:
+def _get_combined_rating(total_score: float, ma_bullish: bool,
+                         above_poc: bool, close_above_both_ma: bool = False) -> str:
     """
     Generate combined rating based on key signals and score.
     """

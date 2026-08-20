@@ -19,16 +19,19 @@ from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch_yfinan
 from .scoring import compute_scores, check_filter, get_direction
 from .report import generate_html_report, save_report
 
-# Load settings (same as app.py)
-import json as _json
-import os as _os
-_SETTINGS_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "settings.json")
+import json
+import os
+
+_SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+
+
 def _load_settings():
+    """Load settings from JSON file."""
     s = {}
-    if _os.path.exists(_SETTINGS_FILE):
+    if os.path.exists(_SETTINGS_FILE):
         try:
             with open(_SETTINGS_FILE, "r") as f:
-                s = _json.load(f)
+                s = json.load(f)
         except Exception:
             pass
     return s
@@ -182,7 +185,7 @@ def run_scan():
         dir_icon = "\u25b2" if direction == "Bull" else "\u25bc"
 
         # ── MODEL 3: Techno-Fundamental Scoring ───────────────────────────
-        scores = compute_scores(df, index_df=index_df)
+        scores = compute_scores(df, index_df=index_df, settings=settings)
         if scores is None:
             print(" \u26a0 insufficient data")
             continue

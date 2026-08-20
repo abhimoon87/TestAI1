@@ -32,6 +32,22 @@ SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12  # Overwrite log file after 12 hours
 
+# ── Sentiment keywords for news analysis ────────────────────────────────────
+SENTIMENT_GOOD = frozenset([
+    "profit", "growth", "record", "gain", "surge", "rally",
+    "strong", "beat", "bullish", "outperform", "order", "deal",
+    "win", "partnership", "expansion", "dividend", "upgrade",
+    "buy", "positive", "surpass", "boost", "rise", "jump",
+    "high", "best", "stronger", "approval", "contract",
+])
+SENTIMENT_BAD = frozenset([
+    "loss", "decline", "fall", "drop", "crash", "bearish",
+    "underperform", "miss", "downgrade", "sell", "debt", "default",
+    "fraud", "investigation", "lawsuit", "warning", "negative",
+    "slump", "cut", "risk", "ban", "penalty", "fines",
+    "slowdown", "weak", "weaker", "worst", "lower",
+])
+
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
 DEFAULT_SETTINGS = {
     # Moving Averages
@@ -707,28 +723,7 @@ class ScannerApp(ctk.CTk):
 
                     scores = compute_scores(
                         df, timeframe=timeframe, index_df=index_df,
-                        fast_ma_type=settings["fast_ma_type"],
-                        fast_ma_len=settings["fast_ma_len"],
-                        slow_ma_type=settings["slow_ma_type"],
-                        slow_ma_len=settings["slow_ma_len"],
-                        rsi_len=settings["rsi_len"],
-                        vol_ma_len=settings["vol_ma_len"],
-                        atr_len=settings["atr_len"],
-                        rs_length=settings["rs_length"],
-                        adx_len=settings["adx_len"],
-                        adx_threshold=settings["adx_threshold"],
-                        chop_len=settings["chop_len"],
-                        chop_threshold=settings["chop_threshold"],
-                        slope_ma_type=settings["slope_ma_type"],
-                        slope_ma_len=settings["slope_ma_len"],
-                        slope_lookback=settings["slope_lookback"],
-                        flat_threshold=settings["flat_threshold"],
-                        sc_pivot_len=settings["sc_pivot_len"],
-                        sc_bands_mult=settings["sc_bands_mult"],
-                        vp_lookback=settings["vp_lookback"],
-                        vp_rows=settings["vp_rows"],
-                        vp_width=settings["vp_width"],
-                        crossover_lookback=settings["crossover_lookback"],
+                        settings=settings,
                     )
                     if scores is None:
                         continue
@@ -834,13 +829,21 @@ class ScannerApp(ctk.CTk):
 
             for i, (_, width, extract) in enumerate(cols):
                 text, color, fsize, bold = extract(r, rank)
-                ctk.CTkLabel(row, text=text, width=width, anchor="w",
+                lbl = ctk.CTkLabel(row, text=text, width=width, anchor="w",
                              font=ctk.CTkFont(size=fsize, weight="bold" if bold else "normal"),
-                             text_color=color).pack(side="left", padx=1)
+                             text_color=color)
+                lbl.pack(side="left", padx=1)
+                # Make ticker clickable
+                if i == 1:  # Ticker column
+                    lbl.configure(cursor="hand2")
+                    lbl.bind("<Button-1>", lambda e, t=r["ticker"], rf=row: self._toggle_stock_news(t, rf, rank))
 
         # Update header
         self.result_count_label.configure(
             text=f"{len(results)} stocks scanned  |  {len([r for r in results if r['total'] >= threshold])} above {threshold}+")
+
+        # Update summary stat cards
+        self._update_summary(results)
 
     def _ma_text(self, r):
         if r.get("ma_crossed_above"):
@@ -858,8 +861,151 @@ class ScannerApp(ctk.CTk):
             return "#aaff00"
         return "#ff4444"
 
-        # Update summary stat cards
-        self.after(0, lambda: self._update_summary(results))
+    def _toggle_stock_news(self, ticker: str, row_frame, rank):
+        """Expand/collapse news inline below the stock row."""
+        # Check if news frame already exists for this ticker
+        for child in row_frame.master.winfo_children():
+            if getattr(child, '_news_ticker', None) == ticker:
+                # Collapse: remove the news frame
+                child.destroy()
+                return
+
+        # Collapse any other open news
+        for child in row_frame.master.winfo_children():
+            if getattr(child, '_news_ticker', None):
+                child.destroy()
+
+        # Create news frame below the row
+        news_frame = ctk.CTkFrame(row_frame.master, fg_color="#0a1a15", corner_radius=4)
+        news_frame._news_ticker = ticker
+        news_frame.pack(after=row_frame, fill="x", padx=8, pady=(0, 2))
+
+        # Loading
+        loading = ctk.CTkLabel(news_frame, text="Loading news...",
+                               font=ctk.CTkFont(size=11),
+                               text_color="#6a8a6a")
+        loading.pack(pady=10)
+
+        def _sentiment(title, summary=""):
+            """Simple keyword-based sentiment: Good / Bad / Neutral."""
+            words = set((title + " " + summary).lower().split())
+            g = len(words & SENTIMENT_GOOD)
+            b = len(words & SENTIMENT_BAD)
+            if g > b:
+                return "Good"
+            elif b > g:
+                return "Bad"
+            return "Neutral"
+
+        def _parse_date(date_str):
+            """Parse ISO date string to date object, return None on failure."""
+            try:
+                from datetime import datetime
+                if not date_str:
+                    return None
+                # Strip trailing Z and truncate to 19 chars (YYYY-MM-DDTHH:MM:SS)
+                clean = date_str.rstrip("Z").strip()[:19]
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        return datetime.strptime(clean, fmt).date()
+                    except ValueError:
+                        continue
+                return None
+            except Exception:
+                return None
+
+        def _fetch():
+            try:
+                from datetime import date, timedelta
+                import yfinance as yf
+                stock = yf.Ticker(f"{ticker}.NS")
+                news_items = stock.news or []
+                cutoff = date.today() - timedelta(days=60)  # 2 months
+                parsed = []
+                for item in news_items:
+                    content = item.get("content", item)
+                    title = content.get("title", "")
+                    if not title:
+                        continue
+                    summary = content.get("summary", "")
+                    pub_date = content.get("pubDate", "") or content.get("displayTime", "")
+                    # Filter: only last 2 months
+                    pub_dt = _parse_date(pub_date)
+                    if pub_dt and pub_dt < cutoff:
+                        continue
+                    provider = content.get("provider", {})
+                    prov_name = provider.get("displayName", "") if isinstance(provider, dict) else ""
+                    sentiment = _sentiment(title, summary)
+                    parsed.append({
+                        "title": title,
+                        "summary": (summary[:150] + "...") if len(summary) > 150 else summary,
+                        "date": pub_date[:10] if pub_date else "",
+                        "provider": prov_name,
+                        "sentiment": sentiment,
+                    })
+                self.after(0, lambda: _show(parsed[:10]))
+            except Exception as e:
+                self.after(0, lambda: _show_error(str(e)))
+
+        def _show(items):
+            if not news_frame.winfo_exists():
+                return
+            loading.destroy()
+            if not items:
+                ctk.CTkLabel(news_frame, text="No recent news found.",
+                             font=ctk.CTkFont(size=11),
+                             text_color="#ff4444").pack(pady=8)
+                return
+            # Sentiment summary
+            good = sum(1 for i in items if i["sentiment"] == "Good")
+            bad = sum(1 for i in items if i["sentiment"] == "Bad")
+            neu = len(items) - good - bad
+            summary_text = f"{good} Good  |  {bad} Bad  |  {neu} Neutral"
+            ctk.CTkLabel(news_frame, text=summary_text,
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color="#aaff00").pack(pady=(4, 6))
+
+            for item in items:
+                sent = item["sentiment"]
+                sent_color = {"Good": "#00ff88", "Bad": "#ff4444", "Neutral": "#6a8a6a"}[sent]
+                sent_bg = {"Good": "#0a3a1a", "Bad": "#3a0a0a", "Neutral": "#1a1a1a"}[sent]
+
+                card = ctk.CTkFrame(news_frame, fg_color="#0f2a1a", corner_radius=4)
+                card.pack(fill="x", padx=6, pady=2)
+
+                # Top row: Good/Bad badge + date + provider
+                top = ctk.CTkFrame(card, fg_color="transparent")
+                top.pack(fill="x", padx=8, pady=(4, 0))
+
+                badge = ctk.CTkFrame(top, fg_color=sent_bg, corner_radius=3, height=18)
+                badge.pack(side="left")
+                badge.pack_propagate(False)
+                ctk.CTkLabel(badge, text=sent, font=ctk.CTkFont(size=9, weight="bold"),
+                             text_color=sent_color).pack(padx=4, pady=1)
+
+                meta = f"{item['date']}  {item['provider']}" if item['provider'] else item['date']
+                ctk.CTkLabel(top, text=meta,
+                             font=ctk.CTkFont(size=9),
+                             text_color="#6a8a6a").pack(side="left", padx=6)
+
+                # Title
+                ctk.CTkLabel(card, text=item["title"],
+                             font=ctk.CTkFont(size=11, weight="bold"),
+                             text_color="#c8d8c0", wraplength=900,
+                             anchor="w", justify="left").pack(anchor="w", padx=8, pady=(1, 0))
+
+                # Summary
+                if item["summary"]:
+                    ctk.CTkLabel(card, text=item["summary"],
+                                 font=ctk.CTkFont(size=10),
+                                 text_color="#8aaa8a", wraplength=900,
+                                 anchor="w", justify="left").pack(anchor="w", padx=8, pady=(1, 4))
+
+        def _show_error(msg):
+            if news_frame.winfo_exists():
+                loading.configure(text=f"Error: {msg}", text_color="#ff4444")
+
+        threading.Thread(target=_fetch, daemon=True).start()
 
     def _scan_complete(self):
         """Re-enable UI after scan finishes."""
