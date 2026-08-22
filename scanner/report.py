@@ -3,8 +3,13 @@ HTML report generator for stock scanner results.
 Produces a sortable, filterable table with color-coded scores and news sentiment.
 """
 
+import html as _html
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # ─── Sentiment keywords ──────────────────────────────────────────────────────
 SENTIMENT_GOOD = frozenset([
@@ -91,8 +96,46 @@ def fetch_stock_news(ticker: str, max_items: int = 10,
             if len(results) >= max_items:
                 break
         return results
-    except Exception:
+    except Exception as e:
+        logger.debug("News fetch failed for %s: %s", ticker, e)
         return []
+
+
+def _fetch_news_parallel(tickers: list[str], max_items: int = 10,
+                         months_back: int = 2,
+                         max_workers: int = 8) -> dict[str, list]:
+    """
+    Fetch news for multiple tickers in parallel.
+
+    Returns:
+        Dict mapping ticker -> list of news item dicts.
+    """
+    news_map: dict[str, list] = {}
+    if not tickers:
+        return news_map
+
+    def _fetch_one(ticker: str) -> tuple[str, list]:
+        return ticker, fetch_stock_news(ticker, max_items, months_back)
+
+    workers = min(max_workers, len(tickers))
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_fetch_one, t): t for t in tickers}
+            for future in as_completed(futures):
+                ticker = futures[future]
+                try:
+                    t, items = future.result()
+                    news_map[t] = items
+                except Exception as e:
+                    logger.debug("Parallel news fetch failed for %s: %s", ticker, e)
+                    news_map[ticker] = []
+    except Exception as e:
+        logger.debug("ThreadPoolExecutor failed: %s", e)
+        # Fallback: sequential fetch
+        for t in tickers:
+            news_map[t] = fetch_stock_news(t, max_items, months_back)
+
+    return news_map
 
 
 def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
@@ -117,6 +160,12 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     passed = [r for r in results if r["total"] >= threshold]
     failed = [r for r in results if r["total"] < threshold]
 
+    # ── Pre-fetch news for all tickers in parallel ───────────────────────
+    news_map: dict[str, list] = {}
+    if fetch_news:
+        tickers = [r["ticker"] for r in results]
+        news_map = _fetch_news_parallel(tickers)
+
     rows_html = ""
     for r in results:
         score = r["total"]
@@ -125,8 +174,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         # Use combined rating if available, else fall back to score-based
         combined_rating = r.get('combined_rating', None)
         if combined_rating:
-            rating_lower = combined_rating.lower()
-            badge = f'<span class="badge {rating_lower}">{combined_rating}</span>'
+            rating_lower = _html.escape(combined_rating.lower())
+            badge = f'<span class="badge {rating_lower}">{_html.escape(combined_rating)}</span>'
         else:
             if score >= 70:
                 badge = '<span class="badge excellent">EXCELLENT</span>'
@@ -170,13 +219,13 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 
         sideways = r.get('is_sideways', False)
         sideways_cls = 'sideways' if sideways else 'trending'
-        sideways_reasons = ', '.join(r.get('sideways_reasons', []))
+        sideways_reasons = _html.escape(', '.join(r.get('sideways_reasons', [])))
         sideways_label = f'⚠ Chop' if sideways else '✓ Trend'
 
-        # ─── News sentiment (fetched per stock) ────────────────────────────
+        # ─── News sentiment (pre-fetched in parallel) ─────────────────────
         news_html = ""
         if fetch_news:
-            news_items = fetch_stock_news(ticker)
+            news_items = news_map.get(ticker, [])
             if news_items:
                 good_count = sum(1 for n in news_items if n["sentiment"] == "Good")
                 bad_count = sum(1 for n in news_items if n["sentiment"] == "Bad")
@@ -191,14 +240,19 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 
                 news_rows = ""
                 for n in news_items:
-                    sent_cls = n["sentiment"].lower()
+                    sent_cls = _html.escape(n["sentiment"].lower())
+                    safe_title = _html.escape(n["title"])
+                    safe_summary = _html.escape(n["summary"][:200])
+                    safe_publisher = _html.escape(n["publisher"])
+                    safe_date = _html.escape(n["date"])
+                    safe_sentiment = _html.escape(n["sentiment"])
                     news_rows += f"""
                         <div class="news-item">
-                            <span class="news-sentiment {sent_cls}">[{n["sentiment"]}]</span>
-                            <span class="news-date">{n["date"]}</span>
-                            <span class="news-pub">{n["publisher"]}</span>
-                            <div class="news-title">{n["title"]}</div>
-                            <div class="news-summary">{n["summary"][:200]}</div>
+                            <span class="news-sentiment {sent_cls}">[{safe_sentiment}]</span>
+                            <span class="news-date">{safe_date}</span>
+                            <span class="news-pub">{safe_publisher}</span>
+                            <div class="news-title">{safe_title}</div>
+                            <div class="news-summary">{safe_summary}</div>
                         </div>"""
 
                 news_html = f"""
@@ -226,8 +280,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             data-above-poc="{'true' if above_poc else 'false'}"
             data-both-ma="{'true' if close_above_both else 'false'}"
             data-crossed="{'true' if ma_crossed else 'false'}"
-            data-ticker="{ticker}">
-            <td class="ticker" onclick="toggleNews('{ticker.replace(".", "_")}')">{ticker}</td>
+            data-ticker="{_html.escape(ticker)}">
+            <td class="ticker" onclick="toggleNews('{_html.escape(ticker.replace(".", "_"))}')">{_html.escape(ticker)}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
             <td class="num">{r.get('close', '—')}</td>
@@ -290,7 +344,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title}</title>
+<title>{_html.escape(title)}</title>
 <style>
     :root {{
         --bg: #0a1a10; --surface: #0f2a1a; --surface2: #153520;
@@ -400,7 +454,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 </head>
 <body>
 
-<h1>📊 {title}</h1>
+<h1>📊 {_html.escape(title)}</h1>
 <div class="meta">Scanned: {now} &nbsp;|&nbsp; Threshold: {threshold}+ &nbsp;|&nbsp; Total stocks: {len(results)}</div>
 
 <div class="summary">

@@ -9,14 +9,52 @@ import pandas as pd
 
 # ── Moving Averages ─────────────────────────────────────────────────────────
 
+def _wma_vectorized(series: pd.Series, length: int) -> pd.Series:
+    """Weighted Moving Average using vectorized numpy convolution.
+
+    WMA(x, n) = Σ(x[i] × (i+1)) / Σ(1..n) for each rolling window.
+    np.convolve(x, w, mode='full')[j] = Σ x[k]·w[j−k].
+    With reversed weights [n, n−1, …, 1], element j gives
+    1·x[j−n+1] + 2·x[j−n+2] + … + n·x[j] — heaviest on the newest bar,
+    which matches the standard WMA definition.
+
+    The convolution output wma_vals[i] is the WMA for the window ending at
+    original series index (n-1+i). We place it at output index (n-1+i) to
+    match pandas rolling() semantics, and NaN the first n-1 positions.
+    """
+    vals = series.values.astype(np.float64)
+    n = length
+    N = len(vals)
+    weights = np.arange(n, 0, -1, dtype=np.float64)  # reversed: [n, n-1, ..., 1]
+    norm = n * (n + 1) / 2.0
+
+    full_conv = np.convolve(vals, weights, mode='full')
+    conv_vals = full_conv[n - 1:] / norm  # N values: conv_vals[i] = WMA ending at index n-1+i
+
+    # Build output: NaN first n-1 positions, valid from n-1 onward.
+    # conv_vals[0..N-n] → output[n-1..N-1]
+    # conv_vals[N-n+1..N-1] → tail (would need data past end of series) → NaN
+    result = np.full(N, np.nan, dtype=np.float64)
+    valid_count = N - n + 1
+    if valid_count > 0:
+        result[n - 1:n - 1 + valid_count] = conv_vals[:valid_count]
+
+    return pd.Series(result, index=series.index, name=series.name)
+
+
 def hull_ma(series: pd.Series, length: int) -> pd.Series:
-    """Hull Moving Average."""
+    """Hull Moving Average (vectorized).
+
+    Formula: WMA(2 × WMA(close, n/2) − WMA(close, n), √n)
+    All three WMA layers use vectorized convolution — no Python per-window loops.
+    """
     half = int(length / 2)
     sqrt_len = int(np.sqrt(length))
-    wma_half = series.rolling(half).apply(lambda x: np.average(x, weights=range(1, len(x) + 1)), raw=True)
-    wma_full = series.rolling(length).apply(lambda x: np.average(x, weights=range(1, len(x) + 1)), raw=True)
+
+    wma_half = _wma_vectorized(series, half)
+    wma_full = _wma_vectorized(series, length)
     diff = 2 * wma_half - wma_full
-    return diff.rolling(sqrt_len).apply(lambda x: np.average(x, weights=range(1, len(x) + 1)), raw=True)
+    return _wma_vectorized(diff, sqrt_len)
 
 
 def ema(series: pd.Series, length: int) -> pd.Series:
@@ -35,25 +73,47 @@ def vwma(series: pd.Series, volume: pd.Series, length: int) -> pd.Series:
 
 
 def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int = 30) -> pd.Series:
-    """Kaufman's Adaptive Moving Average."""
+    """Kaufman's Adaptive Moving Average (vectorized).
+
+    Uses pandas rolling operations and np.where for the adaptive smoothing,
+    replacing the per-bar Python for-loop with vectorized batch computation.
+    The recursive KAMA(k) = k + sc × (price − k) is handled by a single
+    numba-free loop over the smoothing constant array.
+    """
+    vals = series.values.astype(np.float64)
+    n = len(vals)
+    result = np.full(n, np.nan, dtype=np.float64)
+
     fast_alpha = 2.0 / (fast_length + 1)
     slow_alpha = 2.0 / (slow_length + 1)
 
-    result = series.copy()
+    # ── Momentum: |price[i] − price[i−length]| (vectorized) ──
+    shifted = np.empty(n, dtype=np.float64)
+    shifted[:length] = np.nan
+    shifted[length:] = vals[:n - length]
+    mom = np.abs(vals - shifted)
+
+    # ── Volatility: Σ|diff| over rolling window of length+1 (vectorized) ──
+    s = pd.Series(vals)
+    volatility = s.diff().abs().rolling(length, min_periods=length).sum().values
+
+    # ── Efficiency Ratio: mom / volatility ──
+    er = np.where(volatility > 0, mom / volatility, 0.0)
+
+    # ── Smoothing Constant: (er × (fast − slow) + slow)² ──
+    sc = (er * (fast_alpha - slow_alpha) + slow_alpha) ** 2
+
+    # ── Recursive EMA: k[i] = k[i−1] + sc[i] × (price[i] − k[i−1]) ──
+    # First valid KAMA = first price with enough lookback
     k = np.nan
-
-    for i in range(length, len(series)):
+    for i in range(length, n):
         if np.isnan(k):
-            k = series.iloc[i]
+            k = vals[i]
         else:
-            mom = abs(series.iloc[i] - series.iloc[i - length])
-            volatility = series.iloc[i - length:i + 1].diff().abs().sum()
-            er = mom / volatility if volatility != 0 else 0
-            sc = (er * (fast_alpha - slow_alpha) + slow_alpha) ** 2
-            k = k + sc * (series.iloc[i] - k)
-        result.iloc[i] = k
+            k = k + sc[i] * (vals[i] - k)
+        result[i] = k
 
-    return result
+    return pd.Series(result, index=series.index, name=series.name)
 
 
 # ── Oscillators ─────────────────────────────────────────────────────────────
@@ -90,7 +150,8 @@ def stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
 
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     """On-Balance Volume."""
-    direction = close.diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+    diff = close.diff()
+    direction = np.sign(diff).fillna(0)
     return (volume * direction).cumsum()
 
 

@@ -9,9 +9,12 @@ Provider chain:
 All data is cached to disk to avoid repeated API calls.
 """
 
+import logging
 import time
 import pandas as pd
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from .data_providers import DataProvider
 
@@ -136,7 +139,7 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
             if attempt < retries - 1:
                 time.sleep(1)
             else:
-                print(f"  Failed to fetch {ticker}: {e}")
+                logger.warning("Failed to fetch %s: %s", ticker, e)
 
     return None
 
@@ -195,7 +198,7 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D"
         ticker_map = {f"{t}.NS": t for t in tickers}  # Map back to original
 
         # Single batch download
-        print(f"  Batch downloading {len(tickers)} stocks via yfinance...", flush=True)
+        logger.info("Batch downloading %d stocks via yfinance...", len(tickers))
         data = yf.download(yf_tickers, period=download_period, group_by="ticker",
                            auto_adjust=True, progress=False, threads=True)
 
@@ -229,17 +232,18 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D"
 
                 if df is not None and len(df) >= 50:
                     results[orig_ticker] = df
-            except Exception:
+            except Exception as e:
+                logger.debug("Skipping %s in batch: %s", orig_ticker, e)
                 continue
 
-        print(f"  Batch download complete: {len(results)}/{len(tickers)} stocks")
+        logger.info("Batch download complete: %d/%d stocks", len(results), len(tickers))
         return results
 
     except ImportError:
-        print("  yfinance not available for batch download")
+        logger.warning("yfinance not available for batch download")
         return {}
     except Exception as e:
-        print(f"  Batch download failed: {e}")
+        logger.error("Batch download failed: %s", e)
         return {}
 
 
@@ -258,6 +262,6 @@ def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> O
                 if fund is not None:
                     df._fundamentals = fund
                 return df
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("fetch_stock_fast failed for %s: %s", ticker, e)
     return None

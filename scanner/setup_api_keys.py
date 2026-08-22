@@ -3,24 +3,27 @@ API Key Setup Script for HMAxEMA Scanner
 Helps you configure Finnhub and Alpha Vantage API keys for enhanced data.
 """
 
+import logging
 import os
 import sys
 import json
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 # Config file location
 CONFIG_FILE = Path(__file__).parent / "api_config.json"
 
 def print_header():
-    print("=" * 60)
-    print("  HMAxEMA Scanner — API Key Setup")
-    print("=" * 60)
-    print()
+    logger.info("=" * 60)
+    logger.info("  HMAxEMA Scanner — API Key Setup")
+    logger.info("=" * 60)
+    logger.info("")
 
 def print_section(title):
-    print(f"\n{'─' * 60}")
-    print(f"  {title}")
-    print(f"{'─' * 60}\n")
+    logger.info("\n%s", "─" * 60)
+    logger.info("  %s", title)
+    logger.info("%s\n", "─" * 60)
 
 def load_config():
     """Load existing config."""
@@ -28,8 +31,8 @@ def load_config():
         try:
             with open(CONFIG_FILE, "r") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to load API config: %s", e)
     return {}
 
 def save_config(config):
@@ -37,9 +40,9 @@ def save_config(config):
     try:
         with open(CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
-        print(f"  [OK] Config saved to {CONFIG_FILE}")
+        logger.info("  [OK] Config saved to %s", CONFIG_FILE)
     except Exception as e:
-        print(f"  [ERROR] Could not save config: {e}")
+        logger.error("  [ERROR] Could not save config: %s", e)
 
 def set_env_variable(key, value):
     """Set environment variable for current session."""
@@ -60,48 +63,48 @@ def get_current_status():
 def setup_finnhub():
     """Setup Finnhub API key."""
     print_section("FINNHUB SETUP")
-    print("  Finnhub provides institutional-grade fundamental data.")
-    print("  Free tier: 60 API calls per minute")
-    print()
-    print("  Steps to get your API key:")
-    print("  1. Go to: https://finnhub.io/register")
-    print("  2. Sign up with your email")
-    print("  3. Verify your email")
-    print("  4. Go to Dashboard → API Keys")
-    print("  5. Copy your API key")
-    print()
+    logger.info("  Finnhub provides institutional-grade fundamental data.")
+    logger.info("  Free tier: 60 API calls per minute")
+    logger.info("")
+    logger.info("  Steps to get your API key:")
+    logger.info("  1. Go to: https://finnhub.io/register")
+    logger.info("  2. Sign up with your email")
+    logger.info("  3. Verify your email")
+    logger.info("  4. Go to Dashboard → API Keys")
+    logger.info("  5. Copy your API key")
+    logger.info("")
     
     key = input("  Paste your Finnhub API key (or press Enter to skip): ").strip()
     
     if key:
         set_env_variable("FINNHUB_API_KEY", key)
-        print(f"  [OK] FINNHUB_API_KEY set for this session")
+        logger.info("  [OK] FINNHUB_API_KEY set for this session")
         return key
     else:
-        print("  [SKIP] Finnhub setup skipped")
+        logger.info("  [SKIP] Finnhub setup skipped")
         return None
 
 def setup_alpha_vantage():
     """Setup Alpha Vantage API key."""
     print_section("ALPHA VANTAGE SETUP")
-    print("  Alpha Vantage provides technical indicators and fundamentals.")
-    print("  Free tier: 25 API calls per day")
-    print()
-    print("  Steps to get your API key:")
-    print("  1. Go to: https://www.alphavantage.co/support/#api-key")
-    print("  2. Fill in the form (name, email, usage)")
-    print("  3. Click 'Get Free API Key'")
-    print("  4. Check your email for the key")
-    print()
+    logger.info("  Alpha Vantage provides technical indicators and fundamentals.")
+    logger.info("  Free tier: 25 API calls per day")
+    logger.info("")
+    logger.info("  Steps to get your API key:")
+    logger.info("  1. Go to: https://www.alphavantage.co/support/#api-key")
+    logger.info("  2. Fill in the form (name, email, usage)")
+    logger.info("  3. Click 'Get Free API Key'")
+    logger.info("  4. Check your email for the key")
+    logger.info("")
     
     key = input("  Paste your Alpha Vantage API key (or press Enter to skip): ").strip()
     
     if key:
         set_env_variable("ALPHA_VANTAGE_API_KEY", key)
-        print(f"  [OK] ALPHA_VANTAGE_API_KEY set for this session")
+        logger.info("  [OK] ALPHA_VANTAGE_API_KEY set for this session")
         return key
     else:
-        print("  [SKIP] Alpha Vantage setup skipped")
+        logger.info("  [SKIP] Alpha Vantage setup skipped")
         return None
 
 def test_providers():
@@ -114,41 +117,41 @@ def test_providers():
         provider = DataProvider()
         test_ticker = "RELIANCE"
         
-        print(f"  Testing fundamentals for {test_ticker}...")
+        logger.info("  Testing fundamentals for %s...", test_ticker)
         fund = provider.fetch_fundamentals(test_ticker)
         
         if fund:
-            print(f"  [OK] Provider: {provider.last_provider}")
-            print(f"       P/E Ratio: {fund.get('pe_ratio', 'N/A')}")
-            print(f"       EPS Growth: {fund.get('eps_growth', 'N/A')}")
-            print(f"       Revenue Growth: {fund.get('rev_growth', 'N/A')}")
+            logger.info("  [OK] Provider: %s", provider.last_provider)
+            logger.info("       P/E Ratio: %s", fund.get('pe_ratio', 'N/A'))
+            logger.info("       EPS Growth: %s", fund.get('eps_growth', 'N/A'))
+            logger.info("       Revenue Growth: %s", fund.get('rev_growth', 'N/A'))
             return True
         else:
-            print(f"  [WARN] No data fetched (using fallback)")
+            logger.warning("  [WARN] No data fetched (using fallback)")
             return False
             
     except Exception as e:
-        print(f"  [ERROR] Test failed: {e}")
+        logger.error("  [ERROR] Test failed: %s", e)
         return False
 
 def print_permanent_instructions():
     """Print instructions for permanent setup."""
     print_section("PERMANENT SETUP (Optional)")
-    print("  To make keys permanent, add them to your system:")
-    print()
-    print("  Windows (PowerShell):")
-    print("    $env:FINNHUB_API_KEY=\"your_key\"")
-    print("    $env:ALPHA_VANTAGE_API_KEY=\"your_key\"")
-    print()
-    print("  Windows (System Environment Variables):")
-    print("    1. Search 'Environment Variables' in Start Menu")
-    print("    2. Click 'Environment Variables'")
-    print("    3. Add new User variables")
-    print()
-    print("  macOS/Linux:")
-    print("    export FINNHUB_API_KEY=\"your_key\"")
-    print("    export ALPHA_VANTAGE_API_KEY=\"your_key\"")
-    print("    # Add to ~/.bashrc or ~/.zshrc for persistence")
+    logger.info("  To make keys permanent, add them to your system:")
+    logger.info("")
+    logger.info("  Windows (PowerShell):")
+    logger.info('    $env:FINNHUB_API_KEY="your_key"')
+    logger.info('    $env:ALPHA_VANTAGE_API_KEY="your_key"')
+    logger.info("")
+    logger.info("  Windows (System Environment Variables):")
+    logger.info("    1. Search 'Environment Variables' in Start Menu")
+    logger.info("    2. Click 'Environment Variables'")
+    logger.info("    3. Add new User variables")
+    logger.info("")
+    logger.info("  macOS/Linux:")
+    logger.info('    export FINNHUB_API_KEY="your_key"')
+    logger.info('    export ALPHA_VANTAGE_API_KEY="your_key"')
+    logger.info("    # Add to ~/.bashrc or ~/.zshrc for persistence")
 
 def main():
     """Main setup function."""
@@ -156,9 +159,9 @@ def main():
     
     # Show current status
     status = get_current_status()
-    print("  Current API Key Status:")
-    print(f"    FINNHUB_API_KEY:       {'SET' if status['FINNHUB_API_KEY'] else 'NOT SET'}")
-    print(f"    ALPHA_VANTAGE_API_KEY: {'SET' if status['ALPHA_VANTAGE_API_KEY'] else 'NOT SET'}")
+    logger.info("  Current API Key Status:")
+    logger.info("    FINNHUB_API_KEY:       %s", 'SET' if status['FINNHUB_API_KEY'] else 'NOT SET')
+    logger.info("    ALPHA_VANTAGE_API_KEY: %s", 'SET' if status['ALPHA_VANTAGE_API_KEY'] else 'NOT SET')
     
     # Setup keys
     config = load_config()
@@ -182,13 +185,13 @@ def main():
     print_permanent_instructions()
     
     print_section("SETUP COMPLETE")
-    print("  API keys are configured for this session.")
-    print("  Restart the scanner to use the new providers.")
-    print()
+    logger.info("  API keys are configured for this session.")
+    logger.info("  Restart the scanner to use the new providers.")
+    logger.info("")
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n  [CANCELLED] Setup cancelled.")
+        logger.info("\n\n  [CANCELLED] Setup cancelled.")
         sys.exit(0)

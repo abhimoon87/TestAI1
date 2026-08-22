@@ -9,6 +9,7 @@ Or double-click run.bat (Windows) / run.sh (macOS/Linux)
 """
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -17,6 +18,8 @@ import webbrowser
 from datetime import datetime
 
 import customtkinter as ctk
+
+logger = logging.getLogger(__name__)
 
 from .universes import UNIVERSES
 from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, fetch_batch_yfinance, fetch_fundamentals
@@ -147,8 +150,8 @@ def load_settings() -> dict:
             with open(SETTINGS_FILE, "r") as f:
                 saved = json.load(f)
             settings.update(saved)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to load settings: %s", e)
     return settings
 
 
@@ -157,8 +160,8 @@ def save_settings(settings: dict):
     try:
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to save settings: %s", e)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -778,8 +781,8 @@ class ScannerApp(ctk.CTk):
                             fund = fetch_fundamentals(ticker)
                             if fund is not None:
                                 df._fundamentals = fund
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
 
                     scores = compute_scores(
                         df, timeframe=timeframe, index_df=index_df,
@@ -799,7 +802,7 @@ class ScannerApp(ctk.CTk):
                         self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
 
                 except Exception as e:
-                    pass  # Silently skip errors in batch mode
+                    logger.debug("Skipping %s in batch scan: %s", ticker, e)
 
             # Sort and store
             results.sort(key=lambda x: x["total"], reverse=True)
@@ -965,7 +968,8 @@ class ScannerApp(ctk.CTk):
                     except ValueError:
                         continue
                 return None
-            except Exception:
+            except Exception as e:
+                logger.debug("Date parse failed for '%s': %s", date_str, e)
                 return None
 
         def _fetch():
@@ -1110,7 +1114,7 @@ class ScannerApp(ctk.CTk):
                 sideways_reasons = ", ".join(r.get("sideways_reasons", []))
                 writer.writerow([
                     i, r["ticker"], r["total"],
-                    "EXCELLENT" if r["total"] >= 70 else ("GOOD" if r["total"] >= 50 else ("MODERATE" if r["total"] >= 30 else "POOR")),
+                    r.get("combined_rating", "POOR"),
                     r.get("close"), r["trend"], r["momentum"], r["rsi"], r["macd"],
                     r["stoch"], r["obv"], r["volume"], r["rel_str"], r["volatility"],
                     r.get("fundamentals", 0),
@@ -1214,8 +1218,8 @@ class ScannerApp(ctk.CTk):
             if selection:
                 self.clipboard_clear()
                 self.clipboard_append(selection)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Clipboard copy failed: %s", e)
 
     def _rotate_log(self):
         """Overwrite log file if it's older than LOG_ROTATE_HOURS."""
@@ -1224,8 +1228,8 @@ class ScannerApp(ctk.CTk):
                 age_hours = (datetime.now().timestamp() - os.path.getmtime(LOG_FILE)) / 3600
                 if age_hours >= LOG_ROTATE_HOURS:
                     open(LOG_FILE, "w").close()  # Truncate
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Log rotation failed: %s", e)
 
     def _log(self, msg: str):
         """Thread-safe log to the log textbox and file."""
@@ -1236,8 +1240,8 @@ class ScannerApp(ctk.CTk):
         try:
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(line)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to write to log file: %s", e)
 
         def _append():
             self.log_text.insert("end", line)

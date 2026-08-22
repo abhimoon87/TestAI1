@@ -9,6 +9,8 @@ Requirements:
     pip install yfinance pandas numpy
 """
 
+import json
+import logging
 import os
 import sys
 import webbrowser
@@ -19,8 +21,7 @@ from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch_yfinan
 from .scoring import compute_scores, check_filter, get_direction
 from .report import generate_html_report, save_report
 
-import json
-import os
+logger = logging.getLogger(__name__)
 
 _SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
@@ -32,13 +33,13 @@ def _load_settings():
         try:
             with open(_SETTINGS_FILE, "r") as f:
                 s = json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to load settings: %s", e)
     return s
 
 
 def print_banner():
-    print("""
+    logger.info("""
 ╔══════════════════════════════════════════════════════════════╗
 ║          📊 HMAxEMA Stock Scanner — Indian Market           ║
 ║          Scoring engine mirrors Pine Script indicator        ║
@@ -48,13 +49,13 @@ def print_banner():
 
 def select_universe() -> tuple:
     """Interactive universe selection. Returns (name, ticker_list)."""
-    print("━━━ Stock Universe ━━━")
+    logger.info("━━━ Stock Universe ━━━")
     universes = list(UNIVERSES.keys())
     for i, name in enumerate(universes, 1):
         count = len(UNIVERSES[name])
-        print(f"  {i:2d}. {name:<25s} ({count} stocks)")
+        logger.info("  %2d. %-25s (%d stocks)", i, name, count)
 
-    print(f"  {len(universes) + 1:2d}. Custom (enter comma-separated tickers)")
+    logger.info("  %2d. Custom (enter comma-separated tickers)", len(universes) + 1)
 
     while True:
         try:
@@ -65,23 +66,23 @@ def select_universe() -> tuple:
                 tickers = [t.strip().upper() for t in custom.split(",") if t.strip()]
                 if tickers:
                     return ("Custom", tickers)
-                print("  ✗ No tickers provided.")
+                logger.warning("  ✗ No tickers provided.")
                 continue
             if 0 <= idx < len(universes):
                 name = universes[idx]
                 return (name, UNIVERSES[name])
         except (ValueError, IndexError):
             pass
-        print(f"  ✗ Invalid choice. Enter 1-{len(universes) + 1}.")
+        logger.warning("  ✗ Invalid choice. Enter 1-%d.", len(universes) + 1)
 
 
 def select_threshold() -> float:
     """Interactive threshold selection."""
-    print("\n━━━ Score Threshold ━━━")
-    print("  1. 70+  (EXCELLENT only)")
-    print("  2. 50+  (GOOD or better)  ← recommended")
-    print("  3. 30+  (MODERATE or better)")
-    print("  4. Custom value")
+    logger.info("\n━━━ Score Threshold ━━━")
+    logger.info("  1. 70+  (EXCELLENT only)")
+    logger.info("  2. 50+  (GOOD or better)  ← recommended")
+    logger.info("  3. 30+  (MODERATE or better)")
+    logger.info("  4. Custom value")
 
     while True:
         choice = input("\n  Select threshold [1-4]: ").strip()
@@ -98,15 +99,15 @@ def select_threshold() -> float:
                     return val
             except ValueError:
                 pass
-        print("  ✗ Invalid choice.")
+        logger.warning("  ✗ Invalid choice.")
 
 
 def select_period() -> str:
     """Interactive period selection."""
-    print("\n━━━ Data Period ━━━")
-    print("  1. 6 months")
-    print("  2. 1 year   ← recommended")
-    print("  3. 2 years")
+    logger.info("\n━━━ Data Period ━━━")
+    logger.info("  1. 6 months")
+    logger.info("  2. 1 year   ← recommended")
+    logger.info("  3. 2 years")
 
     while True:
         choice = input("\n  Select period [1-3]: ").strip()
@@ -116,7 +117,25 @@ def select_period() -> str:
             return "1y"
         elif choice == "3":
             return "2y"
-        print("  ✗ Invalid choice.")
+        logger.warning("  ✗ Invalid choice.")
+
+
+def select_timeframe() -> str:
+    """Interactive timeframe selection."""
+    logger.info("\n━━━ Analysis Timeframe ━━━")
+    logger.info("  1. Daily   (D)  ← default")
+    logger.info("  2. Weekly  (W)")
+    logger.info("  3. Monthly (M)")
+
+    while True:
+        choice = input("\n  Select timeframe [1-3]: ").strip()
+        if choice == "1" or choice == "":
+            return "D"
+        elif choice == "2":
+            return "W"
+        elif choice == "3":
+            return "M"
+        logger.warning("  ✗ Invalid choice.")
 
 
 def run_scan():
@@ -127,44 +146,52 @@ def run_scan():
     universe_name, tickers = select_universe()
     threshold = select_threshold()
     period = select_period()
+    timeframe = select_timeframe()
 
-    print(f"\n━━━ Configuration ━━━")
-    print(f"  Universe:   {universe_name} ({len(tickers)} stocks)")
-    print(f"  Threshold:  {threshold}+")
-    print(f"  Period:     {period}")
-    print()
-
-    # ── Load settings for index symbol ──────────────────────────────────────
+    # ── Load settings and override with CLI selections ──────────────────────
     settings = _load_settings()
+    settings["data_period"] = period
+    settings["timeframe"] = timeframe
     index_symbol = settings.get("index_symbol", "NSEI")
 
+    tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
+    logger.info("\n━━━ Configuration ━━━")
+    logger.info("  Universe:   %s (%d stocks)", universe_name, len(tickers))
+    logger.info("  Threshold:  %s+", threshold)
+    logger.info("  Period:     %s", period)
+    logger.info("  Timeframe:  %s", tf_names.get(timeframe, timeframe))
+    logger.info("  FastMA:     %s%d  SlowMA: %s%d",
+                settings.get("fast_ma_type", "HMA"), settings.get("fast_ma_len", 40),
+                settings.get("slow_ma_type", "EMA"), settings.get("slow_ma_len", 50))
+    logger.info("")
+
     # ── Fetch index for relative strength ──────────────────────────────────
-    print(f"━━━ Fetching {index_symbol} index data ━━━")
+    logger.info("━━━ Fetching %s index data ━━━", index_symbol)
     index_df = fetch_index_data(f"^{index_symbol}", period=period)
     if index_df is not None:
-        print(f"  ✓ {index_symbol} loaded ({len(index_df)} bars)")
+        logger.info("  ✓ %s loaded (%d bars)", index_symbol, len(index_df))
     else:
-        print(f"  ⚠ {index_symbol} data unavailable — RS will use proxy")
-    print()
+        logger.warning("  ⚠ %s data unavailable — RS will use proxy", index_symbol)
+    logger.info("")
 
     # ── Fetch stock data ─────────────────────────────────────────────────────
-    print(f"━━━ Fetching stock data ━━━")
+    logger.info("━━━ Fetching stock data ━━━")
     stock_data = fetch_batch_yfinance(tickers, period=period)
-    print(f"\n  Fetched {len(stock_data)}/{len(tickers)} stocks successfully.\n")
+    logger.info("\n  Fetched %d/%d stocks successfully.\n", len(stock_data), len(tickers))
 
     if not stock_data:
-        print("  ✗ No data fetched. Check your internet connection.")
+        logger.error("  ✗ No data fetched. Check your internet connection.")
         return
 
     # ── 3-Model Pipeline ──────────────────────────────────────────────────
-    print("━━━ 3-Model Pipeline ━━━")
+    logger.info("━━━ 3-Model Pipeline ━━━")
     results = []
     filtered_out = 0
     direction_counts = {"Bull": 0, "Bear": 0}
     min_score_threshold = 50.0  # Swing trading threshold
 
     for i, (ticker, df) in enumerate(stock_data.items(), 1):
-        print(f"  [{i}/{len(stock_data)}] {ticker}...", end="", flush=True)
+        logger.info("  [%d/%d] %s...", i, len(stock_data), ticker)
 
         # Attach fundamentals if not already present
         if not hasattr(df, '_fundamentals') or df._fundamentals is None:
@@ -173,47 +200,56 @@ def run_scan():
                 df._fundamentals = fund
 
         # ── MODEL 1: Stock Filter ──────────────────────────────────────────
-        filter_result = check_filter(df)
+        filter_result = check_filter(
+            df,
+            fast_ma_type=settings.get("fast_ma_type", "HMA"),
+            fast_ma_len=settings.get("fast_ma_len", 40),
+            slow_ma_type=settings.get("slow_ma_type", "EMA"),
+            slow_ma_len=settings.get("slow_ma_len", 50),
+            crossover_lookback=settings.get("crossover_lookback", 20),
+        )
         if filter_result is None:
             filtered_out += 1
-            print(" \u2716 filtered")
+            logger.info("    ✖ filtered")
             continue
 
         # ── MODEL 2: Bullish / Bearish ────────────────────────────────────
         direction = get_direction(filter_result)
         direction_counts[direction] = direction_counts.get(direction, 0) + 1
-        dir_icon = "\u25b2" if direction == "Bull" else "\u25bc"
+        dir_icon = "▲" if direction == "Bull" else "▼"
 
         # ── MODEL 3: Techno-Fundamental Scoring ───────────────────────────
-        scores = compute_scores(df, index_df=index_df, settings=settings)
+        scores = compute_scores(df, timeframe=timeframe, index_df=index_df, settings=settings)
         if scores is None:
-            print(" \u26a0 insufficient data")
+            logger.info("    ⚠ insufficient data")
             continue
 
         scores["ticker"] = ticker
-        scores["trend_dir"] = direction
+        scores["trend_dir"] = direction  # Override with pipeline direction
+        scores["trend_color"] = direction.lower()
         results.append(scores)
 
         total = scores["total"]
-        icon = "\U0001f7e2" if total >= 70 else ("\U0001f7e1" if total >= 50 else ("\U0001f7e0" if total >= 30 else "\U0001f534"))
-        tag = "\u2713" if total >= min_score_threshold else "\u2717"
+        icon = "🟢" if total >= 70 else ("🟡" if total >= 50 else ("🟠" if total >= 30 else "🔴"))
+        tag = "✓" if total >= min_score_threshold else "✗"
         sideways = " [CHOP]" if scores.get("is_sideways") else ""
-        print(f" {dir_icon} {tag} {icon} {total:.1f}{sideways}")
+        logger.info("    %s %s %s %.1f%s", dir_icon, tag, icon, total, sideways)
 
     if not results:
-        print("\n  \u2717 No stocks passed the filter.")
+        logger.warning("\n  ✗ No stocks passed the filter.")
         return
 
     # ── Pipeline Summary ──────────────────────────────────────────────────
-    print(f"\n━━━ Pipeline Summary ━━━")
-    print(f"  Total stocks:  {len(stock_data)}")
-    print(f"  Filtered out:  {filtered_out} (no recent crossover)")
-    print(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
+    logger.info("\n━━━ Pipeline Summary ━━━")
+    logger.info("  Total stocks:  %d", len(stock_data))
+    logger.info("  Filtered out:  %d (no recent crossover)", filtered_out)
+    logger.info("  Passed filter: %d (%d Bull, %d Bear)",
+                len(results), direction_counts.get('Bull', 0), direction_counts.get('Bear', 0))
     passed = len([r for r in results if r["total"] >= min_score_threshold])
-    print(f"  Scored {min_score_threshold}+: {passed}")
+    logger.info("  Scored %s+: %d", min_score_threshold, passed)
 
     # ── Generate report ──────────────────────────────────────────────────────
-    print(f"\n━━━ Generating report ━━━")
+    logger.info("\n━━━ Generating report ━━━")
     html = generate_html_report(results, title=f"HMAxEMA Scanner — {universe_name}", threshold=threshold)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -221,20 +257,20 @@ def run_scan():
     save_report(html, filename)
 
     passed = len([r for r in results if r["total"] >= threshold])
-    print(f"  ✓ Report saved: {filename}")
-    print(f"  ✓ {passed}/{len(results)} stocks scored {threshold}+\n")
+    logger.info("  ✓ Report saved: %s", filename)
+    logger.info("  ✓ %d/%d stocks scored %s+\n", passed, len(results), threshold)
 
     # ── Summary ──────────────────────────────────────────────────────────────
-    print("━━━ Top 10 Results ━━━")
+    logger.info("━━━ Top 10 Results ━━━")
     results.sort(key=lambda x: x["total"], reverse=True)
-    print(f"  {'Rank':<5} {'Ticker':<15} {'Score':>6} {'Rating':<12} {'1M Chg':>8} {'Trend':<8}")
-    print(f"  {'─'*5} {'─'*15} {'─'*6} {'─'*12} {'─'*8} {'─'*8}")
+    logger.info("  %-5s %-15s %6s %-12s %8s %-8s", "Rank", "Ticker", "Score", "Rating", "1M Chg", "Trend")
+    logger.info("  %s %s %s %s %s %s", "─"*5, "─"*15, "─"*6, "─"*12, "─"*8, "─"*8)
 
     for i, r in enumerate(results[:10], 1):
         score = r["total"]
-        rating = "EXCELLENT" if score >= 70 else ("GOOD" if score >= 50 else ("MODERATE" if score >= 30 else "POOR"))
+        rating = r.get("combined_rating", "POOR")
         pc1m = f"{r.get('pc1m', 0) or 0:+.1f}%"
-        print(f"  {i:<5} {r['ticker']:<15} {score:>5.1f}  {rating:<12} {pc1m:>8} {r['trend_dir']:<8}")
+        logger.info("  %-5d %-15s %5.1f  %-12s %8s %-8s", i, r['ticker'], score, rating, pc1m, r['trend_dir'])
 
     # ── Open report ──────────────────────────────────────────────────────────
     open_report = input("\n  Open report in browser? [Y/n]: ").strip().lower()
@@ -242,12 +278,12 @@ def run_scan():
         filepath = os.path.abspath(filename)
         webbrowser.open(f"file://{filepath}")
 
-    print("\n  ✓ Done!\n")
+    logger.info("\n  ✓ Done!\n")
 
 
 if __name__ == "__main__":
     try:
         run_scan()
     except KeyboardInterrupt:
-        print("\n\n  ✓ Scan cancelled.")
+        logger.info("\n\n  ✓ Scan cancelled.")
         sys.exit(0)

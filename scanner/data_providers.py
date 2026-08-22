@@ -16,6 +16,7 @@ All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
 """
 
+import logging
 import os
 import json
 import time
@@ -27,6 +28,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 # Load API keys from config file if exists
 _config_file = Path(__file__).parent / "api_config.json"
 if _config_file.exists():
@@ -36,8 +39,8 @@ if _config_file.exists():
             for key, value in _config.items():
                 if key not in os.environ:  # Don't override existing env vars
                     os.environ[key] = value
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Could not load api_config.json: %s", e)
 
 # ── Cache Directory ────────────────────────────────────────────────────────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
@@ -75,7 +78,8 @@ def _get_cached(ticker: str, period: str, provider: str) -> Optional[pd.DataFram
             return None
 
         return pd.read_pickle(cache_file)
-    except Exception:
+    except Exception as e:
+        logger.debug("Cache read failed for %s: %s", ticker, e)
         return None
 
 
@@ -90,8 +94,8 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
         df.to_pickle(cache_file)
         with open(meta_file, "w") as f:
             json.dump({"timestamp": datetime.now().isoformat(), "rows": len(df)}, f)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Cache write failed for %s: %s", ticker, e)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -140,7 +144,8 @@ def _fetch_jugaad(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug("jugaad-data failed for %s: %s", ticker, e)
         return None
 
 
@@ -197,7 +202,8 @@ def _fetch_jugaad_index(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug("jugaad-data index failed for %s: %s", ticker, e)
         return None
 
 
@@ -225,7 +231,8 @@ def _fetch_yfinance(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug("yfinance failed for %s: %s", ticker, e)
         return None
 
 
@@ -246,7 +253,8 @@ def _fetch_yfinance_index(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug("yfinance index failed for %s: %s", ticker, e)
         return None
 
 
@@ -303,7 +311,8 @@ def _fetch_nselib(ticker: str, period: str) -> Optional[pd.DataFrame]:
 
     except ImportError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.debug("nselib failed for %s: %s", ticker, e)
         return None
 
 
@@ -355,8 +364,8 @@ def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
                     eps_growth = ((latest["eps"] - prev["eps"]) / abs(prev["eps"])) * 100
                 if prev.get("revenue") and prev["revenue"] != 0 and latest.get("revenue"):
                     rev_growth = ((latest["revenue"] - prev["revenue"]) / abs(prev["revenue"])) * 100
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Finnhub earnings fetch failed for %s: %s", ticker, e)
 
         return {
             "pe_ratio": pe_ratio,
@@ -365,7 +374,8 @@ def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
             "roe": roe,
         }
 
-    except Exception:
+    except Exception as e:
+        logger.debug("Finnhub fundamentals failed for %s: %s", ticker, e)
         return None
 
 
@@ -398,7 +408,8 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
             "roe": roe,
         }
 
-    except Exception:
+    except Exception as e:
+        logger.debug("Alpha Vantage failed for %s: %s", ticker, e)
         return None
 
 
@@ -438,7 +449,8 @@ def _fetch_fundamentals_yfinance(ticker: str) -> Optional[dict]:
             "roe": roe,
         }
 
-    except Exception:
+    except Exception as e:
+        logger.debug("yfinance fundamentals failed for %s: %s", ticker, e)
         return None
 
 
@@ -472,7 +484,8 @@ def _fetch_fundamentals_nselib(ticker: str) -> Optional[dict]:
             "roe": None,
         }
 
-    except Exception:
+    except Exception as e:
+        logger.debug("nselib P/E failed for %s: %s", ticker, e)
         return None
 
 
@@ -566,7 +579,8 @@ class DataProvider:
                     if self.use_cache:
                         _set_cached(ticker, period, "index_cache", df)
                     return df
-            except Exception:
+            except Exception as e:
+                logger.debug("Index provider %s failed for %s: %s", name, ticker, e)
                 continue
 
         return None
@@ -596,7 +610,8 @@ class DataProvider:
                 if fund is not None:
                     self.last_provider = name
                     return fund
-            except Exception:
+            except Exception as e:
+                logger.debug("Fundamentals provider %s failed for %s: %s", name, ticker, e)
                 continue
 
         return None

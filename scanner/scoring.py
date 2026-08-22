@@ -1,6 +1,14 @@
 """
 10-category scoring engine.
 Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic exactly.
+
+Refactored into composable helpers:
+  - detect_crossover() — shared MA crossover detection (used by filter & scorer)
+  - _compute_indicators() — compute all core indicators at once
+  - _compute_weekly_hma() — weekly higher-timeframe HMA crossover
+  - _compute_sideways() — ADX / Cholangirong / Slope sideways filter
+  - _score_trend .. _score_fundamentals — per-category scoring (10 total)
+  - compute_scores() — orchestrator that composes the above
 """
 
 from __future__ import annotations
@@ -15,6 +23,10 @@ from .indicators import (
     obv, atr, adx, price_change, highest, lowest, volume_profile_poc
 )
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MOVING AVERAGE SELECTOR
+# ══════════════════════════════════════════════════════════════════════════════
 
 def get_ma(ma_type: str, src: pd.Series, length: int,
            volume: Optional[pd.Series] = None) -> pd.Series:
@@ -33,6 +45,10 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
         return ema(src, length)  # fallback if no volume
     return ema(src, length)
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEKLY RESAMPLE
+# ══════════════════════════════════════════════════════════════════════════════
 
 def to_weekly(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """
@@ -62,8 +78,47 @@ def to_weekly(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SHARED CROSSOVER DETECTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
+                     lookback: int = 20) -> dict:
+    """
+    Detect MA crossovers within the last *lookback* bars.
+
+    Returns:
+        {
+            "crossed": bool,           # any bullish crossover found
+            "bars_ago": int,           # bars since most recent crossover (-1 if none)
+            "level": float | None,     # slow MA value at crossover point
+            "count": int,              # total crossovers in lookback window
+            "dates": list[int],        # bar offsets of all crossovers (1 = most recent)
+        }
+    """
+    result = {"crossed": False, "bars_ago": -1, "level": None, "count": 0, "dates": []}
+
+    lb = min(lookback, len(fast_ma) - 1)
+    for i in range(1, lb + 1):
+        ic, ip = -i, -i - 1
+        if ip < -len(fast_ma):
+            break
+        fc, fp = fast_ma.iloc[ic], fast_ma.iloc[ip]
+        sc, sp = slow_ma.iloc[ic], slow_ma.iloc[ip]
+        if (not np.isnan(fc) and not np.isnan(fp) and
+                not np.isnan(sc) and not np.isnan(sp)):
+            if fc > sc and fp <= sp:
+                result["count"] += 1
+                result["dates"].append(i)
+                if not result["crossed"]:
+                    result["crossed"] = True
+                    result["bars_ago"] = i
+                    result["level"] = float(sc)
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MODEL 1: STOCK FILTER
-# Lightweight check — returns filter info or None if stock is filtered out.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def check_filter(df: pd.DataFrame,
@@ -91,40 +146,20 @@ def check_filter(df: pd.DataFrame,
     close = df["close"]
     volume = df["volume"]
 
-    # ── Compute MAs ──────────────────────────────────────────────────────────
     fast_ma = get_ma(fast_ma_type, close, fast_ma_len, volume)
     slow_ma = get_ma(slow_ma_type, close, slow_ma_len, volume)
 
     if np.isnan(fast_ma.iloc[-1]) or np.isnan(slow_ma.iloc[-1]):
         return None
 
-    # ── Check for recent crossover ──────────────────────────────────────────
-    ma_crossed_above = False
-    crossover_level = None
-    crossover_bars_ago = -1
-
-    lb = min(crossover_lookback, len(fast_ma) - 1)
-    for i in range(1, lb + 1):
-        ic, ip = -i, -i - 1
-        if ip < -len(fast_ma):
-            break
-        fc, fp = fast_ma.iloc[ic], fast_ma.iloc[ip]
-        sc, sp = slow_ma.iloc[ic], slow_ma.iloc[ip]
-        if (not np.isnan(fc) and not np.isnan(fp) and
-                not np.isnan(sc) and not np.isnan(sp)):
-            if fc > sc and fp <= sp:
-                ma_crossed_above = True
-                crossover_level = float(sc)
-                crossover_bars_ago = i
-                break
-
-    if not ma_crossed_above:
+    xo = detect_crossover(fast_ma, slow_ma, crossover_lookback)
+    if not xo["crossed"]:
         return None  # No recent crossover → filtered out
 
     return {
-        "ma_crossed_above": ma_crossed_above,
-        "crossover_level": crossover_level,
-        "crossover_bars_ago": crossover_bars_ago,
+        "ma_crossed_above": True,
+        "crossover_level": xo["level"],
+        "crossover_bars_ago": xo["bars_ago"],
         "ma_bullish": bool(fast_ma.iloc[-1] > slow_ma.iloc[-1]),
         "close": float(close.iloc[-1]),
         "fast_ma": float(fast_ma.iloc[-1]),
@@ -134,7 +169,6 @@ def check_filter(df: pd.DataFrame,
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL 2: BULLISH / BEARISH
-# Direction classification based on MA crossover direction.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_direction(filter_result: Optional[dict]) -> Optional[str]:
@@ -153,29 +187,22 @@ def get_direction(filter_result: Optional[dict]) -> Optional[str]:
     return "Bull" if filter_result["ma_bullish"] else "Bear"
 
 
-def compute_scores(df: pd.DataFrame, timeframe: str = "D",
-                   index_df: Optional[pd.DataFrame] = None,
-                   settings: Optional[dict] = None) -> Optional[dict]:
+# ══════════════════════════════════════════════════════════════════════════════
+# INDICATOR COMPUTATION (shared by scoring pipeline)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_indicators(df: pd.DataFrame, settings: dict) -> dict:
     """
-    Compute the 10-category score for a stock.
+    Compute all core technical indicators for a stock.
 
-    Args:
-        df: OHLCV DataFrame with columns [open, high, low, close, volume]
-        timeframe: Analysis timeframe ('D' daily, 'W' weekly, 'M' monthly).
-        index_df: Index DataFrame for relative strength comparison.
-        settings: Dict with scoring parameters (see DEFAULT_SETTINGS in app.py).
-                  Falls back to defaults if not provided.
-
-    Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
-    Max total = 100 pts, with Trend weighted at 15 pts (matches Pine Script).
-
-    Returns:
-        Dictionary with all scores and metadata, or None if insufficient data.
+    Returns a dict of Series and scalar values used downstream by scoring
+    functions and the main compute_scores orchestrator.
     """
-    if settings is None:
-        settings = {}
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+    volume = df["volume"]
 
-    # Extract parameters from settings with defaults
     fast_ma_type = settings.get("fast_ma_type", "HMA")
     fast_ma_len = settings.get("fast_ma_len", 40)
     slow_ma_type = settings.get("slow_ma_type", "EMA")
@@ -183,34 +210,8 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     rsi_len = settings.get("rsi_len", 14)
     vol_ma_len = settings.get("vol_ma_len", 20)
     atr_len = settings.get("atr_len", 14)
-    rs_length = settings.get("rs_length", 14)
     adx_len = settings.get("adx_len", 14)
-    adx_threshold = settings.get("adx_threshold", 20.0)
-    chop_len = settings.get("chop_len", 14)
-    chop_threshold = settings.get("chop_threshold", 61.8)
-    slope_ma_type = settings.get("slope_ma_type", "EMA")
-    slope_ma_len = settings.get("slope_ma_len", 50)
-    slope_lookback = settings.get("slope_lookback", 10)
-    flat_threshold = settings.get("flat_threshold", 0.5)
-    sc_pivot_len = settings.get("sc_pivot_len", 3)
-    sc_bands_mult = settings.get("sc_bands_mult", 0.6)
-    vp_lookback = settings.get("vp_lookback", 200)
-    vp_rows = settings.get("vp_rows", 30)
-    vp_width = settings.get("vp_width", 40)
-    crossover_lookback = settings.get("crossover_lookback", 20)
-    # Minimum required bars: enough for the slowest MA + indicator context.
-    # With default settings (fast_ma=44, slow_ma=50, vp=11), ~100 bars is enough.
-    n = len(df)
-    min_required = {"D": 100, "W": 50, "M": 25}.get(timeframe, 100)
-    if n < min_required:
-        return None  # Not enough data
 
-    close = df["close"]
-    high = df["high"]
-    low = df["low"]
-    volume = df["volume"]
-
-    # ── Core Indicators ──────────────────────────────────────────────────────
     fast_ma = get_ma(fast_ma_type, close, fast_ma_len, volume)
     slow_ma = get_ma(slow_ma_type, close, slow_ma_len, volume)
     rsi_val = rsi(close, rsi_len)
@@ -222,54 +223,132 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     atr_val = atr(high, low, close, atr_len)
     adx_val = adx(high, low, close, adx_len)
 
-    # ── Weekly HMA(44) x EMA(50) Higher-Timeframe Crossover ─────────────────
-    # Matches the TradingView condition:
-    #   wma((2 * wma(close, 22)) - wma(close, 44), 6)  crossed_above  ema(close, 50)
-    # hull_ma(close, 44) computes exactly that WMA-of-WMA formula, so we
-    # evaluate it on weekly bars regardless of the analysis timeframe.
-    weekly_hma_bull = False
-    weekly_hma_cross = False
-    weekly_hma_cross_bars_ago = -1
-    weekly_df = to_weekly(df)
-    if weekly_df is not None and len(weekly_df) >= 2:
-        w_close = weekly_df["close"]
-        w_hma = hull_ma(w_close, 44)
-        w_ema = ema(w_close, 50)
-        if not np.isnan(w_hma.iloc[-1]) and not np.isnan(w_ema.iloc[-1]):
-            weekly_hma_bull = w_hma.iloc[-1] > w_ema.iloc[-1]
-        look = min(12, len(w_hma) - 1)  # up to 12 weekly bars (~3 months)
-        for i in range(1, look + 1):
-            ic, ip = -i, -i - 1
-            if ip < -len(w_hma):
-                break
-            hc, hp = w_hma.iloc[ic], w_hma.iloc[ip]
-            ec, ep = w_ema.iloc[ic], w_ema.iloc[ip]
-            if not (np.isnan(hc) or np.isnan(hp) or np.isnan(ec) or np.isnan(ep)):
-                if hc > ec and hp <= ep:
-                    weekly_hma_cross = True
-                    weekly_hma_cross_bars_ago = i
-                    break
+    return {
+        "close": close, "high": high, "low": low, "volume": volume,
+        "fast_ma": fast_ma, "slow_ma": slow_ma,
+        "rsi_val": rsi_val, "macd_hist": macd_hist,
+        "stoch_k": stoch_k, "obv_val": obv_val, "obv_ma": obv_ma,
+        "vol_ma": vol_ma, "atr_val": atr_val, "adx_val": adx_val,
+    }
+
+
+def _last_values(ind: dict, df: pd.DataFrame, settings: dict) -> dict:
+    """
+    Extract the last-bar values from computed indicators into a flat dict
+    (the ``curr`` dict used by all scoring functions).
+    """
+    close = ind["close"]
+    n = len(close)
 
     # Price changes (adaptive to data frequency)
-    if n >= 100:  # Daily data (~250 bars/year)
+    if n >= 100:       # Daily data (~250 bars/year)
         pc1m_period, pc3m_period = 21, 63
-    elif n >= 40:  # Weekly data (~52 bars/year)
+    elif n >= 40:      # Weekly data (~52 bars/year)
         pc1m_period, pc3m_period = 4, 13
-    else:  # Monthly data (~12 bars/year)
+    else:              # Monthly data (~12 bars/year)
         pc1m_period, pc3m_period = 1, 3
-    pc1m = price_change(close, pc1m_period)
-    pc3m = price_change(close, pc3m_period)
 
-    # ── Sideways Filter (matches Pine Script exactly) ────────────────────────
-    is_sideways_adx = adx_val.iloc[-1] < adx_threshold if not np.isnan(adx_val.iloc[-1]) else False
+    return {
+        "close": close.iloc[-1],
+        "fast_ma": ind["fast_ma"].iloc[-1],
+        "slow_ma": ind["slow_ma"].iloc[-1],
+        "rsi": ind["rsi_val"].iloc[-1],
+        "macd_hist": ind["macd_hist"].iloc[-1],
+        "macd_hist_prev": ind["macd_hist"].iloc[-2] if len(ind["macd_hist"]) > 1 else np.nan,
+        "stoch_k": ind["stoch_k"].iloc[-1],
+        "obv": ind["obv_val"].iloc[-1],
+        "obv_prev": ind["obv_val"].iloc[-2] if len(ind["obv_val"]) > 1 else np.nan,
+        "obv_ma": ind["obv_ma"].iloc[-1],
+        "volume": ind["volume"].iloc[-1],
+        "vol_ma": ind["vol_ma"].iloc[-1],
+        "atr": ind["atr_val"].iloc[-1],
+        "adx": ind["adx_val"].iloc[-1],
+        "pc1m": price_change(close, pc1m_period).iloc[-1],
+        "pc3m": price_change(close, pc3m_period).iloc[-1],
+        "hh50": highest(ind["high"], 50).iloc[-1],
+        "ll50": lowest(ind["low"], 50).iloc[-1],
+    }
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEKLY HMA HIGHER-TIMEFRAME CHECK
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_weekly_hma(df: pd.DataFrame) -> dict:
+    """
+    Evaluate the weekly HMA(44) x EMA(50) higher-timeframe crossover.
+
+    Matches the TradingView condition:
+      hull_ma(close, 44) crossed_above ema(close, 50) on weekly bars.
+
+    Returns:
+        {"bull": bool, "cross": bool, "cross_bars_ago": int}
+    """
+    result = {"bull": False, "cross": False, "cross_bars_ago": -1}
+
+    weekly_df = to_weekly(df)
+    if weekly_df is None or len(weekly_df) < 2:
+        return result
+
+    w_close = weekly_df["close"]
+    w_hma = hull_ma(w_close, 44)
+    w_ema = ema(w_close, 50)
+
+    if not np.isnan(w_hma.iloc[-1]) and not np.isnan(w_ema.iloc[-1]):
+        result["bull"] = w_hma.iloc[-1] > w_ema.iloc[-1]
+
+    xo = detect_crossover(w_hma, w_ema, lookback=12)
+    if xo["crossed"]:
+        result["cross"] = True
+        result["cross_bars_ago"] = xo["bars_ago"]
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEWAYS FILTER (ADX + Cholangirong + Slope)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
+                      settings: dict) -> dict:
+    """
+    Compute sideways / choppy market detection.
+
+    Returns:
+        {"is_sideways": bool, "reasons": list[str]}
+    """
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+    volume = df["volume"]
+
+    adx_threshold = settings.get("adx_threshold", 20.0)
+    chop_len = settings.get("chop_len", 14)
+    chop_threshold = settings.get("chop_threshold", 61.8)
+    slope_ma_type = settings.get("slope_ma_type", "EMA")
+    slope_ma_len = settings.get("slope_ma_len", 50)
+    slope_lookback = settings.get("slope_lookback", 10)
+    flat_threshold = settings.get("flat_threshold", 0.5)
+
+    reasons = []
+
+    # ADX filter
+    adx_last = adx_val.iloc[-1]
+    is_sideways_adx = adx_last < adx_threshold if not np.isnan(adx_last) else False
+    if is_sideways_adx:
+        reasons.append("ADX")
+
+    # Cholangirong filter
     atr1 = atr(high, low, close, 1)
     chop_sum = atr1.rolling(chop_len).sum()
     chop_range = high.rolling(chop_len).max() - low.rolling(chop_len).min()
     chop_safe_range = chop_range.replace(0, np.nan)
     chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(chop_len)
     is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
+    if is_sideways_chop:
+        reasons.append("Chop")
 
+    # Slope filter
     selected_ma = get_ma(slope_ma_type, close, slope_ma_len, volume)
     if len(selected_ma) > slope_lookback and selected_ma.iloc[-1 - slope_lookback] != 0:
         ma_slope_pct = abs(
@@ -279,317 +358,222 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     else:
         ma_slope_pct = 0.0
     is_sideways_slope = ma_slope_pct < flat_threshold
+    if is_sideways_slope:
+        reasons.append("Slope")
 
-    is_sideways = is_sideways_adx or is_sideways_chop or is_sideways_slope
+    return {"is_sideways": is_sideways_adx or is_sideways_chop or is_sideways_slope,
+            "reasons": reasons}
 
-    # Current values (last bar)
-    curr = {
-        "close": close.iloc[-1],
-        "fast_ma": fast_ma.iloc[-1],
-        "slow_ma": slow_ma.iloc[-1],
-        "rsi": rsi_val.iloc[-1],
-        "macd_hist": macd_hist.iloc[-1],
-        "macd_hist_prev": macd_hist.iloc[-2] if len(macd_hist) > 1 else np.nan,
-        "stoch_k": stoch_k.iloc[-1],
-        "obv": obv_val.iloc[-1],
-        "obv_prev": obv_val.iloc[-2] if len(obv_val) > 1 else np.nan,
-        "obv_ma": obv_ma.iloc[-1],
-        "volume": volume.iloc[-1],
-        "vol_ma": vol_ma.iloc[-1],
-        "atr": atr_val.iloc[-1],
-        "adx": adx_val.iloc[-1],
-        "pc1m": pc1m.iloc[-1],
-        "pc3m": pc3m.iloc[-1],
-        "hh50": highest(high, 50).iloc[-1],
-        "ll50": lowest(low, 50).iloc[-1],
-        "is_sideways": is_sideways,
-    }
 
-    # ── Volume Profile POC ────────────────────────────────────────────────
-    vp_bars = max(int(vp_lookback), 10)
-    vp_bars = min(vp_bars, len(df))  # never exceed available bars
-    vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
-    curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+# ══════════════════════════════════════════════════════════════════════════════
+# PER-CATEGORY SCORING FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
 
-    curr["above_poc"] = curr["close"] >= curr["vp_poc"]
-    curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
-    curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
-
-    # Look for crossovers in last N bars (configurable)
-    ma_crossed_above = False
-    crossover_bars_ago = -1
-    crossover_count = 0
-    crossover_dates = []
-    crossover_level = None
-
-    lookback = min(crossover_lookback, len(fast_ma) - 1)
-    for i in range(1, lookback + 1):
-        idx_curr = -i
-        idx_prev = -i - 1
-        if idx_prev < -len(fast_ma):
-            break
-        fast_curr = fast_ma.iloc[idx_curr]
-        fast_prev = fast_ma.iloc[idx_prev]
-        slow_curr = slow_ma.iloc[idx_curr]
-        slow_prev = slow_ma.iloc[idx_prev]
-        if (not np.isnan(fast_curr) and not np.isnan(fast_prev) and
-            not np.isnan(slow_curr) and not np.isnan(slow_prev)):
-            if fast_curr > slow_curr and fast_prev <= slow_prev:
-                crossover_count += 1
-                crossover_dates.append(i)
-                if not ma_crossed_above:
-                    ma_crossed_above = True
-                    crossover_bars_ago = i
-                    crossover_level = float(slow_curr)
-
-    curr["ma_crossed_above"] = ma_crossed_above
-    curr["crossover_bars_ago"] = crossover_bars_ago if ma_crossed_above else -1
-    curr["crossover_count"] = crossover_count
-    curr["crossover_dates"] = crossover_dates
-    curr["crossover_level"] = crossover_level
-    curr["close_above_crossover"] = (
-        crossover_level is not None and curr["close"] > crossover_level
-    )
-
-    # ── Category 1: TREND (max 15 pts) ──────────────────────────────────────
-    # Pine Script: close>slow+fast(10), fast>slow(5), ADX>25(2), cap=15
-    # Scanner adds above_poc, close_above_both_ma, crossover_freshness.
-    # Weights adjusted so max = 15 (scanner total max = 100).
-    trend_score = 0.0
+def _score_trend(curr: dict) -> float:
+    """Category 1: TREND (max 15 pts)."""
+    s = 0.0
     if curr["ma_bullish"]:
-        trend_score += 4.0  # Pine: fast>slow = 5 (part of 10)
+        s += 4.0
     if curr["above_poc"]:
-        trend_score += 2.5  # Scanner extra: above Volume Profile POC
+        s += 2.5
     if curr["close_above_both_ma"]:
-        trend_score += 2.5  # Pine: close>slow+fast = 10 (combined with ma_bullish)
+        s += 2.5
     elif curr["close"] > curr["slow_ma"]:
-        trend_score += 1.0
+        s += 1.0
     if curr["ma_crossed_above"]:
         bars = curr["crossover_bars_ago"]
         if bars <= 1:
-            trend_score += 3.0  # Fresh crossover bonus
+            s += 3.0
         elif bars <= 2:
-            trend_score += 2.0
+            s += 2.0
         elif bars <= 3:
-            trend_score += 1.0
+            s += 1.0
         elif bars <= 4:
-            trend_score += 0.5
+            s += 0.5
         else:
-            trend_score += 0.25
+            s += 0.25
     if not np.isnan(curr["adx"]) and curr["adx"] > 25:
-        trend_score += 2.0  # Pine: ADX>25 = 2
-    trend_score = min(trend_score, 15.0)
+        s += 2.0
+    return min(s, 15.0)
 
-    # ── Category 2: MOMENTUM (max 15 pts) ───────────────────────────────────
-    mom_score = 0.0
+
+def _score_momentum(curr: dict) -> float:
+    """Category 2: MOMENTUM (max 15 pts)."""
+    s = 0.0
     if not np.isnan(curr["pc1m"]):
         if curr["pc1m"] > 0:
-            mom_score += min(7.0, 7.0 * (curr["pc1m"] / 5.0))
+            s += min(7.0, 7.0 * (curr["pc1m"] / 5.0))
         else:
-            mom_score += max(-3.0, min(0.0, 7.0 * (curr["pc1m"] / 10.0)))
+            s += max(-3.0, min(0.0, 7.0 * (curr["pc1m"] / 10.0)))
     if not np.isnan(curr["pc3m"]):
         if curr["pc3m"] > 0:
-            mom_score += min(8.0, 8.0 * (curr["pc3m"] / 10.0))
+            s += min(8.0, 8.0 * (curr["pc3m"] / 10.0))
         else:
-            mom_score += max(-4.0, min(0.0, 8.0 * (curr["pc3m"] / 20.0)))
-    mom_score = max(0.0, min(mom_score, 15.0))
+            s += max(-4.0, min(0.0, 8.0 * (curr["pc3m"] / 20.0)))
+    return max(0.0, min(s, 15.0))
 
-    # ── Category 3: RSI (max 8 pts) ─────────────────────────────────────────
-    rsi_score = 0.0
-    if not np.isnan(curr["rsi"]):
-        if 40 <= curr["rsi"] <= 70:
-            rsi_score = 8.0 * (1.0 - abs(curr["rsi"] - 55.0) / 15.0)
-        else:
-            rsi_score = 0.0
-    rsi_score = max(0.0, min(rsi_score, 8.0))
 
-    # ── Category 4: MACD (max 7 pts) ────────────────────────────────────────
-    macd_score = 0.0
+def _score_rsi(curr: dict) -> float:
+    """Category 3: RSI (max 8 pts)."""
+    if np.isnan(curr["rsi"]):
+        return 0.0
+    if 40 <= curr["rsi"] <= 70:
+        return max(0.0, min(8.0 * (1.0 - abs(curr["rsi"] - 55.0) / 15.0), 8.0))
+    return 0.0
+
+
+def _score_macd(curr: dict) -> float:
+    """Category 4: MACD (max 7 pts)."""
+    s = 0.0
     if not np.isnan(curr["macd_hist"]):
         if curr["macd_hist"] > 0:
-            macd_score += 4.0
+            s += 4.0
         if not np.isnan(curr["macd_hist_prev"]) and curr["macd_hist"] > curr["macd_hist_prev"]:
-            macd_score += 3.0
-    macd_score = min(macd_score, 7.0)
+            s += 3.0
+    return min(s, 7.0)
 
-    # ── Category 5: STOCHASTIC (max 5 pts) ──────────────────────────────────
-    stoch_score = 0.0
-    if not np.isnan(curr["stoch_k"]):
-        if 20 < curr["stoch_k"] < 80:
-            stoch_score = 5.0
-    stoch_score = min(stoch_score, 5.0)
 
-    # ── Category 6: OBV (max 5 pts) ─────────────────────────────────────────
-    obv_score = 0.0
+def _score_stochastic(curr: dict) -> float:
+    """Category 5: STOCHASTIC (max 5 pts)."""
+    if np.isnan(curr["stoch_k"]):
+        return 0.0
+    return 5.0 if 20 < curr["stoch_k"] < 80 else 0.0
+
+
+def _score_obv(curr: dict) -> float:
+    """Category 6: OBV (max 5 pts)."""
+    s = 0.0
     if not np.isnan(curr["obv"]) and not np.isnan(curr["obv_ma"]):
         if curr["obv"] > curr["obv_ma"]:
-            obv_score += 3.0
+            s += 3.0
         if not np.isnan(curr["obv_prev"]) and curr["obv"] > curr["obv_prev"]:
-            obv_score += 2.0
-    obv_score = min(obv_score, 5.0)
+            s += 2.0
+    return min(s, 5.0)
 
-    # ── Category 7: VOLUME (max 10 pts) ─────────────────────────────────────
-    vol_score = 0.0
+
+def _score_volume(curr: dict) -> float:
+    """Category 7: VOLUME (max 10 pts)."""
+    s = 0.0
     if not np.isnan(curr["vol_ma"]) and curr["vol_ma"] > 0:
         if curr["volume"] > curr["vol_ma"]:
-            vol_score += 5.0
+            s += 5.0
         if curr["volume"] > curr["vol_ma"] * 1.2:
-            vol_score += 3.0
-        vol_t = sma(volume, 50).iloc[-1]
-        if not np.isnan(vol_t) and curr["volume"] > vol_t:
-            vol_score += 2.0
-    vol_score = min(vol_score, 10.0)
+            s += 3.0
+        vol_t = curr.get("vol_t_50")
+        if vol_t is not None and not np.isnan(vol_t) and curr["volume"] > vol_t:
+            s += 2.0
+    return min(s, 10.0)
 
-    # ── Category 8: RELATIVE STRENGTH (max 10 pts) ──────────────────────────
-    rs_score = 0.0
+
+def _score_relative_strength(curr: dict, close: pd.Series,
+                             index_df: Optional[pd.DataFrame],
+                             rs_length: int) -> float:
+    """Category 8: RELATIVE STRENGTH (max 10 pts)."""
+    s = 0.0
     if index_df is not None and len(index_df) > rs_length + 5:
         idx_close = index_df["close"]
         idx_rs = (idx_close.iloc[-1] / idx_close.iloc[-1 - rs_length] - 1) * 100
         stock_rs = (close.iloc[-1] / close.iloc[-1 - rs_length] - 1) * 100
         if stock_rs > idx_rs:
-            rs_score += 5.0
+            s += 5.0
         if stock_rs > 0:
-            rs_score += 5.0
+            s += 5.0
     else:
         if not np.isnan(curr["pc1m"]) and curr["pc1m"] > 0:
-            rs_score += 5.0
+            s += 5.0
         if not np.isnan(curr["pc3m"]) and curr["pc3m"] > 0:
-            rs_score += 5.0
-    rs_score = min(rs_score, 10.0)
+            s += 5.0
+    return min(s, 10.0)
 
-    # ── Category 9: VOLATILITY (max 5 pts) ──────────────────────────────────
+
+def _score_volatility(curr: dict) -> tuple[float, float, str]:
+    """Category 9: VOLATILITY (max 5 pts).
+
+    Returns:
+        (score, atr_pct, volatility_status)
+    """
     atr_pct = (curr["atr"] / curr["close"]) * 100 if curr["close"] > 0 else 0
     volat_stat = "High" if atr_pct > 3 else ("Low" if atr_pct < 1 else "Medium")
     volat_score = 5.0 if volat_stat in ("Medium", "Low") else 0.0
+    return volat_score, atr_pct, volat_stat
 
-    # ── Category 10: FUNDAMENTALS (max 20 pts) ──────────────────────────────
+
+def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
+    """Category 10: FUNDAMENTALS (max 20 pts).
+
+    Returns:
+        (score, detail_dict)
+    """
     fund_score = 0.0
     fund_detail = {}
 
     fundamentals = getattr(df, '_fundamentals', None)
-    if fundamentals:
-        calc_pe = fundamentals.get("pe_ratio")
-        eps_growth = fundamentals.get("eps_growth")
-        rev_growth = fundamentals.get("rev_growth")
-        roe = fundamentals.get("roe")
+    if not fundamentals:
+        return 0.0, {"pe": "N/A", "eps_growth": "N/A", "rev_growth": "N/A", "roe": "N/A"}
 
-        if calc_pe is not None and calc_pe > 0:
-            if calc_pe < 15:
-                fund_score += 5.0
-                fund_detail["pe"] = "Strong"
-            elif calc_pe < 25:
-                fund_score += 3.0
-                fund_detail["pe"] = "Fair"
-            else:
-                fund_detail["pe"] = "Expensive"
-        else:
-            fund_detail["pe"] = "N/A"
+    calc_pe = fundamentals.get("pe_ratio")
+    eps_growth = fundamentals.get("eps_growth")
+    rev_growth = fundamentals.get("rev_growth")
+    roe = fundamentals.get("roe")
 
-        if eps_growth is not None:
-            if eps_growth > 20:
-                fund_score += 5.0
-                fund_detail["eps_growth"] = "Strong"
-            elif eps_growth > 0:
-                fund_score += 3.0
-                fund_detail["eps_growth"] = "Positive"
-            else:
-                fund_detail["eps_growth"] = "Negative"
+    # P/E
+    if calc_pe is not None and calc_pe > 0:
+        if calc_pe < 15:
+            fund_score += 5.0
+            fund_detail["pe"] = "Strong"
+        elif calc_pe < 25:
+            fund_score += 3.0
+            fund_detail["pe"] = "Fair"
         else:
-            fund_detail["eps_growth"] = "N/A"
-
-        if rev_growth is not None:
-            if rev_growth > 15:
-                fund_score += 5.0
-                fund_detail["rev_growth"] = "Strong"
-            elif rev_growth > 0:
-                fund_score += 3.0
-                fund_detail["rev_growth"] = "Positive"
-            else:
-                fund_detail["rev_growth"] = "Negative"
-        else:
-            fund_detail["rev_growth"] = "N/A"
-
-        if roe is not None:
-            if roe > 20:
-                fund_score += 5.0
-                fund_detail["roe"] = "Strong"
-            elif roe > 10:
-                fund_score += 3.0
-                fund_detail["roe"] = "Fair"
-            else:
-                fund_detail["roe"] = "Weak"
-        else:
-            fund_detail["roe"] = "N/A"
+            fund_detail["pe"] = "Expensive"
     else:
-        fund_detail = {"pe": "N/A", "eps_growth": "N/A", "rev_growth": "N/A", "roe": "N/A"}
+        fund_detail["pe"] = "N/A"
 
-    fund_score = min(fund_score, 20.0)
+    # EPS Growth
+    if eps_growth is not None:
+        if eps_growth > 20:
+            fund_score += 5.0
+            fund_detail["eps_growth"] = "Strong"
+        elif eps_growth > 0:
+            fund_score += 3.0
+            fund_detail["eps_growth"] = "Positive"
+        else:
+            fund_detail["eps_growth"] = "Negative"
+    else:
+        fund_detail["eps_growth"] = "N/A"
 
-    # ── TOTAL SCORE ─────────────────────────────────────────────────────────
-    total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
-             + obv_score + vol_score + rs_score + volat_score + fund_score)
-    total = max(0.0, min(total, 100.0))
+    # Revenue Growth
+    if rev_growth is not None:
+        if rev_growth > 15:
+            fund_score += 5.0
+            fund_detail["rev_growth"] = "Strong"
+        elif rev_growth > 0:
+            fund_score += 3.0
+            fund_detail["rev_growth"] = "Positive"
+        else:
+            fund_detail["rev_growth"] = "Negative"
+    else:
+        fund_detail["rev_growth"] = "N/A"
 
-    # Build result
-    result = {
-        "total": round(total, 1),
-        "trend":     round(trend_score, 1),
-        "momentum":  round(mom_score, 1),
-        "rsi":       round(rsi_score, 1),
-        "macd":      round(macd_score, 1),
-        "stoch":     round(stoch_score, 1),
-        "obv":       round(obv_score, 1),
-        "volume":    round(vol_score, 1),
-        "rel_str":   round(rs_score, 1),
-        "volatility": round(volat_score, 1),
-        "fundamentals": round(fund_score, 1),
-        # Key signals (priority indicators)
-        "ma_bullish": curr["ma_bullish"],
-        "close_above_both_ma": curr["close_above_both_ma"],
-        "ma_crossed_above": curr["ma_crossed_above"],
-        "crossover_bars_ago": curr["crossover_bars_ago"],
-        "crossover_count": curr["crossover_count"],
-        "crossover_dates": curr["crossover_dates"],
-        "above_poc": curr["above_poc"],
-        "vp_poc": round(curr["vp_poc"], 2),
-        # Weekly HMA(44) x EMA(50) higher-timeframe condition
-        "weekly_hma_bull": weekly_hma_bull,
-        "weekly_hma_cross": weekly_hma_cross,
-        "weekly_hma_cross_bars_ago": weekly_hma_cross_bars_ago,
-        # Sideways filter info
-        "is_sideways": is_sideways,
-        "sideways_reasons": (
-            (["ADX"] if is_sideways_adx else [])
-            + (["Chop"] if is_sideways_chop else [])
-            + (["Slope"] if is_sideways_slope else [])
-        ),
-        # Metadata
-        "close": round(curr["close"], 2),
-        "rsi_val": round(curr["rsi"], 1) if not np.isnan(curr["rsi"]) else None,
-        "adx_val": round(curr["adx"], 1) if not np.isnan(curr["adx"]) else None,
-        "pc1m": round(curr["pc1m"], 2) if not np.isnan(curr["pc1m"]) else None,
-        "pc3m": round(curr["pc3m"], 2) if not np.isnan(curr["pc3m"]) else None,
-        "atr_pct": round(atr_pct, 2),
-        "volat_stat": volat_stat,
-        "trend_dir": ("Bull" if curr["close"] > curr["slow_ma"] else "Bear"),
-        "trend_color": "bull" if curr["close"] > curr["slow_ma"] else "bear",
-        # Fundamentals detail
-        "fund_detail": fund_detail,
-        # Combined rating based on key signals + score
-        "combined_rating": _get_combined_rating(total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]),
-        # Swing-trading ENTRY signal (per strategy):
-        "entry_signal": bool(
-            curr["ma_crossed_above"]
-            and curr["close_above_crossover"]
-            and curr["above_poc"]
-            and total >= 50
-        ),
-        # Weekly HMA(44) x EMA(50) buy trigger (TradingView condition).
-        "weekly_entry_signal": bool(weekly_hma_cross),
-    }
+    # ROE
+    if roe is not None:
+        if roe > 20:
+            fund_score += 5.0
+            fund_detail["roe"] = "Strong"
+        elif roe > 10:
+            fund_score += 3.0
+            fund_detail["roe"] = "Fair"
+        else:
+            fund_detail["roe"] = "Weak"
+    else:
+        fund_detail["roe"] = "N/A"
 
-    return result
+    return min(fund_score, 20.0), fund_detail
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL 3: COMBINED RATING
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _get_combined_rating(total_score: float, ma_bullish: bool,
                          above_poc: bool, close_above_both_ma: bool = False) -> str:
@@ -641,3 +625,149 @@ def _get_combined_rating(total_score: float, ma_bullish: bool,
             return "MODERATE"
         else:
             return "POOR"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL 3: SCORE ORCHESTRATOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_scores(df: pd.DataFrame, timeframe: str = "D",
+                   index_df: Optional[pd.DataFrame] = None,
+                   settings: Optional[dict] = None) -> Optional[dict]:
+    """
+    Compute the 10-category score for a stock.
+
+    Args:
+        df: OHLCV DataFrame with columns [open, high, low, close, volume]
+        timeframe: Analysis timeframe ('D' daily, 'W' weekly, 'M' monthly).
+        index_df: Index DataFrame for relative strength comparison.
+        settings: Dict with scoring parameters (see DEFAULT_SETTINGS in app.py).
+                  Falls back to defaults if not provided.
+
+    Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
+    Max total = 100 pts, with Trend weighted at 15 pts (matches Pine Script).
+
+    Returns:
+        Dictionary with all scores and metadata, or None if insufficient data.
+    """
+    if settings is None:
+        settings = {}
+
+    n = len(df)
+    min_required = {"D": 100, "W": 50, "M": 25}.get(timeframe, 100)
+    if n < min_required:
+        return None  # Not enough data
+
+    # ── Compute all indicators ─────────────────────────────────────────────
+    ind = _compute_indicators(df, settings)
+    curr = _last_values(ind, df, settings)
+
+    # ── Volume Profile POC ─────────────────────────────────────────────────
+    close = ind["close"]
+    high = ind["high"]
+    low = ind["low"]
+    volume = ind["volume"]
+    vp_lookback = settings.get("vp_lookback", 200)
+    vp_bars = max(int(vp_lookback), 10)
+    vp_bars = min(vp_bars, len(df))
+    vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
+    curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+    curr["above_poc"] = curr["close"] >= curr["vp_poc"]
+    curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
+    curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
+
+    # ── 50-bar volume MA (used by _score_volume) ──────────────────────────
+    vol_t_50 = sma(volume, 50).iloc[-1]
+    curr["vol_t_50"] = vol_t_50
+
+    # ── Crossover detection (shared helper) ────────────────────────────────
+    crossover_lookback = settings.get("crossover_lookback", 20)
+    xo = detect_crossover(ind["fast_ma"], ind["slow_ma"], crossover_lookback)
+    curr["ma_crossed_above"] = xo["crossed"]
+    curr["crossover_bars_ago"] = xo["bars_ago"] if xo["crossed"] else -1
+    curr["crossover_count"] = xo["count"]
+    curr["crossover_dates"] = xo["dates"]
+    curr["crossover_level"] = xo["level"]
+    curr["close_above_crossover"] = (
+        xo["level"] is not None and curr["close"] > xo["level"]
+    )
+
+    # ── Weekly HMA higher-timeframe check ──────────────────────────────────
+    weekly = _compute_weekly_hma(df)
+
+    # ── Sideways filter ────────────────────────────────────────────────────
+    sideways = _compute_sideways(df, ind["adx_val"], settings)
+    curr["is_sideways"] = sideways["is_sideways"]
+
+    # ── Per-category scoring ───────────────────────────────────────────────
+    trend_score = _score_trend(curr)
+    mom_score = _score_momentum(curr)
+    rsi_score = _score_rsi(curr)
+    macd_score = _score_macd(curr)
+    stoch_score = _score_stochastic(curr)
+    obv_score = _score_obv(curr)
+    vol_score = _score_volume(curr)
+    rs_score = _score_relative_strength(curr, close, index_df, settings.get("rs_length", 14))
+    volat_score, atr_pct, volat_stat = _score_volatility(curr)
+    fund_score, fund_detail = _score_fundamentals(df)
+
+    # ── Total ──────────────────────────────────────────────────────────────
+    total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
+             + obv_score + vol_score + rs_score + volat_score + fund_score)
+    total = max(0.0, min(total, 100.0))
+
+    # ── Build result ───────────────────────────────────────────────────────
+    return {
+        "total": round(total, 1),
+        "trend":     round(trend_score, 1),
+        "momentum":  round(mom_score, 1),
+        "rsi":       round(rsi_score, 1),
+        "macd":      round(macd_score, 1),
+        "stoch":     round(stoch_score, 1),
+        "obv":       round(obv_score, 1),
+        "volume":    round(vol_score, 1),
+        "rel_str":   round(rs_score, 1),
+        "volatility": round(volat_score, 1),
+        "fundamentals": round(fund_score, 1),
+        # Key signals
+        "ma_bullish": curr["ma_bullish"],
+        "close_above_both_ma": curr["close_above_both_ma"],
+        "ma_crossed_above": curr["ma_crossed_above"],
+        "crossover_bars_ago": curr["crossover_bars_ago"],
+        "crossover_count": curr["crossover_count"],
+        "crossover_dates": curr["crossover_dates"],
+        "above_poc": curr["above_poc"],
+        "vp_poc": round(curr["vp_poc"], 2),
+        # Weekly HMA(44) x EMA(50) higher-timeframe condition
+        "weekly_hma_bull": weekly["bull"],
+        "weekly_hma_cross": weekly["cross"],
+        "weekly_hma_cross_bars_ago": weekly["cross_bars_ago"],
+        # Sideways filter info
+        "is_sideways": sideways["is_sideways"],
+        "sideways_reasons": sideways["reasons"],
+        # Metadata
+        "close": round(curr["close"], 2),
+        "rsi_val": round(curr["rsi"], 1) if not np.isnan(curr["rsi"]) else None,
+        "adx_val": round(curr["adx"], 1) if not np.isnan(curr["adx"]) else None,
+        "pc1m": round(curr["pc1m"], 2) if not np.isnan(curr["pc1m"]) else None,
+        "pc3m": round(curr["pc3m"], 2) if not np.isnan(curr["pc3m"]) else None,
+        "atr_pct": round(atr_pct, 2),
+        "volat_stat": volat_stat,
+        "trend_dir": ("Bull" if curr["close"] > curr["slow_ma"] else "Bear"),
+        "trend_color": "bull" if curr["close"] > curr["slow_ma"] else "bear",
+        # Fundamentals detail
+        "fund_detail": fund_detail,
+        # Combined rating
+        "combined_rating": _get_combined_rating(
+            total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]
+        ),
+        # Swing-trading ENTRY signal
+        "entry_signal": bool(
+            curr["ma_crossed_above"]
+            and curr["close_above_crossover"]
+            and curr["above_poc"]
+            and total >= 50
+        ),
+        # Weekly HMA buy trigger
+        "weekly_entry_signal": bool(weekly["cross"]),
+    }
