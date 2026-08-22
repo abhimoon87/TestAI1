@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from scanner.data_providers import (
     DataProvider,
@@ -94,7 +94,7 @@ class TestCacheRoundTrip:
             meta_file = tmp_path / f"{key}.meta"
             with open(meta_file, "w") as f:
                 json.dump({
-                    "timestamp": (datetime.now().replace(hour=datetime.now().hour - 5)).isoformat(),
+                    "timestamp": (datetime.now() - timedelta(hours=5)).isoformat(),
                     "rows": 50,
                 }, f)
 
