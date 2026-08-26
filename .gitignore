@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Generated scan/backtest outputs
+scanner/*.html
+scanner/*.csv
+scanner/scan.log
+scanner/.cache/
+
+# User-specific settings & API keys
+scanner/settings.json
+scanner/api_config.json
+
+# OS
+.DS_Store
+Thumbs.db
