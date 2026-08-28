@@ -276,3 +276,49 @@ UNIVERSES = {
     # Combined
     "ALL (Combined)":     NIFTY_BROAD,
 }
+
+
+# ── Dynamic Universe Functions ──────────────────────────────────────────────
+# These fetch live data from NSE via nselib. Use for up-to-date universes.
+
+def _get_dynamic_universes() -> dict:
+    """Fetch all dynamic NSE universes. Cached for 4 hours."""
+    try:
+        from .symbol_fetcher import fetch_all_nse_symbols
+        data = fetch_all_nse_symbols()
+        return {
+            "NSE MAINBOARD (Live)": data["mainboard"],
+            "NSE F&O (Live)": data["fno"],
+            "NSE SME (Live)": data["sme"],
+            "NIFTY 50 (Live)": data["nifty50"],
+            "NIFTY NEXT 50 (Live)": data["niftynext50"],
+            "NIFTY MIDCAP 150 (Live)": data["midcap150"],
+            "NIFTY SMALLCAP 250 (Live)": data["smallcap250"],
+            "ALL NSE UNIQUE (Live)": list(set().union(*data.values())),
+        }
+    except Exception:
+        return {}
+
+
+def get_universe(name: str) -> list[str]:
+    """
+    Get universe by name. Supports static and dynamic universes.
+    
+    Static: "NIFTY 50", "FnO STOCKS", etc.
+    Dynamic: "NSE MAINBOARD (Live)", "NSE F&O (Live)", "NSE SME (Live)",
+             "NIFTY 50 (Live)", "NIFTY NEXT 50 (Live)", "NIFTY MIDCAP 150 (Live)",
+             "NIFTY SMALLCAP 250 (Live)", "ALL NSE UNIQUE (Live)"
+    """
+    if name in UNIVERSES:
+        return UNIVERSES[name]
+    
+    dynamic = _get_dynamic_universes()
+    if name in dynamic:
+        return dynamic[name]
+    
+    raise KeyError(f"Unknown universe: {name}. Available: {list(UNIVERSES.keys()) + list(dynamic.keys())}")
+
+
+def list_universes() -> list[str]:
+    """List all available universe names (static + dynamic)."""
+    return list(UNIVERSES.keys()) + list(_get_dynamic_universes().keys())
