@@ -3,6 +3,7 @@
 Tests cover:
   - get_ma: MA type dispatch
   - to_weekly: OHLCV resampling
+  - detect_crossover: shared crossover detection
   - check_filter: crossover detection (Model 1)
   - get_direction: Bull/Bear classification (Model 2)
   - compute_scores: 10-category scoring (Model 3)
@@ -16,6 +17,7 @@ import pytest
 from scanner.scoring import (
     get_ma,
     to_weekly,
+    detect_crossover,
     check_filter,
     get_direction,
     compute_scores,
@@ -404,3 +406,50 @@ class TestGetCombinedRating:
         assert _get_combined_rating(60, False, False, False) == "GOOD"
         assert _get_combined_rating(45, False, False, False) == "MODERATE"
         assert _get_combined_rating(30, False, False, False) == "POOR"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# detect_crossover — shared crossover detection
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDetectCrossover:
+    def test_bullish_crossover_detected(self):
+        # Fast crosses above slow between index 4 and 5
+        fast = pd.Series([10, 10, 10, 10, 14, 16])
+        slow = pd.Series([15, 15, 15, 15, 15, 15])
+        result = detect_crossover(fast, slow, lookback=5)
+        assert result["crossed"] is True
+        assert result["bars_ago"] == 1  # crossover at last bar transition
+
+    def test_no_crossover(self):
+        fast = pd.Series([10, 11, 12, 13, 14])
+        slow = pd.Series([15, 15, 15, 15, 15])
+        result = detect_crossover(fast, slow, lookback=5)
+        assert result["crossed"] is False
+
+    def test_crossover_outside_lookback(self):
+        # Crossover happened 10 bars ago, lookback is 5
+        fast = pd.Series([10, 12, 14, 16, 10, 10, 10, 10, 10, 10, 10])
+        slow = pd.Series([15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15])
+        result = detect_crossover(fast, slow, lookback=5)
+        assert result["crossed"] is False
+
+    def test_empty_series(self):
+        fast = pd.Series([], dtype=float)
+        slow = pd.Series([], dtype=float)
+        result = detect_crossover(fast, slow, lookback=5)
+        assert result["crossed"] is False
+
+    def test_all_nan(self):
+        fast = pd.Series([np.nan, np.nan, np.nan])
+        slow = pd.Series([np.nan, np.nan, np.nan])
+        result = detect_crossover(fast, slow, lookback=5)
+        assert result["crossed"] is False
+
+    def test_level_is_crossover_price(self):
+        fast = pd.Series([10, 10, 16, 18])
+        slow = pd.Series([15, 15, 15, 15])
+        result = detect_crossover(fast, slow, lookback=5)
+        assert result["crossed"] is True
+        assert result["level"] is not None

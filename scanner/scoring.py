@@ -179,8 +179,9 @@ def get_direction(filter_result: Optional[dict]) -> Optional[str]:
         filter_result: Output dict from check_filter().
 
     Returns:
-        "Bull" if Fast MA crossed above Slow MA (bullish crossover),
-        "Bear" if Fast MA crossed below Slow MA (bearish crossover).
+        "Bull" if the current Fast MA is above Slow MA (confirmed by a
+        recent bullish crossover in check_filter),
+        "Bear" otherwise.
     """
     if filter_result is None:
         return None
@@ -658,9 +659,8 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
                   Falls back to defaults if not provided.
 
     Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
-    Max total = 100 pts. When fundamental data is unavailable, the total is
-    normalized to the achievable maximum (e.g. ×100/80) so scores stay
-    comparable across stocks; the unnormalized sum is exposed as ``total_raw``.
+    Max total = 100 pts.  Missing fundamental data contributes 0 pts (no
+    upward normalisation).  The unnormalized sum is exposed as ``total_raw``.
 
     Returns:
         Dictionary with all scores and metadata, or None if insufficient data.
@@ -730,20 +730,16 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     raw_total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
                  + obv_score + vol_score + rs_score + volat_score + fund_score)
 
-    # Normalize when fundamental data is (partially) missing so stocks aren't
-    # penalized up to 20 pts for API availability rather than quality.
-    max_possible = 80.0 + _fundamental_max_points(getattr(df, '_fundamentals', None))
-    if max_possible > 0 and max_possible < 100.0:
-        total = raw_total * 100.0 / max_possible
-    else:
-        total = raw_total
-    total = max(0.0, min(total, 100.0))
+    # Use raw_total directly.  Earlier versions normalised partial-data stocks
+    # upward (×100/max_possible), but that inflated them above complete-data
+    # stocks at the same raw level.  Missing fundamentals now simply contribute
+    # 0 pts — no penalty beyond the absent points themselves.
+    total = max(0.0, min(raw_total, 100.0))
 
     # ── Build result ───────────────────────────────────────────────────────
     return {
         "total": round(total, 1),
         "total_raw": round(raw_total, 1),
-        "max_possible": round(max_possible, 1),
         "fundamentals_available": any(v != "N/A" for v in fund_detail.values()),
         "trend":     round(trend_score, 1),
         "momentum":  round(mom_score, 1),

@@ -545,7 +545,20 @@ let sortDir = {{}};
 function sortTable(col) {{
     const table = document.getElementById("stockTable");
     const tbody = table.tBodies[0];
-    const rows = Array.from(tbody.rows);
+    const allRows = Array.from(tbody.rows);
+
+    // Separate data rows from news rows — news rows have colspan="20"
+    // (single cell) and must stay paired with their parent data row.
+    const dataRows = allRows.filter(r => !r.classList.contains("news-row"));
+    const newsForRow = new Map();
+    for (const dr of dataRows) {{
+        const ticker = dr.getAttribute("data-ticker");
+        if (ticker) {{
+            const nr = document.getElementById("news-" + ticker.replace(/\\./g, "_"));
+            if (nr) newsForRow.set(dr, nr);
+        }}
+    }}
+
     const th = table.tHead.rows[0].cells[col];
 
     sortDir[col] = sortDir[col] === "asc" ? "desc" : "asc";
@@ -556,7 +569,8 @@ function sortTable(col) {{
     }}
     th.classList.add(dir === "asc" ? "sorted-asc" : "sorted-desc");
 
-    rows.sort((a, b) => {{
+    dataRows.sort((a, b) => {{
+        if (a.cells.length <= col || b.cells.length <= col) return 0;
         let aVal = a.cells[col].textContent.trim();
         let bVal = b.cells[col].textContent.trim();
         let aText = aVal.replace(/<[^>]*>/g, "").trim();
@@ -569,7 +583,12 @@ function sortTable(col) {{
         return dir === "asc" ? aText.localeCompare(bText) : bText.localeCompare(aText);
     }});
 
-    rows.forEach(row => tbody.appendChild(row));
+    // Re-append in sorted order, keeping each data row paired with its news row
+    for (const row of dataRows) {{
+        tbody.appendChild(row);
+        const nr = newsForRow.get(row);
+        if (nr) tbody.appendChild(nr);
+    }}
 }}
 
 function toggleNews(tickerId) {{

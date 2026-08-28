@@ -345,7 +345,7 @@ def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
         pe_ratio = metric.get("peTTM") or metric.get("peBasicExclExtraTTM")
         roe = metric.get("roeTTM")
         if roe is not None:
-            roe = roe * 100 if abs(roe) < 1 else roe
+            roe = roe * 100 if abs(roe) <= 1 else roe
 
         # Get earnings data for growth
         eps_growth = None

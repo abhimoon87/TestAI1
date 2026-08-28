@@ -141,11 +141,11 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
 
 def stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
                k_length: int = 14, d_length: int = 3) -> pd.Series:
-    """Stochastic %K."""
+    """Stochastic %K (raw, unsmoothed)."""
     lowest = low.rolling(k_length).min()
     highest = high.rolling(k_length).max()
     k = 100 * (close - lowest) / (highest - lowest)
-    return k.rolling(d_length).mean()
+    return k
 
 
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:

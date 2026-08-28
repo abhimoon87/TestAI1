@@ -198,19 +198,26 @@ rsNftStat = rsNft > 0 ? "Outperforming" : "Underperforming"
 rsNftCol = rsNft > 0 ? color.green : color.red
 
 // ── Fundamental Data ────────────────────────────────────────────────────────
-float peRatio     = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM")
-float epsCurrent  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "TTM")
-float epsPrev     = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "FY")
-float revCurrent  = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "TTM")
-float revPrev     = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "FY")
-float netIncome   = request.financial(syminfo.tickerid, "NET_INCOME", "TTM")
-float equity      = request.financial(syminfo.tickerid, "COMMON_EQUITY_TOTAL", "FQ")
+// request.financial() cannot resolve FUND:* symbols for indexes, commodities,
+// forex etc. (runtime "Symbol resolve error"). Since Pine hoists all
+// request.* calls regardless of conditional scope, redirect the requests to a
+// guaranteed-valid ticker on non-stock symbols and discard the values below.
+bool   hasFundamentals = syminfo.type == "stock"
+string fundTicker      = hasFundamentals ? syminfo.tickerid : "NSE:RELIANCE"
 
-// Derived fundamental metrics
-float calcPE       = peRatio != 0 ? close / peRatio : na
-float epsGrowth    = epsPrev != 0 and not na(epsPrev) ? ((epsCurrent - epsPrev) / math.abs(epsPrev)) * 100 : na
-float revGrowth    = revPrev != 0 and not na(revPrev) ? ((revCurrent - revPrev) / math.abs(revPrev)) * 100 : na
-float roe          = equity != 0 and not na(equity) ? (netIncome / equity) * 100 : na
+float peRatio     = request.financial(fundTicker, "EARNINGS_PER_SHARE", "TTM")
+float epsCurrent  = request.financial(fundTicker, "EARNINGS_PER_SHARE_DILUTED", "TTM")
+float epsPrev     = request.financial(fundTicker, "EARNINGS_PER_SHARE_DILUTED", "FY")
+float revCurrent  = request.financial(fundTicker, "TOTAL_REVENUE", "TTM")
+float revPrev     = request.financial(fundTicker, "TOTAL_REVENUE", "FY")
+float netIncome   = request.financial(fundTicker, "NET_INCOME", "TTM")
+float equity      = request.financial(fundTicker, "COMMON_EQUITY_TOTAL", "FQ")
+
+// Derived fundamental metrics (na when the chart symbol has no fundamentals)
+float calcPE       = hasFundamentals and peRatio != 0 ? close / peRatio : na
+float epsGrowth    = hasFundamentals and epsPrev != 0 and not na(epsPrev) ? ((epsCurrent - epsPrev) / math.abs(epsPrev)) * 100 : na
+float revGrowth    = hasFundamentals and revPrev != 0 and not na(revPrev) ? ((revCurrent - revPrev) / math.abs(revPrev)) * 100 : na
+float roe          = hasFundamentals and equity != 0 and not na(equity) ? (netIncome / equity) * 100 : na
 
 // Scoring — Status labels
 rsiStat = rsi > 70 ? "Overbought" : rsi < 30 ? "Oversold" : "Neutral"
@@ -540,7 +547,7 @@ array<PivotLevel> pivotLevels = array.from(
 )
 
 drawPivotLevel(H, L, len, style_, startH, startL, extendM, volH, volL, tot) =>
-    if barstate.islast
+    if barstate.islast and not na(H) and not na(L)
         ptStyle = style_ == "--" ? line.style_dashed : style_ == "-" ? line.style_solid : style_ == ".." ? line.style_dotted : line.style_solid
         ptWidth1 = len == len1 ? 1 : len == len2 ? 2 : len == len3 ? 3 : 4
         ptWidth2 = len == len1 ? 3 : len == len2 ? 7 : len == len3 ? 10 : 15
@@ -551,8 +558,12 @@ drawPivotLevel(H, L, len, style_, startH, startL, extendM, volH, volL, tot) =>
         pivotLines.push(line.new(startL, L, bar_index, L, color=ptColor2, extend=ptExtnd, style=ptStyle, width=ptWidth1))
         pivotLines.push(line.new(startH, H, bar_index, H, color=color.new(ptColor1, 80), extend=ptExtnd, width=ptWidth2))
         pivotLines.push(line.new(startL, L, bar_index, L, color=color.new(ptColor2, 80), extend=ptExtnd, width=ptWidth2))
-        pivotLabels.push(label.new(bar_index + 15, H, str.tostring(H) + " | " + str.tostring(volH, format.volume) + " | " + str.tostring(volH / tot * 100, format.percent), textcolor=ptColor1, color=chart.bg_color, style=label.style_label_center, tooltip="Price | Volume | Volume Distribution %"))
-        pivotLabels.push(label.new(bar_index + 15, L, str.tostring(L) + " | " + str.tostring(volL, format.volume) + " | " + str.tostring(volL / tot * 100, format.percent), textcolor=ptColor2, color=chart.bg_color, style=label.style_label_center, tooltip="Price | Volume | Volume Distribution %"))
+        volTxtH = na(volH) ? "n/a" : str.tostring(volH, format.volume)
+        volTxtL = na(volL) ? "n/a" : str.tostring(volL, format.volume)
+        pctTxtH = na(volH) or na(tot) or tot <= 0 ? "n/a" : str.tostring(volH / tot * 100, format.percent)
+        pctTxtL = na(volL) or na(tot) or tot <= 0 ? "n/a" : str.tostring(volL / tot * 100, format.percent)
+        pivotLabels.push(label.new(bar_index + 15, H, str.tostring(H) + " | " + volTxtH + " | " + pctTxtH, textcolor=ptColor1, color=chart.bg_color, style=label.style_label_center, tooltip="Price | Volume | Volume Distribution %"))
+        pivotLabels.push(label.new(bar_index + 15, L, str.tostring(L) + " | " + volTxtL + " | " + pctTxtL, textcolor=ptColor2, color=chart.bg_color, style=label.style_label_center, tooltip="Price | Volume | Volume Distribution %"))
 
 if barstate.islast
     for pl in pivotLines
@@ -563,7 +574,7 @@ if barstate.islast
     float pivotTotal = 0.0
     for lv in pivotLevels
         if lv.display
-            pivotTotal += lv.volH + lv.volL
+            pivotTotal += nz(lv.volH) + nz(lv.volL)
 
     for lv in pivotLevels
         if lv.display

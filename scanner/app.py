@@ -68,8 +68,11 @@ class ScannerApp(ctk.CTk):
         self.settings = load_settings()
         self.results = []
         self.scanning = False
+        self._cancel_scan = False
         self.filter_text = ""
         self.active_view = "dashboard"
+        self.sort_col = None
+        self.sort_dir = "asc"
 
         # Apply saved theme
         theme_name = self.settings.get("theme", "dark")
@@ -471,6 +474,35 @@ class ScannerApp(ctk.CTk):
             font=ctk.CTkFont(size=13), text_color=c["text_dim"])
         self.empty_label.pack(pady=30, anchor="center")
 
+    _SORT_KEYS = {
+        1:  lambda r: r.get("ticker", ""),
+        2:  lambda r: r.get("total", 0),
+        3:  lambda r: r.get("combined_rating", "POOR"),
+        5:  lambda r: r.get("close", 0),
+        7:  lambda r: r.get("trend", 0),
+        8:  lambda r: r.get("momentum", 0),
+        9:  lambda r: r.get("rsi", 0),
+        10: lambda r: r.get("macd", 0),
+        11: lambda r: r.get("volume", 0),
+        12: lambda r: r.get("rel_str", 0),
+        13: lambda r: r.get("fundamentals", 0),
+        14: lambda r: r.get("pc1m", 0) or 0,
+        15: lambda r: r.get("trend_dir", ""),
+        16: lambda r: r.get("adx_val", 0) or 0,
+    }
+
+    def _on_header_click(self, col_idx):
+        if col_idx not in self._SORT_KEYS:
+            return
+        if self.sort_col == col_idx:
+            self.sort_dir = "desc" if self.sort_dir == "asc" else "asc"
+        else:
+            self.sort_col = col_idx
+            self.sort_dir = "desc" if col_idx in (2, 7, 8, 9, 10, 11, 12, 13, 14, 16) else "asc"
+        key_fn = self._SORT_KEYS[col_idx]
+        self.results.sort(key=key_fn, reverse=(self.sort_dir == "desc"))
+        self._display_results(self.results)
+
     def _render_table_header(self):
         """Render the compact column-header bar as the first row of table_frame."""
         c = self.theme_colors
@@ -479,10 +511,17 @@ class ScannerApp(ctk.CTk):
         hdr.pack(fill="x", pady=(0, 4))
         hdr.pack_propagate(False)
         hdr.grid_propagate(False)
-        for text, width in RESULT_COLS:
-            ctk.CTkLabel(hdr, text=text, width=width, anchor="w",
-                         font=ctk.CTkFont(size=10, weight="bold"),
-                         text_color=c["cyan"]).pack(side="left", padx=1)
+        for col_idx, (text, width) in enumerate(RESULT_COLS):
+            if self.sort_col == col_idx:
+                arrow = " \u25b2" if self.sort_dir == "asc" else " \u25bc"
+            else:
+                arrow = ""
+            lbl = ctk.CTkLabel(hdr, text=text + arrow, width=width, anchor="w",
+                               font=ctk.CTkFont(size=10, weight="bold"),
+                               text_color=c["cyan"], cursor="hand2")
+            lbl.pack(side="left", padx=1)
+            if col_idx in self._SORT_KEYS:
+                lbl.bind("<Button-1>", lambda e, ci=col_idx: self._on_header_click(ci))
 
     def _build_summary_panel(self, parent):
         """Build the summary statistic cards (values updated after a scan)."""
@@ -873,8 +912,14 @@ class ScannerApp(ctk.CTk):
 
     def _start_scan(self):
         if self.scanning:
+            # Toggle to cancel
+            self._cancel_scan = True
+            c = self.theme_colors
+            self.run_btn.configure(text="\u23f9   CANCELLING\u2026",
+                                   state="disabled", fg_color=c["card2"])
             return
 
+        self._cancel_scan = False
         self.settings = self._collect_settings()
         save_settings(self.settings)
 
@@ -886,6 +931,8 @@ class ScannerApp(ctk.CTk):
         self.csv_btn.configure(state="disabled")
         self.clear_btn.configure(state="disabled")
         self.results = []
+        self.sort_col = None
+        self.sort_dir = "asc"
 
         for widget in self.table_frame.winfo_children():
             widget.destroy()
@@ -940,6 +987,9 @@ class ScannerApp(ctk.CTk):
             direction_counts = {"Bull": 0, "Bear": 0}
 
             for i, (ticker, df) in enumerate(batch_data.items(), 1):
+                if self._cancel_scan:
+                    self._log("\n\u23f9  Scan cancelled by user")
+                    break
                 progress = 0.1 + (i / total * 0.9) if total > 0 else 0.5
                 self._set_progress(progress, f"[{i}/{total}] {ticker}")
 
@@ -1003,7 +1053,6 @@ class ScannerApp(ctk.CTk):
 
             # Sort and store
             results.sort(key=lambda x: x["total"], reverse=True)
-            self.results = results
 
             passed = len([r for r in results if r["total"] >= settings["min_score"]])
             self._log("\n\u2501" * 25 + " Scan Complete ")
@@ -1012,7 +1061,10 @@ class ScannerApp(ctk.CTk):
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
             self._log(f"  Scored {settings['min_score']}+: {passed}")
 
-            self.after(0, lambda: self._display_results(results))
+            def _apply_results(r=results):
+                self.results = r
+                self._display_results(r)
+            self.after(0, _apply_results)
 
         except Exception as e:
             self._log(f"\nERROR: {str(e)}")
@@ -1325,17 +1377,29 @@ class ScannerApp(ctk.CTk):
         tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
         tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
         self._log("Fetching news sentiment for exported stocks...")
-        html = generate_html_report(
-            self.results,
-            title=f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}",
-            threshold=threshold,
-            fetch_news=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"scanner_report_{timestamp}.html"
-        filepath = os.path.join(SCANNER_DIR, filename)
-        save_report(html, filepath)
-        self._log(f"HTML report saved: {filename}")
-        webbrowser.open(f"file://{os.path.abspath(filepath)}")
+        c = self.theme_colors
+        self.html_btn.configure(state="disabled", text="\u23f3 Exporting\u2026")
+
+        def _do_export():
+            try:
+                html = generate_html_report(
+                    self.results,
+                    title=f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}",
+                    threshold=threshold,
+                    fetch_news=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"scanner_report_{timestamp}.html"
+                filepath = os.path.join(SCANNER_DIR, filename)
+                save_report(html, filepath)
+                self.after(0, lambda: self._log(f"HTML report saved: {filename}"))
+                self.after(0, lambda: webbrowser.open(f"file://{os.path.abspath(filepath)}"))
+            except Exception as e:
+                self.after(0, lambda: self._log(f"HTML export failed: {e}"))
+            finally:
+                self.after(0, lambda: self.html_btn.configure(
+                    state="normal", text="\U0001f4c4  HTML"))
+
+        threading.Thread(target=_do_export, daemon=True).start()
 
     def _export_csv(self):
         if not self.results:
@@ -1404,6 +1468,8 @@ class ScannerApp(ctk.CTk):
         self._render_table_header()
         c = self.theme_colors
         self.results = []
+        self.sort_col = None
+        self.sort_dir = "asc"
         self.empty_label = ctk.CTkLabel(
             self.table_frame, text="\nNo results yet \u2014 hit \u25b6 RUN SCAN\n",
             font=ctk.CTkFont(size=13), text_color=c["text_dim"])

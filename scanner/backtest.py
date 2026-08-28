@@ -28,7 +28,7 @@ from .indicators import (
     hull_ma, ema, sma, rsi, macd, stochastic, obv, atr, adx,
     price_change, highest, lowest, volume_profile_poc,
 )
-from .scoring import get_ma, detect_crossover
+from .scoring import get_ma, detect_crossover, compute_scores
 from .data_fetcher import fetch_batch_yfinance, fetch_index_data
 from .universes import NIFTY_50, FNO_STOCKS, NIFTY_BROAD
 
@@ -65,7 +65,8 @@ DEFAULT_SETTINGS = {
     "slope_lookback": 10,
     "flat_threshold": 0.5,
     "vp_lookback": 200,
-    "crossover_lookback": 6,
+    "crossover_lookback": 20,
+    "require_weekly_hma": False,       # require weekly HMA > EMA for entries
     "rs_length": 14,
     "score_threshold": 50,
     "stop_loss_pct": 2.0,
@@ -78,7 +79,8 @@ DEFAULT_SETTINGS = {
     # Sector rotation
     "sector_rotation_enabled": False,
     "sector_rotation_lookback": 8,    # last N trades to evaluate sector
-    "sector_min_momentum": 0.0,       # min sector momentum to allow entry        "sector_block_threshold": -5.0,    # block sector if momentum below this (%)
+    "sector_min_momentum": 0.0,       # min sector momentum to allow entry
+    "sector_block_threshold": -5.0,   # block sector if momentum below this (%)
     "sector_boost_weight": 0.5,       # bonus = min(momentum * this, 15 pts)
     # ATR-based stop loss
     "atr_stop_enabled": False,
@@ -183,7 +185,7 @@ class SectorTracker:
     computes momentum scores to decide which sectors to favor or avoid.
     """
 
-    def __init__(self, lookback: int = 8, block_threshold: float = -0.05):
+    def __init__(self, lookback: int = 8, block_threshold: float = -5.0):
         self.lookback = lookback
         self.block_threshold = block_threshold
         self.trade_history: list[TradeResult] = []  # all closed trades
@@ -413,284 +415,43 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
                          settings: dict) -> Optional[dict]:
     """
     Compute the 10-category score at a specific bar index.
-    Returns None if data is insufficient.
+
+    Delegates to scoring.compute_scores() on a sub-DataFrame to avoid
+    duplicating the scoring logic. Returns None if data is insufficient.
     """
     df = stock.df
     if bar_idx < 0 or bar_idx >= len(df):
         return None
 
-    close = df["close"]
-    volume = df["volume"]
+    # Slice DataFrame up to (and including) the target bar
+    sub_df = df.iloc[: bar_idx + 1].copy()
 
-    # Extract all current values
-    fast_ma = stock.fast_ma.iloc[bar_idx]
-    slow_ma = stock.slow_ma.iloc[bar_idx]
-    rsi_val = stock.rsi_val.iloc[bar_idx]
-    macd_h = stock.macd_hist.iloc[bar_idx]
-    macd_h_prev = stock.macd_hist.iloc[bar_idx - 1] if bar_idx > 0 else np.nan
-    stoch_k = stock.stoch_k.iloc[bar_idx]
-    obv = stock.obv_val.iloc[bar_idx]
-    obv_prev = stock.obv_val.iloc[bar_idx - 1] if bar_idx > 0 else np.nan
-    obv_ma = sma(stock.obv_val, 20).iloc[bar_idx]
-    vol_ma = stock.vol_ma.iloc[bar_idx]
-    atr_val = stock.atr_val.iloc[bar_idx]
-    adx_val = stock.adx_val.iloc[bar_idx]
-    vol_50 = sma(volume, 50).iloc[bar_idx]
-    vp_poc = stock.vp_poc.iloc[bar_idx]
+    # Attach fundamentals so scoring.py can access them
+    if stock.fundamentals:
+        sub_df._fundamentals = stock.fundamentals
 
-    if np.isnan(fast_ma) or np.isnan(slow_ma):
+    # Delegate to the canonical scoring engine
+    result = compute_scores(sub_df, timeframe="D", index_df=nifty_df,
+                            settings=settings)
+    if result is None:
         return None
 
-    close_val = close.iloc[bar_idx]
-    high_val = df["high"].iloc[bar_idx]
-    low_val = df["low"].iloc[bar_idx]
-    vol_val = volume.iloc[bar_idx]
-
-    # --- Crossover detection (look back from this bar) ---
-    lookback = settings["crossover_lookback"]
-    fast_series = stock.fast_ma.iloc[: bar_idx + 1]
-    slow_series = stock.slow_ma.iloc[: bar_idx + 1]
-    xo = detect_crossover(fast_series, slow_series, lookback)
-    ma_crossed_above = xo["crossed"]
-    crossover_level = xo["level"]
-    crossover_bars_ago = xo["bars_ago"] if xo["crossed"] else -1
-    close_above_crossover = (
-        crossover_level is not None and close_val > crossover_level
-    )
-
-    # --- MA conditions ---
-    ma_bullish = fast_ma > slow_ma
-    close_above_both = close_val > fast_ma and close_val > slow_ma
-    above_poc = not np.isnan(vp_poc) and close_val >= vp_poc
-
-    # --- Sideways filter ---
-    is_sideways = False
-    if not np.isnan(adx_val) and adx_val < settings["adx_threshold"]:
-        is_sideways = True
-    if not is_sideways:
-        atr1 = atr(df["high"], df["low"], df["close"], 1)
-        chop_len = settings["chop_len"]
-        if bar_idx >= chop_len:
-            chop_sum = atr1.iloc[bar_idx - chop_len + 1: bar_idx + 1].sum()
-            chop_range = (
-                df["high"].iloc[bar_idx - chop_len + 1: bar_idx + 1].max()
-                - df["low"].iloc[bar_idx - chop_len + 1: bar_idx + 1].min()
-            )
-            if chop_range > 0:
-                chop_val = 100 * math.log10(chop_sum / chop_range) / math.log10(chop_len)
-                if chop_val > settings["chop_threshold"]:
-                    is_sideways = True
-    if not is_sideways:
-        slope_ma = get_ma(
-            settings["slope_ma_type"], close.iloc[: bar_idx + 1],
-            settings["slope_ma_len"], volume.iloc[: bar_idx + 1]
-        )
-        lb = settings["slope_lookback"]
-        if len(slope_ma) > lb and not np.isnan(slope_ma.iloc[-1]) and not np.isnan(slope_ma.iloc[-1 - lb]):
-            slope_pct = abs(
-                (slope_ma.iloc[-1] - slope_ma.iloc[-1 - lb])
-                / slope_ma.iloc[-1 - lb]
-            ) * 100
-            if slope_pct < settings["flat_threshold"]:
-                is_sideways = True
-
-    # --- Weekly HMA higher-timeframe check ---
-    weekly_hma_bull = False
-    if bar_idx >= 250:
-        sub_df = df.iloc[: bar_idx + 1].copy()
-        sub_df.index = pd.to_datetime(sub_df.index)
-        if sub_df.index.tz is not None:
-            sub_df.index = sub_df.index.tz_localize(None)
-        try:
-            w_agg = {
-                "open": "first", "high": "max", "low": "min",
-                "close": "last", "volume": "sum",
-            }
-            w_df = sub_df.resample("W").agg(w_agg).dropna()
-            if len(w_df) >= 60:
-                w_close = w_df["close"]
-                w_hma = hull_ma(w_close, 44)
-                w_ema50 = ema(w_close, 50)
-                if not np.isnan(w_hma.iloc[-1]) and not np.isnan(w_ema50.iloc[-1]):
-                    weekly_hma_bull = w_hma.iloc[-1] > w_ema50.iloc[-1]
-        except Exception:
-            pass
-
-    # --- Price change (adaptive) ---
-    n = bar_idx + 1
-    if n >= 100:
-        pc1m_p, pc3m_p = 21, 63
-    elif n >= 40:
-        pc1m_p, pc3m_p = 4, 13
-    else:
-        pc1m_p, pc3m_p = 1, 3
-
-    pc1m = (
-        (close_val / close.iloc[bar_idx - pc1m_p] - 1) * 100
-        if bar_idx >= pc1m_p and close.iloc[bar_idx - pc1m_p] > 0
-        else 0.0
-    )
-    pc3m = (
-        (close_val / close.iloc[bar_idx - pc3m_p] - 1) * 100
-        if bar_idx >= pc3m_p and close.iloc[bar_idx - pc3m_p] > 0
-        else 0.0
-    )
-
-    # ================================================================
-    # SCORING (matches scoring.py exactly)
-    # ================================================================
-
-    # -- 1. Trend (max 15) --
-    trend = 0.0
-    if ma_bullish:
-        trend += 4.0
-    if above_poc:
-        trend += 2.5
-    if close_above_both:
-        trend += 2.5
-    elif close_val > slow_ma:
-        trend += 1.0
-    if ma_crossed_above and crossover_bars_ago >= 0:
-        if crossover_bars_ago <= 1:
-            trend += 3.0
-        elif crossover_bars_ago <= 2:
-            trend += 2.0
-        elif crossover_bars_ago <= 3:
-            trend += 1.0
-        elif crossover_bars_ago <= 4:
-            trend += 0.5
-        else:
-            trend += 0.25
-    if not np.isnan(adx_val) and adx_val > 25:
-        trend += 2.0
-    trend = min(trend, 15.0)
-
-    # -- 2. Momentum (max 15) --
-    momentum = 0.0
-    if pc1m > 0:
-        momentum += min(7.0, 7.0 * (pc1m / 5.0))
-    else:
-        momentum += max(-3.0, min(0.0, 7.0 * (pc1m / 10.0)))
-    if pc3m > 0:
-        momentum += min(8.0, 8.0 * (pc3m / 10.0))
-    else:
-        momentum += max(-4.0, min(0.0, 8.0 * (pc3m / 20.0)))
-    momentum = max(0.0, min(momentum, 15.0))
-
-    # -- 3. RSI (max 8) --
-    rsi_s = 0.0
-    if not np.isnan(rsi_val) and 40 <= rsi_val <= 70:
-        rsi_s = max(0.0, min(8.0 * (1.0 - abs(rsi_val - 55.0) / 15.0), 8.0))
-
-    # -- 4. MACD (max 7) --
-    macd_s = 0.0
-    if not np.isnan(macd_h):
-        if macd_h > 0:
-            macd_s += 4.0
-        if not np.isnan(macd_h_prev) and macd_h > macd_h_prev:
-            macd_s += 3.0
-    macd_s = min(macd_s, 7.0)
-
-    # -- 5. Stochastic (max 5) --
-    stoch_s = 5.0 if (not np.isnan(stoch_k) and 20 < stoch_k < 80) else 0.0
-
-    # -- 6. OBV (max 5) --
-    obv_s = 0.0
-    if not np.isnan(obv) and not np.isnan(obv_ma):
-        if obv > obv_ma:
-            obv_s += 3.0
-        if not np.isnan(obv_prev) and obv > obv_prev:
-            obv_s += 2.0
-    obv_s = min(obv_s, 5.0)
-
-    # -- 7. Volume (max 10) --
-    vol_s = 0.0
-    if not np.isnan(vol_ma) and vol_ma > 0:
-        if vol_val > vol_ma:
-            vol_s += 5.0
-        if vol_val > vol_ma * 1.2:
-            vol_s += 3.0
-        if not np.isnan(vol_50) and vol_val > vol_50:
-            vol_s += 2.0
-    vol_s = min(vol_s, 10.0)
-
-    # -- 8. Relative Strength (max 10) --
-    rs_s = 0.0
-    rs_length = settings["rs_length"]
-    if nifty_df is not None and len(nifty_df) > rs_length + 5:
-        idx_close = nifty_df["close"]
-        # Align by date: find closest NIFTY date <= stock date
-        stock_date = df.index[bar_idx]
-        if isinstance(stock_date, pd.Timestamp):
-            # Use the NIFTY close series indexed by date
-            mask = idx_close.index <= stock_date
-            if mask.sum() > rs_length:
-                idx_pos = mask.sum() - 1
-                idx_rs = (idx_close.iloc[idx_pos] / idx_close.iloc[idx_pos - rs_length] - 1) * 100
-                if pc1m > idx_rs:
-                    rs_s += 5.0
-                if pc1m > 0:
-                    rs_s += 5.0
-            else:
-                # Fallback: use stock momentum alone
-                if pc1m > 0:
-                    rs_s += 5.0
-                if pc3m > 0:
-                    rs_s += 5.0
-        else:
-            if pc1m > 0:
-                rs_s += 5.0
-            if pc3m > 0:
-                rs_s += 5.0
-    else:
-        if pc1m > 0:
-            rs_s += 5.0
-        if pc3m > 0:
-            rs_s += 5.0
-    rs_s = min(rs_s, 10.0)
-
-    # -- 9. Volatility (max 5) --
-    atr_pct = (atr_val / close_val * 100) if close_val > 0 else 0
-    volat_s = 5.0 if atr_pct <= 3 else 0.0
-
-    # -- 10. Fundamentals (max 20) --
-    fund_s = 0.0
-    fund = stock.fundamentals
-    if fund:
-        pe = fund.get("pe_ratio")
-        eps_g = fund.get("eps_growth")
-        rev_g = fund.get("rev_growth")
-        roe_v = fund.get("roe")
-        if pe and pe > 0:
-            fund_s += 5.0 if pe < 15 else (3.0 if pe < 25 else 0.0)
-        if eps_g is not None:
-            fund_s += 5.0 if eps_g > 20 else (3.0 if eps_g > 0 else 0.0)
-        if rev_g is not None:
-            fund_s += 5.0 if rev_g > 15 else (3.0 if rev_g > 0 else 0.0)
-        if roe_v is not None:
-            fund_s += 5.0 if roe_v > 20 else (3.0 if roe_v > 10 else 0.0)
-    fund_s = min(fund_s, 20.0)
-
-    # --- Total ---
-    total = trend + momentum + rsi_s + macd_s + stoch_s + obv_s + vol_s + rs_s + volat_s + fund_s
-    total = max(0.0, min(total, 100.0))
-
+    # Return only the fields the backtest actually uses
     return {
-        "total": round(total, 1),
-        "ma_crossed_above": ma_crossed_above,
-        "crossover_level": crossover_level,
-        "crossover_bars_ago": crossover_bars_ago,
-        "close_above_crossover": close_above_crossover,
-        "above_poc": above_poc,
-        "ma_bullish": ma_bullish,
-        "close_above_both": close_above_both,
-        "is_sideways": is_sideways,
-        "weekly_hma_bull": weekly_hma_bull,
-        "rsi": rsi_val,
-        "adx": adx_val,
-        "atr_pct": atr_pct,
-        "pc1m": pc1m,
-        "pc3m": pc3m,
+        "total": result["total"],
+        "above_poc": result["above_poc"],
+        "is_sideways": result["is_sideways"],
+        "ma_crossed_above": result["ma_crossed_above"],
+        "crossover_level": result.get("crossover_level"),
+        "close_above_crossover": result.get("close_above_crossover", False),
+        "ma_bullish": result["ma_bullish"],
+        "close_above_both": result["close_above_both_ma"],
+        "weekly_hma_bull": result["weekly_hma_bull"],
+        "rsi": result.get("rsi_val"),
+        "adx": result.get("adx_val"),
+        "atr_pct": result.get("atr_pct"),
+        "pc1m": result.get("pc1m"),
+        "pc3m": result.get("pc3m"),
     }
 
 
@@ -759,7 +520,7 @@ def _close_position(pos: Position, exit_price: float,
         entry_date=pos.entry_date,
         entry_price=pos.entry_price,
         entry_score=pos.entry_score,
-        stop_loss=pos.stop_loss if reason == "STOP_LOSS" else 0,
+        stop_loss=pos.stop_loss,
         target_price=pos.target_price,
         exit_date=exit_date,
         exit_price=exit_price,
@@ -789,7 +550,7 @@ class BacktestEngine:
         self.equity_curve: list[tuple[datetime, float]] = []
         self.sector_tracker = SectorTracker(
             lookback=self.settings.get("sector_rotation_lookback", 8),
-            block_threshold=self.settings.get("sector_block_threshold", -0.05),
+            block_threshold=self.settings.get("sector_block_threshold", -5.0),
         )
 
     def load_data(self, tickers: list[str], period: str = "5y"):
@@ -870,7 +631,7 @@ class BacktestEngine:
         rotation_enabled = settings.get("sector_rotation_enabled", False)
         rotation_lookback = settings.get("sector_rotation_lookback", 8)
         sector_boost_weight = settings.get("sector_boost_weight", 1.5)
-        sector_block_threshold = settings.get("sector_block_threshold", -0.05)
+        sector_block_threshold = settings.get("sector_block_threshold", -5.0)
         self.sector_tracker.lookback = rotation_lookback
         self.sector_tracker.block_threshold = sector_block_threshold
 
@@ -954,6 +715,11 @@ class BacktestEngine:
                         continue
                     if score_result["is_sideways"]:
                         continue
+                    # Weekly HMA higher-timeframe filter: skip if bearish
+                    # when the setting is enabled.
+                    if settings.get("require_weekly_hma", False):
+                        if not score_result.get("weekly_hma_bull", False):
+                            continue
 
                     base_score = score_result["total"]
 

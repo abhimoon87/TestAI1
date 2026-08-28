@@ -296,8 +296,8 @@ class TestStochastic:
         n = 50
         s = pd.Series(np.full(n, 100.0))
         result = stochastic(s, s, s)
-        # Division by zero → NaN
-        assert result.iloc[16:].isna().all() or (result.dropna() == 50).all()
+        # Division by zero → NaN for first k_length-1 bars, then 50
+        assert result.iloc[14:].isna().all() or (result.dropna() == 50).all()
 
 
 class TestObv:
