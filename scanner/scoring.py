@@ -64,7 +64,7 @@ def to_weekly(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     if not isinstance(d.index, pd.DatetimeIndex):
         return None
     if d.index.tz is not None:
-        d.index = d.index.tz_localize(None)
+        d.index = d.index.tz_convert(None)
     agg = {}
     for col in ["open", "high", "low", "close"]:
         if col in d.columns:
@@ -96,7 +96,8 @@ def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
         }
     """
     result = {"crossed": False, "bars_ago": -1, "level": None, "count": 0, "dates": []}
-
+    if len(fast_ma) < 2:
+        return result
     lb = min(lookback, len(fast_ma) - 1)
     for i in range(1, lb + 1):
         ic, ip = -i, -i - 1
@@ -344,7 +345,7 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     chop_sum = atr1.rolling(chop_len).sum()
     chop_range = high.rolling(chop_len).max() - low.rolling(chop_len).min()
     chop_safe_range = chop_range.replace(0, np.nan)
-    chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(max(chop_len, 1))
+    chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(max(chop_len, 2))
     is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
     if is_sideways_chop:
         reasons.append("Chop")

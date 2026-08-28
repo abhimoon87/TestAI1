@@ -398,9 +398,12 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
 
         pe_raw = data.get("PERatio")
         pe_ratio = float(pe_raw) if pe_raw is not None else None
-        roe = float(data.get("ReturnOnEquityTTM", 0)) * 100 if data.get("ReturnOnEquityTTM") else None
-        eps_growth = float(data.get("EPSGrowthTTM", 0)) * 100 if data.get("EPSGrowthTTM") else None
-        rev_growth = float(data.get("RevenueGrowthTTM", 0)) * 100 if data.get("RevenueGrowthTTM") else None
+        roe_raw = data.get("ReturnOnEquityTTM")
+        roe = float(roe_raw) * 100 if roe_raw is not None else None
+        eps_raw = data.get("EPSGrowthTTM")
+        eps_growth = float(eps_raw) * 100 if eps_raw is not None else None
+        rev_raw = data.get("RevenueGrowthTTM")
+        rev_growth = float(rev_raw) * 100 if rev_raw is not None else None
 
         return {
             "pe_ratio": pe_ratio,

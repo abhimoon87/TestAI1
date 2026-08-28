@@ -548,8 +548,10 @@ class BacktestEngine:
     def __init__(self, settings: Optional[dict] = None):
         self.settings = {**DEFAULT_SETTINGS, **(settings or {})}
         self.stocks: list[StockData] = []
+        self.stocks_by_ticker: dict[str, StockData] = {}
         self.nifty_df: Optional[pd.DataFrame] = None
         self.positions: list[Position] = []
+        self.positions_by_ticker: dict[str, Position] = {}
         self.trades: list[TradeResult] = []
         self.equity_curve: list[tuple[datetime, float]] = []
         self.sector_tracker = SectorTracker(
@@ -592,6 +594,7 @@ class BacktestEngine:
                 stock = precompute_stock(ticker, df, self.settings)
                 if stock is not None:
                     self.stocks.append(stock)
+                    self.stocks_by_ticker[ticker] = stock
 
         print(f"  Ready: {len(self.stocks)}/{len(tickers)} stocks loaded")
         print("")
@@ -633,11 +636,6 @@ class BacktestEngine:
 
         # -- Sector rotation config --
         rotation_enabled = settings.get("sector_rotation_enabled", False)
-        rotation_lookback = settings.get("sector_rotation_lookback", 8)
-        sector_boost_weight = settings.get("sector_boost_weight", 0.5)
-        sector_block_threshold = settings.get("sector_block_threshold", -5.0)
-        self.sector_tracker.lookback = rotation_lookback
-        self.sector_tracker.block_threshold = sector_block_threshold
 
         # -- Main simulation loop --
         signals_generated = 0
@@ -649,7 +647,7 @@ class BacktestEngine:
             # 1. Check exits on open positions
             closed_today = []
             for pos in self.positions:
-                stock = next((s for s in self.stocks if s.ticker == pos.ticker), None)
+                stock = self.stocks_by_ticker.get(pos.ticker)
                 if stock is None or day not in stock.df.index:
                     continue
                 bar_idx = stock.df.index.get_loc(day)
@@ -664,6 +662,9 @@ class BacktestEngine:
                 # Record in sector tracker for rotation
                 if rotation_enabled:
                     self.sector_tracker.record_trade(trade)
+                # Remove from ticker dict
+                if trade.ticker in self.positions_by_ticker:
+                    del self.positions_by_ticker[trade.ticker]
             if closed_today:
                 self.positions = [p for p in self.positions if p.exit_date is None]
 
@@ -674,7 +675,7 @@ class BacktestEngine:
                         break
 
                     # Skip if already in this stock
-                    if any(p.ticker == stock.ticker for p in self.positions):
+                    if stock.ticker in self.positions_by_ticker:
                         continue
 
                     # Sector diversification check
@@ -811,7 +812,9 @@ class BacktestEngine:
                     total_risk = risk_per_share * shares
                     if total_risk > current_portfolio * max_risk_pct:
                         max_shares = int(current_portfolio * max_risk_pct / risk_per_share)
-                        shares = max(max_shares, 1)
+                        if max_shares <= 0:
+                            continue  # risk budget too small for even 1 share
+                        shares = max_shares
 
                     investment = entry_price * shares
                     if investment > cash:
@@ -835,12 +838,13 @@ class BacktestEngine:
                         atr_at_entry=atr_at_entry,
                     )
                     self.positions.append(pos)
+                    self.positions_by_ticker[pos.ticker] = pos
                     cash -= investment
 
             # 3. Record equity curve
             portfolio_value = cash
             for pos in self.positions:
-                stock = next((s for s in self.stocks if s.ticker == pos.ticker), None)
+                stock = self.stocks_by_ticker.get(pos.ticker)
                 if stock and day in stock.df.index:
                     current_price = stock.df.loc[day, "close"]
                     portfolio_value += current_price * pos.shares
@@ -1533,7 +1537,7 @@ def main():
                         help="Trailing stop %% (default: 2.0)")
     parser.add_argument("--capital", type=float, default=1_000_000,
                         help="Initial capital in Rs. (default: 1000000)")
-    parser.add_argument("--crossover-lookback", type=int, default=6,
+    parser.add_argument("--crossover-lookback", type=int, default=20,
                         help="Crossover detection lookback bars (default: 6)")
     parser.add_argument("--max-per-sector", type=int, default=2,
                         help="Max positions per sector (default: 2)")

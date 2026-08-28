@@ -48,6 +48,8 @@ def hull_ma(series: pd.Series, length: int) -> pd.Series:
     Formula: WMA(2 × WMA(close, n/2) − WMA(close, n), √n)
     All three WMA layers use vectorized convolution — no Python per-window loops.
     """
+    if length < 2:
+        return series.copy()
     half = int(length / 2)
     sqrt_len = int(np.sqrt(length))
 
@@ -144,8 +146,10 @@ def stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
     """Stochastic %K (raw, unsmoothed)."""
     lowest = low.rolling(k_length).min()
     highest = high.rolling(k_length).max()
-    k = 100 * (close - lowest) / (highest - lowest)
-    return k
+    denom = highest - lowest
+    # Return neutral 50 when no range (flat price), avoiding div-by-zero
+    k = np.where(denom > 0, 100 * (close - lowest) / denom, 50.0)
+    return pd.Series(k, index=close.index)
 
 
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
@@ -184,7 +188,7 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> 
     plus_di = 100 * pd.Series(plus_dm, index=high.index).ewm(alpha=1 / length, min_periods=length).mean() / atr_val
     minus_di = 100 * pd.Series(minus_dm, index=high.index).ewm(alpha=1 / length, min_periods=length).mean() / atr_val
 
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
     return dx.ewm(alpha=1 / length, min_periods=length).mean()
 
 

@@ -110,9 +110,19 @@ class TestToWeekly:
         )
         result = to_weekly(df)
         assert result is not None
-        # Weekly open = first daily open in the week
-        # Weekly high = max daily high
-        # Weekly close = last daily close
+        assert len(result) == 2  # 10 business days = 2 weeks
+        # Week 1: Jan 1-7 (contains business days 1-5)
+        assert result["open"].iloc[0] == 10
+        assert result["high"].iloc[0] == 16
+        assert result["low"].iloc[0] == 9
+        assert result["close"].iloc[0] == 15
+        assert result["volume"].iloc[0] == 500
+        # Week 2: Jan 8-14 (contains business days 6-10)
+        assert result["open"].iloc[1] == 15  # first daily open in week 2
+        assert result["high"].iloc[1] == 21
+        assert result["low"].iloc[1] == 14
+        assert result["close"].iloc[1] == 20
+        assert result["volume"].iloc[1] == 500
 
     def test_none_input(self):
         assert to_weekly(None) is None

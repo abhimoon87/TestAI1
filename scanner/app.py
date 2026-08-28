@@ -69,7 +69,7 @@ class ScannerApp(ctk.CTk):
         self.settings = load_settings()
         self.results = []
         self.scanning = False
-        self._cancel_scan = False
+        self._cancel_scan = threading.Event()
         self.filter_text = ""
         self.active_view = "dashboard"
         self.sort_col = None
@@ -915,13 +915,13 @@ class ScannerApp(ctk.CTk):
     def _start_scan(self):
         if self.scanning:
             # Toggle to cancel
-            self._cancel_scan = True
+            self._cancel_scan.set()
             c = self.theme_colors
             self.run_btn.configure(text="\u23f9   CANCELLING\u2026",
                                    state="disabled", fg_color=c["card2"])
             return
 
-        self._cancel_scan = False
+        self._cancel_scan.clear()
         self.settings = self._collect_settings()
         save_settings(self.settings)
 
@@ -992,7 +992,7 @@ class ScannerApp(ctk.CTk):
             direction_counts = {"Bull": 0, "Bear": 0}
 
             for i, (ticker, df) in enumerate(batch_data.items(), 1):
-                if self._cancel_scan:
+                if self._cancel_scan.is_set():
                     self._log("\n\u23f9  Scan cancelled by user")
                     break
                 progress = 0.1 + (i / total * 0.9) if total > 0 else 0.5
@@ -1057,7 +1057,7 @@ class ScannerApp(ctk.CTk):
                     logger.debug("Skipping %s in batch scan: %s", ticker, e)
 
             # Sort and store
-            results.sort(key=lambda x: x["total"], reverse=True)
+            results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
 
             passed = len([r for r in results if r["total"] >= settings["min_score"]])
             self._log("\n\u2501" * 25 + " Scan Complete ")

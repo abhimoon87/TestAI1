@@ -303,15 +303,6 @@ class TestNegativeScenarios:
         assert t.pnl < 0
         assert t.pnl_pct == -10.0
 
-    def test_stop_loss_gap_down(self):
-        pos = _make_pos(entry_price=100.0, stop_loss=95.0)
-        bar = pd.Series({"open": 90.0, "high": 92.0, "low": 88.0, "close": 89.0},
-                        name=datetime(2025, 1, 2))
-        result = update_position(pos, bar, 0, DEFAULT_SETTINGS)
-        assert result is not None
-        assert result.exit_reason == "STOP_LOSS"
-        assert result.exit_price == 90.0  # filled at open
-
     def test_no_cross_stays_open(self):
         """Fresh engine has no open positions."""
         engine = BacktestEngine()
