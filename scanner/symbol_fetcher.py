@@ -1,6 +1,7 @@
 """
 Dynamic symbol fetcher for NSE/BSE universes.
 Fetches live symbol lists from NSE via nselib.
+BSE support is limited due to anti-scraping measures on bseindia.com.
 """
 
 from datetime import date, timedelta
@@ -102,6 +103,49 @@ def get_unique_nse_symbols() -> list[str]:
     for symbols in all_data.values():
         unique.update(s.upper().strip() for s in symbols if isinstance(s, str))
     return sorted(unique)
+
+
+# ── BSE Support (Limited) ───────────────────────────────────────────────────
+# BSE (bseindia.com) blocks automated access. No reliable public API for equity lists.
+# Workarounds:
+#   - Static universes in universes.py: BSE SENSEX, BSE MIDCAP, BSE SMALLCAP
+#   - Cross-listing: NSE mainboard (2,559) covers most liquid BSE names
+#   - yfinance supports BSE data via .BO suffix but has no listing function
+#   - For full BSE universe (~5,500 symbols), use a paid data provider or manual CSV
+
+def fetch_bse_static_universes() -> dict:
+    """
+    Return static BSE universes from universes.py.
+    These are manually maintained and should be updated periodically.
+    """
+    try:
+        from .universes import BSE_SENSEX, BSE_MIDCAP, BSE_SMALLCAP
+        return {
+            "BSE SENSEX": BSE_SENSEX,
+            "BSE MIDCAP": BSE_MIDCAP,
+            "BSE SMALLCAP": BSE_SMALLCAP,
+        }
+    except Exception:
+        return {}
+
+
+def validate_bse_symbols(symbols: list[str], max_check: int = 50) -> list[str]:
+    """
+    Validate BSE symbols by checking if they exist on yfinance (.BO suffix).
+    Limited to max_check to avoid rate limits.
+    """
+    import yfinance as yf
+    valid = []
+    for sym in symbols[:max_check]:
+        try:
+            ticker = yf.Ticker(f"{sym}.BO")
+            # Quick check - try to get info
+            info = ticker.info
+            if info and info.get("symbol"):
+                valid.append(sym)
+        except Exception:
+            continue
+    return valid
 
 
 if __name__ == "__main__":
