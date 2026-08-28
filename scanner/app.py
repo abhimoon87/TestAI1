@@ -926,6 +926,9 @@ class ScannerApp(ctk.CTk):
         save_settings(self.settings)
 
         self.scanning = True
+        # Snapshot tkinter state for background thread (unsafe to read from threads)
+        self._scan_universe = self.universe_var.get()
+        self._scan_settings = dict(self.settings)
         c = self.theme_colors
         self.run_btn.configure(state="disabled", text="\u23f3   SCANNING\u2026",
                                fg_color=c["card2"])
@@ -950,9 +953,9 @@ class ScannerApp(ctk.CTk):
     def _run_scan(self):
         """Run the scan in a background thread."""
         try:
-            universe_name = self.universe_var.get()
+            universe_name = self._scan_universe
             tickers = UNIVERSES.get(universe_name, [])
-            settings = self.settings
+            settings = self._scan_settings
             period = settings.get("data_period", "1y")
             timeframe = settings.get("timeframe", "D")
             trend_filter = settings.get("trend_filter", "All")
@@ -1414,27 +1417,33 @@ class ScannerApp(ctk.CTk):
         filename = f"scanner_results_{timestamp}.csv"
         filepath = os.path.join(SCANNER_DIR, filename)
 
-        with open(filepath, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Rank", "Ticker", "Score", "Rating", "Price", "Trend", "Momentum",
-                             "RSI", "MACD", "Stoch", "OBV", "Volume", "RelStrength", "Volatility",
-                             "Fundamentals", "Direction", "RSI_Val", "ADX", "Sideways",
-                             "1M_Change", "3M_Change"])
-            for i, r in enumerate(self.results, 1):
-                sideways_reasons = ", ".join(r.get("sideways_reasons", []))
-                writer.writerow([
-                    i, r["ticker"], r["total"],
-                    r.get("combined_rating", "POOR"),
-                    r.get("close"), r["trend"], r["momentum"], r["rsi"], r["macd"],
-                    r["stoch"], r["obv"], r["volume"], r["rel_str"], r["volatility"],
-                    r.get("fundamentals", 0),
-                    r["trend_dir"], r.get("rsi_val"), r.get("adx_val"),
-                    ("Yes" if r.get("is_sideways") else "No") + (f" ({sideways_reasons})" if sideways_reasons else ""),
-                    r.get("pc1m"), r.get("pc3m")
-                ])
+        try:
+            snapshot = list(self.results)
+            with open(filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Rank", "Ticker", "Score", "Rating", "Price", "Trend", "Momentum",
+                                 "RSI", "MACD", "Stoch", "OBV", "Volume", "RelStrength", "Volatility",
+                                 "Fundamentals", "Direction", "RSI_Val", "ADX", "Sideways",
+                                 "1M_Change", "3M_Change"])
+                for i, r in enumerate(snapshot, 1):
+                    sideways_reasons = ", ".join(r.get("sideways_reasons", []))
+                    writer.writerow([
+                        i, r.get("ticker", ""), r.get("total", 0),
+                        r.get("combined_rating", "POOR"),
+                        r.get("close"), r.get("trend", 0), r.get("momentum", 0),
+                        r.get("rsi", 0), r.get("macd", 0),
+                        r.get("stoch", 0), r.get("obv", 0), r.get("volume", 0),
+                        r.get("rel_str", 0), r.get("volatility", 0),
+                        r.get("fundamentals", 0),
+                        r.get("trend_dir", ""), r.get("rsi_val"), r.get("adx_val"),
+                        ("Yes" if r.get("is_sideways") else "No") + (f" ({sideways_reasons})" if sideways_reasons else ""),
+                        r.get("pc1m"), r.get("pc3m")
+                    ])
 
-        self._log(f"CSV saved: {filename}")
-        os.startfile(filepath) if sys.platform == "win32" else webbrowser.open(f"file://{os.path.abspath(filepath)}")
+            self._log(f"CSV saved: {filename}")
+            os.startfile(filepath) if sys.platform == "win32" else webbrowser.open(f"file://{os.path.abspath(filepath)}")
+        except Exception as e:
+            self._log(f"CSV export failed: {e}")
 
     # ════════════════════════════════════════════════════════════════════════
     # UTILITIES

@@ -634,7 +634,7 @@ class BacktestEngine:
         # -- Sector rotation config --
         rotation_enabled = settings.get("sector_rotation_enabled", False)
         rotation_lookback = settings.get("sector_rotation_lookback", 8)
-        sector_boost_weight = settings.get("sector_boost_weight", 1.5)
+        sector_boost_weight = settings.get("sector_boost_weight", 0.5)
         sector_block_threshold = settings.get("sector_block_threshold", -5.0)
         self.sector_tracker.lookback = rotation_lookback
         self.sector_tracker.block_threshold = sector_block_threshold
@@ -664,6 +664,7 @@ class BacktestEngine:
                 # Record in sector tracker for rotation
                 if rotation_enabled:
                     self.sector_tracker.record_trade(trade)
+            if closed_today:
                 self.positions = [p for p in self.positions if p.exit_date is None]
 
             # 2. Check for new entries (if we have room)
@@ -805,6 +806,8 @@ class BacktestEngine:
 
                     # Verify risk is within budget (configurable % of current portfolio)
                     max_risk_pct = settings.get("max_risk_per_trade", 0.02)
+                    if risk_per_share <= 0:
+                        continue  # invalid stop setup
                     total_risk = risk_per_share * shares
                     if total_risk > current_portfolio * max_risk_pct:
                         max_shares = int(current_portfolio * max_risk_pct / risk_per_share)
@@ -815,7 +818,8 @@ class BacktestEngine:
                         continue  # Not enough cash
 
                     # Store ATR at entry for ATR-based trailing stop
-                    atr_at_entry = stock.atr_val.iloc[bar_idx] if not np.isnan(stock.atr_val.iloc[bar_idx]) else 0.0
+                    atr_val_raw = stock.atr_val.iloc[bar_idx]
+                    atr_at_entry = atr_val_raw if not np.isnan(atr_val_raw) and atr_val_raw > 0 else 0.0
 
                     pos = Position(
                         ticker=stock.ticker,
@@ -886,7 +890,7 @@ class BacktestEngine:
 
         # Profit factor
         gross_profit = sum(t.pnl for t in winners) if winners else 0
-        gross_loss = abs(sum(t.pnl for t in losers)) if losers else 1
+        gross_loss = abs(sum(t.pnl for t in losers)) if losers else 0
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
 
         # Max drawdown

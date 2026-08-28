@@ -243,7 +243,8 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
             continue
         
         # Adaptive bin count (matches original logic)
-        num_bins = min(20, int((price_max - price_min) / (close_arr[i] * 0.001)) + 1)
+        close_val = close_arr[i] if close_arr[i] > 0 else 1.0
+        num_bins = min(20, int((price_max - price_min) / (close_val * 0.001)) + 1)
         num_bins = max(num_bins, 5)
         
         bin_edges = np.linspace(price_min, price_max, num_bins + 1)

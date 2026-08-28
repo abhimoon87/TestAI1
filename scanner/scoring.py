@@ -344,7 +344,7 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     chop_sum = atr1.rolling(chop_len).sum()
     chop_range = high.rolling(chop_len).max() - low.rolling(chop_len).min()
     chop_safe_range = chop_range.replace(0, np.nan)
-    chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(chop_len)
+    chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(max(chop_len, 1))
     is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
     if is_sideways_chop:
         reasons.append("Chop")
@@ -404,14 +404,10 @@ def _score_momentum(curr: dict) -> float:
     if not np.isnan(curr["pc1m"]):
         if curr["pc1m"] > 0:
             s += min(7.0, 7.0 * (curr["pc1m"] / 5.0))
-        else:
-            s += max(-3.0, min(0.0, 7.0 * (curr["pc1m"] / 10.0)))
     if not np.isnan(curr["pc3m"]):
         if curr["pc3m"] > 0:
             s += min(8.0, 8.0 * (curr["pc3m"] / 10.0))
-        else:
-            s += max(-4.0, min(0.0, 8.0 * (curr["pc3m"] / 20.0)))
-    return max(0.0, min(s, 15.0))
+    return min(s, 15.0)
 
 
 def _score_rsi(curr: dict) -> float:

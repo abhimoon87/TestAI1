@@ -195,7 +195,7 @@ class TestCheckFilter:
         )
         if result is not None:
             # The crossover is bullish (fast crosses above slow)
-            assert result["ma_bullish"] is True or result["ma_bullish"] is False
+            assert result["ma_bullish"] is True
 
     def test_crossover_lookback_respected(self, synthetic_ohlcv):
         """Very small lookback should filter out old crossovers."""

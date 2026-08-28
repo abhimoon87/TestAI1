@@ -396,7 +396,8 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
         if not data or "PERatio" not in data:
             return None
 
-        pe_ratio = float(data.get("PERatio", 0)) or None
+        pe_raw = data.get("PERatio")
+        pe_ratio = float(pe_raw) if pe_raw is not None else None
         roe = float(data.get("ReturnOnEquityTTM", 0)) * 100 if data.get("ReturnOnEquityTTM") else None
         eps_growth = float(data.get("EPSGrowthTTM", 0)) * 100 if data.get("EPSGrowthTTM") else None
         rev_growth = float(data.get("RevenueGrowthTTM", 0)) * 100 if data.get("RevenueGrowthTTM") else None
