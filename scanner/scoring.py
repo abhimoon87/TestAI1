@@ -571,19 +571,6 @@ def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
     return min(fund_score, 20.0), fund_detail
 
 
-def _fundamental_max_points(fundamentals: Optional[dict]) -> float:
-    """Max achievable fundamental points given the data actually available.
-
-    Each of the 4 metrics (P/E, EPS growth, revenue growth, ROE) is worth
-    5 pts, but only when a value was successfully fetched. Used to normalize
-    totals so stocks without fundamental data aren't capped 20 pts low.
-    """
-    if not fundamentals:
-        return 0.0
-    n = sum(1 for k in ("pe_ratio", "eps_growth", "rev_growth", "roe")
-            if fundamentals.get(k) is not None)
-    return 5.0 * n
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL 3: COMBINED RATING

@@ -12,6 +12,7 @@ Or double-click run.bat (Windows) / run.sh (macOS/Linux)
 """
 
 import logging
+import math
 import os
 import sys
 import threading
@@ -30,7 +31,6 @@ from .report import generate_html_report, save_report, _sentiment
 from .settings_store import (
     DEFAULT_SETTINGS,
     SCANNER_DIR,
-    SETTINGS_FILE,
     load_settings,
     save_settings,
 )
@@ -38,6 +38,7 @@ from .themes import THEMES, apply_theme
 from .widgets import AvatarRing, GradientCanvas, ToolTip
 
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
+_LOG_LOCK = threading.Lock()
 LOG_ROTATE_HOURS = 12  # Overwrite log file after 12 hours
 
 
@@ -118,7 +119,6 @@ class ScannerApp(ctk.CTk):
             cv.create_rectangle(17, 23, 23, 30, fill=c["card"], outline="")
         elif kind == "gear":
             cx = cy = 20
-            import math
             for k in range(8):
                 a = math.radians(k * 45)
                 x1, y1 = cx + 7.5 * math.cos(a), cy + 7.5 * math.sin(a)
@@ -132,7 +132,6 @@ class ScannerApp(ctk.CTk):
             cv.create_oval(18, 8, 33, 25, fill=c["card"], outline="")
         elif kind == "sun":
             cx = cy = 20
-            import math
             for k in range(8):
                 a = math.radians(k * 45)
                 cv.create_line(cx + 8.5 * math.cos(a), cy + 8.5 * math.sin(a),
@@ -407,6 +406,7 @@ class ScannerApp(ctk.CTk):
                 command=cmd, state=state)
 
         self.html_btn = action_btn(actions, "\u2913", self._export_html, c["cyan"], "disabled")
+        self.html_btn.configure(text="\U0001f4c4  Export HTML")
         self.html_btn.pack(side="left", padx=3)
         ToolTip(self.html_btn, "Export HTML report")
 
@@ -440,7 +440,6 @@ class ScannerApp(ctk.CTk):
                                           font=("Segoe UI", 11),
                                           text="Set your universe on the left, then RUN SCAN \u2014 HMA\u00d7EMA crossover \u2022 10-factor score \u2022 news sentiment")
         self.hero_canvas = hero
-        self.hero_title_id = None
 
         # Stats row
         stats_wrap = ctk.CTkFrame(view, fg_color="transparent")
@@ -474,18 +473,20 @@ class ScannerApp(ctk.CTk):
             font=ctk.CTkFont(size=13), text_color=c["text_dim"])
         self.empty_label.pack(pady=30, anchor="center")
 
+    _RATING_ORDER = {"EXCELLENT": 0, "GOOD": 1, "MODERATE": 2, "POOR": 3}
+
     _SORT_KEYS = {
         1:  lambda r: r.get("ticker", ""),
-        2:  lambda r: r.get("total", 0),
-        3:  lambda r: r.get("combined_rating", "POOR"),
-        5:  lambda r: r.get("close", 0),
-        7:  lambda r: r.get("trend", 0),
-        8:  lambda r: r.get("momentum", 0),
-        9:  lambda r: r.get("rsi", 0),
-        10: lambda r: r.get("macd", 0),
-        11: lambda r: r.get("volume", 0),
-        12: lambda r: r.get("rel_str", 0),
-        13: lambda r: r.get("fundamentals", 0),
+        2:  lambda r: r.get("total", 0) or 0,
+        3:  lambda r: ScannerApp._RATING_ORDER.get(r.get("combined_rating", "POOR"), 9),
+        5:  lambda r: r.get("close", 0) or 0,
+        7:  lambda r: r.get("trend", 0) or 0,
+        8:  lambda r: r.get("momentum", 0) or 0,
+        9:  lambda r: r.get("rsi", 0) or 0,
+        10: lambda r: r.get("macd", 0) or 0,
+        11: lambda r: r.get("volume", 0) or 0,
+        12: lambda r: r.get("rel_str", 0) or 0,
+        13: lambda r: r.get("fundamentals", 0) or 0,
         14: lambda r: r.get("pc1m", 0) or 0,
         15: lambda r: r.get("trend_dir", ""),
         16: lambda r: r.get("adx_val", 0) or 0,
@@ -500,8 +501,9 @@ class ScannerApp(ctk.CTk):
             self.sort_col = col_idx
             self.sort_dir = "desc" if col_idx in (2, 7, 8, 9, 10, 11, 12, 13, 14, 16) else "asc"
         key_fn = self._SORT_KEYS[col_idx]
-        self.results.sort(key=key_fn, reverse=(self.sort_dir == "desc"))
-        self._display_results(self.results)
+        results_to_sort = list(self.results) if self.results else []
+        results_to_sort.sort(key=key_fn, reverse=(self.sort_dir == "desc"))
+        self._display_results(results_to_sort)
 
     def _render_table_header(self):
         """Render the compact column-header bar as the first row of table_frame."""
@@ -1380,11 +1382,14 @@ class ScannerApp(ctk.CTk):
         c = self.theme_colors
         self.html_btn.configure(state="disabled", text="\u23f3 Exporting\u2026")
 
+        snapshot_results = list(self.results) if self.results else []
+        snapshot_title = f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}"
+
         def _do_export():
             try:
                 html = generate_html_report(
-                    self.results,
-                    title=f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}",
+                    snapshot_results,
+                    title=snapshot_title,
                     threshold=threshold,
                     fetch_news=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1397,7 +1402,7 @@ class ScannerApp(ctk.CTk):
                 self.after(0, lambda: self._log(f"HTML export failed: {e}"))
             finally:
                 self.after(0, lambda: self.html_btn.configure(
-                    state="normal", text="\U0001f4c4  HTML"))
+                    state="normal", text="\U0001f4c4  Export HTML"))
 
         threading.Thread(target=_do_export, daemon=True).start()
 
@@ -1424,12 +1429,12 @@ class ScannerApp(ctk.CTk):
                     r["stoch"], r["obv"], r["volume"], r["rel_str"], r["volatility"],
                     r.get("fundamentals", 0),
                     r["trend_dir"], r.get("rsi_val"), r.get("adx_val"),
-                    "Yes" if r.get("is_sideways") else "No" + (f" ({sideways_reasons})" if sideways_reasons else ""),
+                    ("Yes" if r.get("is_sideways") else "No") + (f" ({sideways_reasons})" if sideways_reasons else ""),
                     r.get("pc1m"), r.get("pc3m")
                 ])
 
         self._log(f"CSV saved: {filename}")
-        os.startfile(filepath) if sys.platform == "win32" else os.system(f"open '{filepath}'")
+        os.startfile(filepath) if sys.platform == "win32" else webbrowser.open(f"file://{os.path.abspath(filepath)}")
 
     # ════════════════════════════════════════════════════════════════════════
     # UTILITIES
@@ -1513,8 +1518,9 @@ class ScannerApp(ctk.CTk):
         line = f"[{timestamp}] {msg}\n"
 
         try:
-            with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(line)
+            with _LOG_LOCK:
+                with open(LOG_FILE, "a", encoding="utf-8") as f:
+                    f.write(line)
         except Exception as e:
             logger.debug("Failed to write to log file: %s", e)
 

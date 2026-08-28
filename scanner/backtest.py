@@ -79,7 +79,6 @@ DEFAULT_SETTINGS = {
     # Sector rotation
     "sector_rotation_enabled": False,
     "sector_rotation_lookback": 8,    # last N trades to evaluate sector
-    "sector_min_momentum": 0.0,       # min sector momentum to allow entry
     "sector_block_threshold": -5.0,   # block sector if momentum below this (%)
     "sector_boost_weight": 0.5,       # bonus = min(momentum * this, 15 pts)
     # ATR-based stop loss
@@ -159,7 +158,7 @@ SECTOR_MAP = {
     "NYKAA": "Misc", "PAYTM": "Misc",
     "LALPATHLAB": "Misc", "METROPOLIS": "Misc",
     "DIXON": "Misc", "SONACOMS": "Misc",
-    "CROMPTON": "Misc", "VOLTAS": "Misc",
+    "CROMPTON": "Misc",
 }
 
 # Sector color coding for reports
@@ -468,17 +467,27 @@ def update_position(pos: Position, bar: pd.Series,
     close_val = bar["close"]
     current_date = bar.name
 
-    # --- Check stop loss first (gap down) ---
-    if low <= pos.stop_loss:
+    atr_trail = settings.get("atr_trail_enabled", False)
+    atr_mult = settings.get("atr_trail_multiplier", 2.5)
+
+    # --- Trailing stop check (must come before generic stop-loss) ---
+    # After target is hit, pos.stop_loss is ratcheted to the trail level.
+    # If we checked generic stop-loss first, it would fire with reason
+    # "STOP_LOSS" instead of "TRAILING_STOP".
+    if pos.hit_target and low <= pos.trail_stop:
+        exit_price = max(pos.trail_stop, low)
+        if opn < pos.trail_stop:
+            exit_price = opn
+        return _close_position(pos, exit_price, current_date, "TRAILING_STOP")
+
+    # --- Check initial stop loss (before target hit) ---
+    if not pos.hit_target and low <= pos.stop_loss:
         exit_price = max(pos.stop_loss, low)
         if opn < pos.stop_loss:
             exit_price = opn  # gap down: filled at open
         return _close_position(pos, exit_price, current_date, "STOP_LOSS")
 
     # --- Check target ---
-    atr_trail = settings.get("atr_trail_enabled", False)
-    atr_mult = settings.get("atr_trail_multiplier", 2.5)
-
     if not pos.hit_target and high >= pos.target_price:
         pos.hit_target = True
         pos.peak_price = pos.target_price
@@ -497,11 +506,6 @@ def update_position(pos: Position, bar: pd.Series,
             else:
                 pos.trail_stop = pos.peak_price * (1 - settings["trail_pct"] / 100)
             pos.stop_loss = max(pos.stop_loss, pos.trail_stop)
-
-        # Check trailing stop
-        if low <= pos.trail_stop:
-            exit_price = max(pos.trail_stop, low)
-            return _close_position(pos, exit_price, current_date, "TRAILING_STOP")
 
     return None
 
@@ -741,7 +745,7 @@ class BacktestEngine:
 
                         if is_top and sector_momentum > 0:
                             # Add fixed bonus for top sectors (capped at +15 pts)
-                            bonus = min(sector_momentum * 0.5, 15.0)
+                            bonus = min(sector_momentum * sector_boost_weight, 15.0)
                             adjusted_score = base_score + bonus
                             signals_boosted += 1
                             self.sector_tracker.log_decision(

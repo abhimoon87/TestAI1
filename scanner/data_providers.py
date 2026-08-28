@@ -428,19 +428,19 @@ def _fetch_fundamentals_yfinance(ticker: str) -> Optional[dict]:
 
         eps_growth = info.get("earningsGrowth")
         if eps_growth is not None:
-            eps_growth = eps_growth * 100 if abs(eps_growth) < 100 else eps_growth
+            eps_growth = eps_growth * 100 if abs(eps_growth) <= 1 else eps_growth
         else:
             earnings_q = info.get("earningsQuarterlyGrowth")
             if earnings_q is not None:
-                eps_growth = earnings_q * 100 if abs(earnings_q) < 100 else earnings_q
+                eps_growth = earnings_q * 100 if abs(earnings_q) <= 1 else earnings_q
 
         rev_growth = info.get("revenueGrowth")
         if rev_growth is not None:
-            rev_growth = rev_growth * 100 if abs(rev_growth) < 100 else rev_growth
+            rev_growth = rev_growth * 100 if abs(rev_growth) <= 1 else rev_growth
 
         roe = info.get("returnOnEquity")
         if roe is not None:
-            roe = roe * 100 if abs(roe) < 100 else roe
+            roe = roe * 100 if abs(roe) <= 1 else roe
 
         return {
             "pe_ratio": pe_ratio,

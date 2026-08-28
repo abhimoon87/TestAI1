@@ -237,6 +237,23 @@ class TestUpdatePosition:
         assert result is not None
         assert result.exit_reason == "TRAILING_STOP"
 
+    def test_trailing_stop_not_mislabeled_as_stop_loss(self):
+        """After target hit, trailing stop should be labeled TRAILING_STOP, not STOP_LOSS."""
+        settings = {**DEFAULT_SETTINGS, "trail_pct": 2.0}
+        pos = _make_pos(entry_price=100.0, stop_loss=95.0, target_price=120.0)
+        # Simulate: target was hit on a previous bar, stop_loss was ratcheted up
+        pos.hit_target = True
+        pos.peak_price = 125.0
+        pos.trail_stop = 125.0 * 0.98  # 122.5
+        pos.stop_loss = max(95.0, pos.trail_stop)  # ratcheted to 122.5
+        # Bar where low pierces the trail level
+        bar = pd.Series({"open": 123.0, "high": 124.0, "low": 121.0, "close": 122.0},
+                        name=datetime(2025, 1, 10))
+        result = update_position(pos, bar, 0, settings)
+        assert result is not None
+        assert result.exit_reason == "TRAILING_STOP", \
+            f"Expected TRAILING_STOP but got {result.exit_reason}"
+
     def test_no_exit_on_normal_bar(self):
         settings = {**DEFAULT_SETTINGS}
         pos = _make_pos(entry_price=100.0, stop_loss=95.0, target_price=120.0)
@@ -278,3 +295,45 @@ class TestComputeMetrics:
         assert metrics["best_trade"].pnl_pct == 15.0
         assert metrics["worst_trade"].pnl_pct == -5.0
         assert metrics["max_drawdown_pct"] >= 0
+
+
+class TestNegativeScenarios:
+    def test_losing_trade_pnl_negative(self):
+        t = _make_trade(pnl=-10.0)
+        assert t.pnl < 0
+        assert t.pnl_pct == -10.0
+
+    def test_stop_loss_gap_down(self):
+        pos = _make_pos(entry_price=100.0, stop_loss=95.0)
+        bar = pd.Series({"open": 90.0, "high": 92.0, "low": 88.0, "close": 89.0},
+                        name=datetime(2025, 1, 2))
+        result = update_position(pos, bar, 0, DEFAULT_SETTINGS)
+        assert result is not None
+        assert result.exit_reason == "STOP_LOSS"
+        assert result.exit_price == 90.0  # filled at open
+
+    def test_no_cross_stays_open(self):
+        """Fresh engine has no open positions."""
+        engine = BacktestEngine()
+        assert len(engine.positions) == 0
+
+    def test_sector_tracker_no_trades(self):
+        tracker = SectorTracker(lookback=5)
+        assert tracker.is_top_sector("IT") is False
+        assert tracker.is_sector_blocked("Banking") is False
+
+    def test_compute_metrics_all_losing(self):
+        engine = BacktestEngine()
+        engine.trades = [
+            _make_trade(pnl=-5.0),
+            _make_trade(pnl=-3.0),
+            _make_trade(pnl=-8.0),
+        ]
+        engine.equity_curve = [
+            (datetime(2025, 1, 1), 1_000_000),
+            (datetime(2025, 1, 20), 984_000),
+        ]
+        metrics = engine._compute_metrics(1_000_000, 10, 3)
+        assert metrics["win_rate"] == 0.0
+        assert metrics["total_pnl"] < 0
+        assert metrics["worst_trade"].pnl_pct == -8.0
