@@ -3,6 +3,11 @@ Stock universe definitions for Indian market scanner.
 All tickers are NSE symbols (suffix .NS added at fetch time).
 """
 
+import logging
+from typing import Callable, Dict, List
+
+logger = logging.getLogger(__name__)
+
 # ── NIFTY 50 ────────────────────────────────────────────────────────────────
 NIFTY_50 = [
     "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ-AUTO",
@@ -281,22 +286,43 @@ UNIVERSES = {
 # ── Dynamic Universe Functions ──────────────────────────────────────────────
 # These fetch live data from NSE via nselib. Use for up-to-date universes.
 
+# Cache for dynamic universes (4 hour TTL)
+_DYNAMIC_UNIVERSE_CACHE = {}
+_DYNAMIC_UNIVERSE_CACHE_TIME = 0
+_DYNAMIC_UNIVERSE_TTL = 4 * 3600  # 4 hours in seconds
+
 def _get_dynamic_universes() -> dict:
     """Fetch all dynamic NSE universes. Cached for 4 hours."""
+    import time
+    
+    global _DYNAMIC_UNIVERSE_CACHE, _DYNAMIC_UNIVERSE_CACHE_TIME
+    
+    # Return cached if valid
+    if _DYNAMIC_UNIVERSE_CACHE and (time.time() - _DYNAMIC_UNIVERSE_CACHE_TIME) < _DYNAMIC_UNIVERSE_TTL:
+        return _DYNAMIC_UNIVERSE_CACHE
+    
     try:
         from .symbol_fetcher import fetch_all_nse_symbols
         data = fetch_all_nse_symbols()
-        return {
-            "NSE MAINBOARD (Live)": data["mainboard"],
-            "NSE F&O (Live)": data["fno"],
-            "NSE SME (Live)": data["sme"],
-            "NIFTY 50 (Live)": data["nifty50"],
-            "NIFTY NEXT 50 (Live)": data["niftynext50"],
-            "NIFTY MIDCAP 150 (Live)": data["midcap150"],
-            "NIFTY SMALLCAP 250 (Live)": data["smallcap250"],
-            "ALL NSE UNIQUE (Live)": list(set().union(*data.values())),
+        dynamic = {
+            "LIVE: NSE Mainboard": data["mainboard"],
+            "LIVE: NSE F&O": data["fno"],
+            "LIVE: NSE SME": data["sme"],
+            "LIVE: NIFTY 50": data["nifty50"],
+            "LIVE: NIFTY NEXT 50": data["niftynext50"],
+            "LIVE: NIFTY MIDCAP 150": data["midcap150"],
+            "LIVE: NIFTY SMALLCAP 250": data["smallcap250"],
+            "LIVE: All NSE Unique": list(set().union(*data.values())),
         }
-    except Exception:
+        _DYNAMIC_UNIVERSE_CACHE = dynamic
+        _DYNAMIC_UNIVERSE_CACHE_TIME = time.time()
+        return dynamic
+    except (ImportError, KeyError, ValueError, ConnectionError, TimeoutError) as e:
+        logger.warning("Failed to fetch dynamic universes: %s", e)
+        # Return stale cache if available
+        if _DYNAMIC_UNIVERSE_CACHE:
+            logger.info("Returning stale cached dynamic universes")
+            return _DYNAMIC_UNIVERSE_CACHE
         return {}
 
 
@@ -304,10 +330,10 @@ def get_universe(name: str) -> list[str]:
     """
     Get universe by name. Supports static and dynamic universes.
     
-    Static: "NIFTY 50", "FnO STOCKS", etc.
-    Dynamic: "NSE MAINBOARD (Live)", "NSE F&O (Live)", "NSE SME (Live)",
-             "NIFTY 50 (Live)", "NIFTY NEXT 50 (Live)", "NIFTY MIDCAP 150 (Live)",
-             "NIFTY SMALLCAP 250 (Live)", "ALL NSE UNIQUE (Live)"
+    Static (hardcoded): "NIFTY 50", "FnO STOCKS", etc.
+    Dynamic (LIVE, fetched from NSE): "LIVE: NSE Mainboard", "LIVE: NSE F&O", "LIVE: NSE SME",
+             "LIVE: NIFTY 50", "LIVE: NIFTY NEXT 50", "LIVE: NIFTY MIDCAP 150",
+             "LIVE: NIFTY SMALLCAP 250", "LIVE: All NSE Unique"
     """
     if name in UNIVERSES:
         return UNIVERSES[name]

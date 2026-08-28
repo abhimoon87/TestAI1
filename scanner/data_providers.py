@@ -517,6 +517,14 @@ class DataProvider:
         # Track which provider was last used (for UI display)
         self.last_provider = None
         self.last_error = None
+        
+        # Metrics for observability
+        self._metrics = {
+            "stock_fetches": {"total": 0, "success": 0, "cache_hits": 0},
+            "index_fetches": {"total": 0, "success": 0, "cache_hits": 0},
+            "provider_stats": {},  # per-provider: success, failures, avg_latency
+            "errors": [],  # recent errors
+        }
 
     def fetch_stock(self, ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
         """
@@ -530,12 +538,18 @@ class DataProvider:
         """
         self.last_provider = None
         self.last_error = None
+        import time
+        start_time = time.time()
+
+        self._metrics["stock_fetches"]["total"] += 1
 
         # Check cache first
         if self.use_cache:
             cached = _get_cached(ticker, period, "cache")
             if cached is not None:
                 self.last_provider = "cache"
+                self._metrics["stock_fetches"]["cache_hits"] += 1
+                self._metrics["stock_fetches"]["success"] += 1
                 return cached
 
         # Provider chain
@@ -546,19 +560,40 @@ class DataProvider:
         ]
 
         for name, fetch_fn in providers:
+            provider_start = time.time()
             try:
                 df = fetch_fn()
+                latency = time.time() - provider_start
                 if df is not None and not df.empty and len(df) >= 50:
                     self.last_provider = name
                     if self.use_cache:
                         _set_cached(ticker, period, "cache", df)
+                    self._metrics["stock_fetches"]["success"] += 1
+                    self._record_provider_metric(name, True, latency)
                     return df
             except Exception as e:
+                latency = time.time() - provider_start
                 self.last_error = f"{name}: {str(e)}"
+                self._record_provider_metric(name, False, latency)
+                self._metrics["errors"].append(f"{name}: {str(e)}")
+                if len(self._metrics["errors"]) > 20:
+                    self._metrics["errors"] = self._metrics["errors"][-20:]
                 continue
 
+        self._metrics["errors"].append("All providers failed")
         self.last_error = "All providers failed"
         return None
+
+    def _record_provider_metric(self, provider: str, success: bool, latency: float):
+        """Record provider metrics for observability."""
+        if provider not in self._metrics["provider_stats"]:
+            self._metrics["provider_stats"][provider] = {"success": 0, "failures": 0, "total_latency": 0.0}
+        stats = self._metrics["provider_stats"][provider]
+        if success:
+            stats["success"] += 1
+        else:
+            stats["failures"] += 1
+        stats["total_latency"] += latency
 
     def fetch_index(self, ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
         """Fetch index data with provider fallback."""
@@ -626,3 +661,23 @@ class DataProvider:
         if os.path.exists(CACHE_DIR):
             shutil.rmtree(CACHE_DIR)
             _ensure_cache_dir()
+
+    def get_metrics(self) -> dict:
+        """Return provider metrics for monitoring/debugging."""
+        # Calculate average latencies
+        provider_stats = {}
+        for name, stats in self._metrics["provider_stats"].items():
+            total = stats["success"] + stats["failures"]
+            avg_latency = stats["total_latency"] / total if total > 0 else 0.0
+            provider_stats[name] = {
+                "success": stats["success"],
+                "failures": stats["failures"],
+                "success_rate": stats["success"] / total if total > 0 else 0.0,
+                "avg_latency_sec": round(avg_latency, 3),
+            }
+        return {
+            "stock_fetches": self._metrics["stock_fetches"],
+            "index_fetches": self._metrics["index_fetches"],
+            "provider_stats": provider_stats,
+            "recent_errors": self._metrics["errors"][-10:],
+        }

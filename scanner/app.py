@@ -34,6 +34,7 @@ from .settings_store import (
     load_settings,
     save_settings,
 )
+from .scanner_engine import ScannerEngine, ScanResult
 from .themes import THEMES, apply_theme
 from .widgets import AvatarRing, GradientCanvas, ToolTip
 
@@ -63,13 +64,12 @@ class ScannerApp(ctk.CTk):
         self.minsize(1280, 800)
         try:
             self.state("zoomed")  # Start maximized
-        except Exception:
+        except (AttributeError, RuntimeError):
             pass
 
         self.settings = load_settings()
         self.results = []
         self.scanning = False
-        self._cancel_scan = threading.Event()
         self.filter_text = ""
         self.active_view = "dashboard"
         self.sort_col = None
@@ -915,20 +915,19 @@ class ScannerApp(ctk.CTk):
     def _start_scan(self):
         if self.scanning:
             # Toggle to cancel
-            self._cancel_scan.set()
+            self._engine.cancel()
             c = self.theme_colors
             self.run_btn.configure(text="\u23f9   CANCELLING\u2026",
                                    state="disabled", fg_color=c["card2"])
             return
 
-        self._cancel_scan.clear()
         self.settings = self._collect_settings()
         save_settings(self.settings)
 
         self.scanning = True
         # Snapshot tkinter state for background thread (unsafe to read from threads)
-        self._scan_universe = self.universe_var.get()
-        self._scan_settings = dict(self.settings)
+        universe = self.universe_var.get()
+        settings = dict(self.settings)
         c = self.theme_colors
         self.run_btn.configure(state="disabled", text="\u23f3   SCANNING\u2026",
                                fg_color=c["card2"])
@@ -947,134 +946,38 @@ class ScannerApp(ctk.CTk):
             font=ctk.CTkFont(size=13), text_color=self.theme_colors["text_dim"])
         scanning_lbl.pack(pady=30, anchor="center")
 
-        thread = threading.Thread(target=self._run_scan, daemon=True)
-        thread.start()
-
-    def _run_scan(self):
-        """Run the scan in a background thread."""
-        try:
-            universe_name = self._scan_universe
-            tickers = UNIVERSES.get(universe_name, [])
-            settings = self._scan_settings
+        # Use ScannerEngine for headless scanning
+        self._engine = ScannerEngine()
+        self._engine.set_progress_callback(
+            lambda p, t: self._set_progress(p, t)
+        )
+        self._engine.set_log_callback(self._log)
+        
+        def run_scan():
             period = settings.get("data_period", "1y")
             timeframe = settings.get("timeframe", "D")
             trend_filter = settings.get("trend_filter", "All")
-
-            tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
-            self._log("\n" + "=" * 50)
-            self._log(f"START SCAN | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log("=" * 50)
-            self._log(f"Starting scan: {universe_name} ({len(tickers)} stocks)")
-            self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
-            self._log(f"FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
-                       f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
-                       f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
-
-            # Fetch NIFTY index
-            self._set_progress(0, "Fetching NIFTY 50 index...")
             index_symbol = settings.get("index_symbol", "NSEI")
-            index_df = fetch_index_data(f"^{index_symbol}", period=period)
-            if index_df is not None:
-                self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
-            else:
-                self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
-
-            # FAST: Batch download all stocks at once via yfinance
-            self._set_progress(0.05, f"Batch downloading {len(tickers)} stocks...")
-            self._log(f"Batch downloading {len(tickers)} stocks via yfinance...")
-            batch_data = fetch_batch_yfinance(tickers, period=period, timeframe=timeframe)
-            self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
-
-            # ── 3-Model Pipeline ────────────────────────────────────────────
-            results = []
-            total = len(batch_data)
-            filtered_out = 0
-            direction_counts = {"Bull": 0, "Bear": 0}
-
-            for i, (ticker, df) in enumerate(batch_data.items(), 1):
-                if self._cancel_scan.is_set():
-                    self._log("\n\u23f9  Scan cancelled by user")
-                    break
-                progress = 0.1 + (i / total * 0.9) if total > 0 else 0.5
-                self._set_progress(progress, f"[{i}/{total}] {ticker}")
-
-                try:
-                    if df is None or df.empty:
-                        continue
-
-                    # ── MODEL 1: Stock Filter ────────────────────────────────
-                    filter_result = check_filter(
-                        df,
-                        fast_ma_type=settings["fast_ma_type"],
-                        fast_ma_len=settings["fast_ma_len"],
-                        slow_ma_type=settings["slow_ma_type"],
-                        slow_ma_len=settings["slow_ma_len"],
-                        crossover_lookback=settings["crossover_lookback"],
-                    )
-                    if filter_result is None:
-                        filtered_out += 1
-                        continue
-
-                    # ── MODEL 2: Bullish / Bearish ──────────────────────────
-                    direction = get_direction(filter_result)
-
-                    if trend_filter == "Bullish Only" and direction != "Bull":
-                        filtered_out += 1
-                        continue
-                    elif trend_filter == "Bearish Only" and direction != "Bear":
-                        filtered_out += 1
-                        continue
-
-                    direction_counts[direction] = direction_counts.get(direction, 0) + 1
-
-                    # ── MODEL 3: Techno-Fundamental Scoring ─────────────────
-                    if not hasattr(df, '_fundamentals') or df._fundamentals is None:
-                        try:
-                            fund = fetch_fundamentals(ticker)
-                            if fund is not None:
-                                df._fundamentals = fund
-                        except Exception as e:
-                            logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
-
-                    scores = compute_scores(
-                        df, timeframe=timeframe, index_df=index_df,
-                        settings=settings,
-                    )
-                    if scores is None:
-                        continue
-
-                    scores["ticker"] = ticker
-                    scores["trend_dir"] = direction  # Override with pipeline direction
-                    scores["trend_color"] = direction.lower()
-                    results.append(scores)
-
-                    if len(results) % 10 == 0 or len(results) <= 5:
-                        score_val = scores["total"]
-                        tag = "\u2713" if score_val >= settings["min_score"] else "\u2717"
-                        self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
-
-                except Exception as e:
-                    logger.debug("Skipping %s in batch scan: %s", ticker, e)
-
-            # Sort and store
-            results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-
-            passed = len([r for r in results if r["total"] >= settings["min_score"]])
-            self._log("\n\u2501" * 25 + " Scan Complete ")
-            self._log(f"  Total stocks:  {len(tickers)}")
-            self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
-            self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
-            self._log(f"  Scored {settings['min_score']}+: {passed}")
-
-            def _apply_results(r=results):
-                self.results = r
-                self._display_results(r)
+            
+            result = self._engine.scan(
+                universe=self.universe_var.get(),
+                settings=settings,
+                period=period,
+                timeframe=timeframe,
+                trend_filter=trend_filter,
+                index_symbol=index_symbol,
+            )
+            
+            def _apply_results():
+                if result.results:
+                    self.results = result.results
+                    self._display_results(result.results)
+                self._scan_complete(result.cancelled, result.error)
+            
             self.after(0, _apply_results)
-
-        except Exception as e:
-            self._log(f"\nERROR: {str(e)}")
-        finally:
-            self.after(0, self._scan_complete)
+        
+        thread = threading.Thread(target=run_scan, daemon=True)
+        thread.start()
 
     def _display_results(self, results):
         """Display filtered results in the glassy table (main thread only)."""
@@ -1327,14 +1230,25 @@ class ScannerApp(ctk.CTk):
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _scan_complete(self):
+    def _scan_complete(self, cancelled: bool = False, error: str = None):
         """Re-enable UI after scan finishes."""
         self.scanning = False
         c = self.theme_colors
-        self.run_btn.configure(state="normal", text="\u25b6   RUN SCAN",
-                               fg_color=c["purple"])
-        self.progress_label.configure(text="Done")
-        self.status_label.configure(text="Status: Done")
+        if cancelled:
+            self.run_btn.configure(state="normal", text="\u25b6   RUN SCAN",
+                                   fg_color=c["purple"])
+            self.progress_label.configure(text="Cancelled")
+            self.status_label.configure(text="Status: Cancelled")
+        elif error:
+            self.run_btn.configure(state="normal", text="\u25b6   RUN SCAN",
+                                   fg_color=c["purple"])
+            self.progress_label.configure(text="Error")
+            self.status_label.configure(text=f"Status: Error - {error}")
+        else:
+            self.run_btn.configure(state="normal", text="\u25b6   RUN SCAN",
+                                   fg_color=c["purple"])
+            self.progress_label.configure(text="Done")
+            self.status_label.configure(text="Status: Done")
         if self.results:
             self.html_btn.configure(state="normal")
             self.csv_btn.configure(state="normal")
@@ -1390,11 +1304,27 @@ class ScannerApp(ctk.CTk):
 
         def _do_export():
             try:
-                html = generate_html_report(
-                    snapshot_results,
-                    title=snapshot_title,
-                    threshold=threshold,
-                    fetch_news=True)
+                # Use ThreadPoolExecutor with timeout for news fetching
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        generate_html_report,
+                        snapshot_results,
+                        title=snapshot_title,
+                        threshold=threshold,
+                        fetch_news=True
+                    )
+                    try:
+                        html = future.result(timeout=60)  # 60 second timeout for news fetch
+                    except FuturesTimeoutError:
+                        self.after(0, lambda: self._log("News fetch timed out, generating report without news"))
+                        html = generate_html_report(
+                            snapshot_results,
+                            title=snapshot_title,
+                            threshold=threshold,
+                            fetch_news=False
+                        )
+                
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"scanner_report_{timestamp}.html"
                 filepath = os.path.join(SCANNER_DIR, filename)
@@ -1537,7 +1467,7 @@ class ScannerApp(ctk.CTk):
             try:
                 self.log_text.insert("end", line)
                 self.log_text.see("end")
-            except Exception:
+            except (RuntimeError, ValueError, AttributeError):
                 pass  # Widget may be rebuilding during theme switch
 
         self.after(0, _append)

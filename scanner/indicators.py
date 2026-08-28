@@ -3,6 +3,10 @@ Technical indicator calculations.
 Mirrors the indicators used in the Pine Script scoring engine.
 """
 
+import hashlib
+import time
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 
@@ -214,6 +218,35 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
     """
     Volume Profile Point of Control (POC) - the price level with highest volume.
 
+    Vectorized implementation with caching: O(n × num_bins) per call, 
+    but cached results are returned for identical data.
+
+    Args:
+        high: High prices
+        low: Low prices
+        close: Close prices
+        volume: Volume data
+        lookback: Number of bars to look back (default 55 = ~11 weeks for daily)
+
+    Returns:
+        Series with POC values for each bar
+    """
+    # Use caching based on data hash + lookback
+    cache_key = _poc_cache_key(high, low, close, volume, lookback)
+    cached = _poc_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    
+    result = _volume_profile_poc_impl(high, low, close, volume, lookback)
+    _poc_cache_set(cache_key, result)
+    return result
+
+
+def _volume_profile_poc_impl(high: pd.Series, low: pd.Series, close: pd.Series,
+                            volume: pd.Series, lookback: int = 55) -> pd.Series:
+    """
+    Volume Profile Point of Control (POC) - the price level with highest volume.
+
     Vectorized implementation: O(n × num_bins) instead of O(n × lookback × num_bins).
 
     Args:
@@ -277,3 +310,37 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
         poc_series.iloc[i] = bin_centers[np.argmax(bin_volumes)]
     
     return poc_series
+
+
+# POC cache with TTL
+_POC_CACHE = {}
+_POC_CACHE_TTL = 4 * 3600  # 4 hours
+
+
+def _poc_cache_key(high: pd.Series, low: pd.Series, close: pd.Series,
+                   volume: pd.Series, lookback: int) -> str:
+    """Generate cache key based on data hash and lookback."""
+    import hashlib
+    # Use last 5 bars of each series + lookback for key
+    h = high.iloc[-5:].values.tobytes() if len(high) >= 5 else high.values.tobytes()
+    l = low.iloc[-5:].values.tobytes() if len(low) >= 5 else low.values.tobytes()
+    c = close.iloc[-5:].values.tobytes() if len(close) >= 5 else close.values.tobytes()
+    v = volume.iloc[-5:].values.tobytes() if len(volume) >= 5 else volume.values.tobytes()
+    data = f"{lookback}:{h}:{l}:{c}:{v}"
+    return hashlib.md5(data.encode()).hexdigest()
+
+
+def _poc_cache_get(key: str) -> Optional[pd.Series]:
+    """Get cached POC result if valid."""
+    import time
+    if key in _POC_CACHE:
+        result, timestamp = _POC_CACHE[key]
+        if time.time() - timestamp < 4 * 3600:  # 4 hour TTL
+            return result
+    return None
+
+
+def _poc_cache_set(key: str, value: pd.Series):
+    """Set cached POC result with timestamp."""
+    import time
+    _POC_CACHE[key] = (value, time.time())
