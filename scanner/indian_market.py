@@ -460,6 +460,7 @@ def fetch_mandi_prices(
 
     try:
         # Try data.gov.in API (Indian government open data)
+        # This API can be slow, use longer timeout
         url = "https://api.data.gov.in/resource/359846c8-0eae-4f53-a69b-8d5dd13057f0"
         params = {
             "format": "json",
@@ -470,9 +471,20 @@ def fetch_mandi_prices(
         if state:
             params["filters[state]"] = state
 
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+        # Retry up to 2 times with increasing timeout
+        for attempt in range(2):
+            try:
+                resp = requests.get(url, params=params, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except requests.exceptions.Timeout:
+                if attempt < 1:
+                    time.sleep(2)
+                    continue
+                raise
+        else:
+            return None
 
         prices = []
         records = data.get("records", [])

@@ -118,10 +118,14 @@ def fetch_reddit_sentiment(
     bullish = 0
     bearish = 0
 
-    headers = {"User-Agent": "StockScanner/1.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
 
     for sub in subreddits:
         try:
+            # Use Reddit's public API with oauth-free endpoint
             url = f"https://www.reddit.com/r/{sub}/search.json"
             params = {
                 "q": symbol,
@@ -130,10 +134,13 @@ def fetch_reddit_sentiment(
                 "t": "week",
                 "limit": limit,
             }
-            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            resp = requests.get(url, headers=headers, params=params, timeout=15)
             if resp.status_code == 429:
                 logger.debug("Reddit rate limited for r/%s", sub)
-                time.sleep(2)
+                time.sleep(3)
+                continue
+            if resp.status_code == 403:
+                logger.debug("Reddit blocked r/%s (403)", sub)
                 continue
             resp.raise_for_status()
             data = resp.json()

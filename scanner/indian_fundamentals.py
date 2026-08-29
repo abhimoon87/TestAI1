@@ -54,7 +54,8 @@ class TrendlyneFundamentals:
 
 def fetch_trendlyne_fundamentals(ticker: str) -> Optional[TrendlyneFundamentals]:
     """
-    Fetch fundamental data from Trendlyne (free, no API key).
+    Fetch fundamental data using Yahoo Finance (reliable, free).
+    Trendlyne blocks automated access, so we use Yahoo as primary.
     
     Args:
         ticker: NSE ticker symbol (e.g., "RELIANCE")
@@ -68,52 +69,33 @@ def fetch_trendlyne_fundamentals(ticker: str) -> Optional[TrendlyneFundamentals]
         return TrendlyneFundamentals(**cached, cached=True)
 
     try:
-        # Trendlyne public API endpoint for stock data
-        url = f"https://trendlyne.com/equity/{ticker}/"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        import yfinance as yf
         
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        html = resp.text
+        # Add .NS suffix for NSE stocks if not present
+        yf_ticker = ticker if ticker.endswith(".NS") else f"{ticker}.NS"
+        stock = yf.Ticker(yf_ticker)
+        info = stock.info
+        
+        if not info or info.get("regularMarketPrice") is None:
+            logger.debug("Yahoo Finance: no data for %s", ticker)
+            return None
 
         result = {}
-
-        # Extract PE ratio
-        pe_match = re.search(r'PE\s*(?:Ratio)?\s*[:=]\s*(\d+\.?\d*)', html, re.IGNORECASE)
-        if pe_match:
-            result["pe_ratio"] = float(pe_match.group(1))
-
-        # Extract PB ratio
-        pb_match = re.search(r'PB\s*(?:Ratio)?\s*[:=]\s*(\d+\.?\d*)', html, re.IGNORECASE)
-        if pb_match:
-            result["pb_ratio"] = float(pb_match.group(1))
-
-        # Extract ROE
-        roe_match = re.search(r'ROE\s*[:=]\s*(\d+\.?\d*)%?', html, re.IGNORECASE)
-        if roe_match:
-            result["roe"] = float(roe_match.group(1))
-
-        # Extract ROCE
-        roce_match = re.search(r'ROCE\s*[:=]\s*(\d+\.?\d*)%?', html, re.IGNORECASE)
-        if roce_match:
-            result["roce"] = float(roce_match.group(1))
-
-        # Extract Dividend Yield
-        div_match = re.search(r'Dividend\s*Yield\s*[:=]\s*(\d+\.?\d*)%?', html, re.IGNORECASE)
-        if div_match:
-            result["dividend_yield"] = float(div_match.group(1))
-
-        # Extract Debt to Equity
-        de_match = re.search(r'Debt.*?Equity\s*[:=]\s*(\d+\.?\d*)', html, re.IGNORECASE)
-        if de_match:
-            result["debt_to_equity"] = float(de_match.group(1))
-
-        # Extract Promoter Holding
-        promo_match = re.search(r'Promoter\s*(?:Holding)?\s*[:=]\s*(\d+\.?\d*)%?', html, re.IGNORECASE)
-        if promo_match:
-            result["promoter_holding"] = float(promo_match.group(1))
+        
+        if info.get("trailingPE"):
+            result["pe_ratio"] = float(info["trailingPE"])
+        if info.get("priceToBook"):
+            result["pb_ratio"] = float(info["priceToBook"])
+        if info.get("returnOnEquity"):
+            result["roe"] = float(info["returnOnEquity"]) * 100
+        if info.get("returnOnCapitalEmployed"):
+            result["roce"] = float(info["returnOnCapitalEmployed"]) * 100
+        if info.get("dividendYield"):
+            result["dividend_yield"] = float(info["dividendYield"]) * 100
+        if info.get("debtToEquity"):
+            result["debt_to_equity"] = float(info["debtToEquity"])
+        if info.get("heldPercentInsiders"):
+            result["promoter_holding"] = float(info["heldPercentInsiders"]) * 100
 
         if not result:
             return None
@@ -123,7 +105,7 @@ def fetch_trendlyne_fundamentals(ticker: str) -> Optional[TrendlyneFundamentals]
         return fund
 
     except Exception as e:
-        logger.debug("Trendlyne fetch failed for %s: %s", ticker, e)
+        logger.debug("Yahoo Fundamentals fetch failed for %s: %s", ticker, e)
         return None
 
 

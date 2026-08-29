@@ -543,6 +543,7 @@ class WallstreetBetsSentiment:
 def fetch_wallstreetbets_sentiment(ticker: str) -> Optional[WallstreetBetsSentiment]:
     """
     Fetch WallstreetBets sentiment for a ticker (free, no key).
+    Uses Reddit's public JSON API to search r/wallstreetbets.
     
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
@@ -556,17 +557,59 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> Optional[WallstreetBetsSentim
         return WallstreetBetsSentiment(**cached, cached=True)
 
     try:
-        # Try wallstreetbets API
-        url = f"https://api.wallstreetbets.io/api/sentiment/{ticker.upper()}"
-        resp = requests.get(url, timeout=10)
+        # Use Reddit's public JSON API for wallstreetbets
+        symbol = ticker.replace(".NS", "").replace(".BO", "")
+        url = "https://www.reddit.com/r/wallstreetbets/search.json"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+        }
+        params = {
+            "q": symbol,
+            "restrict_sr": "on",
+            "sort": "new",
+            "t": "week",
+            "limit": 25,
+        }
+
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        if resp.status_code == 403:
+            logger.debug("WSB: Reddit blocked (403)")
+            return None
         resp.raise_for_status()
         data = resp.json()
 
+        posts = data.get("data", {}).get("children", [])
+        mention_count = len(posts)
+
+        if mention_count == 0:
+            return WallstreetBetsSentiment(
+                ticker=ticker.upper(), mention_count=0,
+                sentiment_score=0.0, top_posts=[],
+            )
+
+        # Simple sentiment from upvotes and titles
+        sentiments = []
+        top_posts = []
+        for post in posts[:10]:
+            p = post.get("data", {})
+            title = p.get("title", "")
+            upvotes = p.get("ups", 0)
+            sentiment = 0.1 if upvotes > 100 else (-0.1 if upvotes < -10 else 0)
+            sentiments.append(sentiment)
+            top_posts.append({
+                "title": title[:120],
+                "upvotes": upvotes,
+                "url": f"https://reddit.com{p.get('permalink', '')}",
+            })
+
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+
         result = WallstreetBetsSentiment(
             ticker=ticker.upper(),
-            mention_count=data.get("mention_count", 0),
-            sentiment_score=data.get("sentiment_score", 0),
-            top_posts=data.get("top_posts", []),
+            mention_count=mention_count,
+            sentiment_score=round(avg_sentiment, 3),
+            top_posts=top_posts,
         )
 
         _cache_set(cache_k, {
@@ -600,7 +643,8 @@ def fetch_noozra_news(
     max_items: int = 10,
 ) -> Optional[list[NoozraNews]]:
     """
-    Fetch free news headlines from Noozra (200+ RSS sources, free, no key).
+    Fetch free news headlines from Google News RSS (free, no key).
+    Fallback for Noozra API (domain may be unavailable).
     
     Args:
         query: Search query (e.g., "RELIANCE", "NIFTY")
@@ -609,29 +653,37 @@ def fetch_noozra_news(
     Returns:
         List of NoozraNews or None
     """
-    cache_k = hashlib.md5(f"noozra:{query}:{max_items}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"news:{query}:{max_items}".encode()).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return [NoozraNews(**item) for item in cached.get("news", [])]
 
     try:
-        # Try noozra.com API
-        url = "https://api.noozra.com/v1/news"
-        params = {"limit": max_items}
-        if query:
-            params["q"] = query
-
-        resp = requests.get(url, params=params, timeout=10)
+        # Use Google News RSS feed (free, no key)
+        import xml.etree.ElementTree as ET
+        
+        search_query = query or "Indian stock market"
+        url = f"https://news.google.com/rss/search?q={search_query}+when:7d&hl=en-IN&gl=IN&ceid=IN:en"
+        
+        resp = requests.get(url, timeout=15, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
         resp.raise_for_status()
-        data = resp.json()
-
+        
+        root = ET.fromstring(resp.text)
         news = []
-        for item in data.get("articles", [])[:max_items]:
+        
+        for item in root.findall(".//item")[:max_items]:
+            title = item.findtext("title", "")
+            link = item.findtext("link", "")
+            source = item.findtext("source", "")
+            pub_date = item.findtext("pubDate", "")
+            
             news.append(NoozraNews(
-                title=item.get("title", ""),
-                url=item.get("url", ""),
-                source=item.get("source", ""),
-                published=item.get("published", ""),
+                title=title[:200],
+                url=link,
+                source=source or "Google News",
+                published=pub_date,
             ))
 
         if news:
@@ -643,7 +695,7 @@ def fetch_noozra_news(
         return news if news else None
 
     except Exception as e:
-        logger.debug("Noozra news fetch failed: %s", e)
+        logger.debug("News fetch failed: %s", e)
         return None
 
 
