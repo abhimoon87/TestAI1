@@ -8,9 +8,10 @@ Provider priority for OHLCV:
 
 Provider priority for Fundamentals:
   1. Finnhub — Institutional-grade data (free tier)
-  2. Alpha Vantage — Technical indicators + fundamentals (free API key)
-  3. yfinance .info — Detailed financial data
-  4. nselib pe_ratio — Bulk P/E ratio for all stocks
+  2. Twelve Data — Stock market data with fundamentals (free tier: 800 calls/day)
+  3. Alpha Vantage — Technical indicators + fundamentals (free API key)
+  4. yfinance .info — Detailed financial data
+  5. nselib pe_ratio — Bulk P/E ratio for all stocks
 
 All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
@@ -379,6 +380,91 @@ def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
         return None
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PROVIDER: Twelve Data (Free tier: 800 calls/day, 8/min)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fetch_fundamentals_twelve_data(ticker: str) -> Optional[dict]:
+    """Fetch fundamentals from Twelve Data (free tier)."""
+    try:
+        import requests
+
+        api_key = os.environ.get("TWELVEDATA_API_KEY", "")
+        if not api_key:
+            return None
+
+        # Twelve Data uses .NS suffix for NSE stocks
+        symbol = f"{ticker}.NS"
+
+        # Get fundamental data
+        url = f"https://api.twelvedata.com/fundamentals?symbol={symbol}&apikey={api_key}"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+
+        if not data or "fundamentals" not in data:
+            return None
+
+        fund = data["fundamentals"]
+
+        # Extract metrics from different sections
+        overview = fund.get("overview", {})
+        valuation = fund.get("valuation", {})
+        financials = fund.get("financials", {})
+
+        # P/E ratio
+        pe_ratio = None
+        pe_raw = valuation.get("pe_ratio") or overview.get("pe_ratio")
+        if pe_raw and pe_raw != "-":
+            try:
+                pe_ratio = float(pe_raw)
+            except (ValueError, TypeError):
+                pass
+
+        # ROE
+        roe = None
+        roe_raw = financials.get("return_on_equity") or overview.get("roe")
+        if roe_raw and roe_raw != "-":
+            try:
+                roe_val = float(roe_raw)
+                roe = roe_val * 100 if abs(roe_val) <= 1 else roe_val
+            except (ValueError, TypeError):
+                pass
+
+        # EPS growth (from earnings)
+        eps_growth = None
+        eps_raw = overview.get("eps_growth") or financials.get("eps_growth")
+        if eps_raw and eps_raw != "-":
+            try:
+                eps_val = float(eps_raw)
+                eps_growth = eps_val * 100 if abs(eps_val) <= 1 else eps_val
+            except (ValueError, TypeError):
+                pass
+
+        # Revenue growth
+        rev_growth = None
+        rev_raw = overview.get("revenue_growth") or financials.get("revenue_growth")
+        if rev_raw and rev_raw != "-":
+            try:
+                rev_val = float(rev_raw)
+                rev_growth = rev_val * 100 if abs(rev_val) <= 1 else rev_val
+            except (ValueError, TypeError):
+                pass
+
+        if pe_ratio is None and roe is None and eps_growth is None:
+            return None
+
+        return {
+            "pe_ratio": pe_ratio,
+            "eps_growth": eps_growth,
+            "rev_growth": rev_growth,
+            "roe": roe,
+        }
+
+    except Exception as e:
+        logger.debug("Twelve Data fundamentals failed for %s: %s", ticker, e)
+        return None
+
+
 def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
     """Fetch fundamentals from Alpha Vantage (free API key)."""
     try:
@@ -638,6 +724,7 @@ class DataProvider:
 
         providers = [
             ("finnhub", lambda: _fetch_fundamentals_finnhub(ticker)),
+            ("twelve_data", lambda: _fetch_fundamentals_twelve_data(ticker)),
             ("alpha_vantage", lambda: _fetch_fundamentals_alpha_vantage(ticker)),
             ("yfinance", lambda: _fetch_fundamentals_yfinance(ticker)),
             ("nselib", lambda: _fetch_fundamentals_nselib(ticker)),

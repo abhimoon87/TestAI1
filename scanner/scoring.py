@@ -1,13 +1,27 @@
 """
-10-category scoring engine.
-Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic exactly.
+12-category scoring engine.
+Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic + new categories.
+
+Scoring categories (12 total, max 120 pts):
+  1. Trend (15 pts) — HMA/EMA crossover, close above MA, ADX
+  2. Momentum (15 pts) — 1M/3M price change
+  3. RSI (8 pts) — RSI(14) in 40-70 range
+  4. MACD (7 pts) — MACD histogram positive/increasing
+  5. Stochastic (5 pts) — Stoch K in 20-80 range
+  6. OBV (5 pts) — OBV above SMA(20), rising
+  7. Volume (10 pts) — Volume > SMA(20), >1.2x, >50-bar MA
+  8. Relative Strength (10 pts) — Stock returns vs NIFTY 50
+  9. Volatility (5 pts) — ATR-based (Medium/Low = pass)
+  10. Fundamentals (20 pts) — P/E, EPS growth, Rev growth, ROE
+  11. Sentiment (8 pts) — News sentiment from MarketAux/NewsAPI/GNews
+  12. Social (5 pts) — Reddit/Twitter social momentum
 
 Refactored into composable helpers:
   - detect_crossover() — shared MA crossover detection (used by filter & scorer)
   - _compute_indicators() — compute all core indicators at once
   - _compute_weekly_hma() — weekly higher-timeframe HMA crossover
   - _compute_sideways() — ADX / Cholangirong / Slope sideways filter
-  - _score_trend .. _score_fundamentals — per-category scoring (10 total)
+  - _score_trend .. _score_social — per-category scoring (12 total)
   - compute_scores() — orchestrator that composes the above
 """
 
@@ -568,6 +582,132 @@ def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
     return min(fund_score, 20.0), fund_detail
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 11: SENTIMENT (max 8 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_sentiment(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 11: SENTIMENT (max 8 pts).
+    
+    Fetches news sentiment from MarketAux/NewsAPI/GNews.
+    Score based on sentiment_score (-1.0 to 1.0) and article_count.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    sentiment_score = settings.get("_sentiment_score", 0.0)
+    article_count = settings.get("_article_count", 0)
+    sentiment_source = settings.get("_sentiment_source", "none")
+
+    if sentiment_source == "none" or article_count == 0:
+        return 0.0, {"sentiment": "N/A", "source": "none", "articles": 0}
+
+    # Score based on sentiment (-1.0 to 1.0) mapped to 0-8 pts
+    # Positive sentiment = higher score, negative = lower
+    # Also factor in article count (more articles = more confidence)
+    if sentiment_score > 0.3:
+        base_score = 6.0 + min(sentiment_score * 2, 2.0)  # 6-8 pts
+    elif sentiment_score > 0.1:
+        base_score = 4.0 + sentiment_score * 10  # 4-6 pts
+    elif sentiment_score > -0.1:
+        base_score = 2.0 + (sentiment_score + 0.1) * 10  # 2-4 pts
+    elif sentiment_score > -0.3:
+        base_score = 1.0 + (sentiment_score + 0.3) * 5  # 1-2 pts
+    else:
+        base_score = max(0.0, 1.0 + sentiment_score * 3)  # 0-1 pts
+
+    # Boost if many articles (more confidence)
+    if article_count >= 10:
+        base_score = min(base_score * 1.1, 8.0)
+
+    detail = {
+        "sentiment": f"{sentiment_score:+.2f}",
+        "source": sentiment_source,
+        "articles": article_count,
+    }
+
+    return min(base_score, 8.0), detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 12: SOCIAL (max 5 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_social(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 12: SOCIAL (max 5 pts).
+    
+    Fetches social sentiment from Reddit + Twitter/X.
+    Score based on social_score (-1.0 to 1.0) and mention_count.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    social_score = settings.get("_social_score", 0.0)
+    mention_count = settings.get("_mention_count", 0)
+    social_source = settings.get("_social_source", "none")
+
+    if social_source == "none" or mention_count == 0:
+        return 0.0, {"social": "N/A", "source": "none", "mentions": 0}
+
+    # Score based on social sentiment (-1.0 to 1.0) mapped to 0-5 pts
+    if social_score > 0.2:
+        base_score = 3.0 + min(social_score * 5, 2.0)  # 3-5 pts
+    elif social_score > 0:
+        base_score = 2.0 + social_score * 10  # 2-3 pts
+    elif social_score > -0.2:
+        base_score = 1.0 + (social_score + 0.2) * 5  # 1-2 pts
+    else:
+        base_score = max(0.0, 1.0 + social_score * 3)  # 0-1 pts
+
+    # Boost for high mention count (viral = more signal)
+    if mention_count >= 20:
+        base_score = min(base_score * 1.2, 5.0)
+
+    detail = {
+        "social": f"{social_score:+.2f}",
+        "source": social_source,
+        "mentions": mention_count,
+    }
+
+    return min(base_score, 5.0), detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INSIDER BOOST/PENALTY (applied to Fundamentals category)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _apply_insider_adjustment(fund_score: float, settings: dict) -> tuple[float, str]:
+    """
+    Adjust Fundamentals score based on insider trading data.
+    
+    Insider buying = +3 pts (max), insider selling = -3 pts (min).
+    
+    Returns:
+        (adjusted_score, adjustment_detail)
+    """
+    insider_score = settings.get("_insider_score", 0.0)
+    insider_source = settings.get("_insider_source", "none")
+
+    if insider_source == "none":
+        return fund_score, "N/A"
+
+    # Map insider_score (-1.0 to 1.0) to adjustment (-3 to +3)
+    adjustment = insider_score * 3.0
+
+    adjusted = max(0.0, min(fund_score + adjustment, 20.0))
+
+    if adjustment > 0:
+        detail = f"Insider buying (+{adjustment:.1f})"
+    elif adjustment < 0:
+        detail = f"Insider selling ({adjustment:.1f})"
+    else:
+        detail = "Neutral insider"
+
+    return adjusted, detail
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL 3: COMBINED RATING
@@ -633,7 +773,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
                    index_df: Optional[pd.DataFrame] = None,
                    settings: Optional[dict] = None) -> Optional[dict]:
     """
-    Compute the 10-category score for a stock.
+    Compute the 12-category score for a stock.
 
     Args:
         df: OHLCV DataFrame with columns [open, high, low, close, volume]
@@ -642,9 +782,19 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         settings: Dict with scoring parameters (see DEFAULT_SETTINGS in settings_store.py).
                   Falls back to defaults if not provided.
 
-    Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
-    Max total = 100 pts.  Missing fundamental data contributes 0 pts (no
-    upward normalisation).  The unnormalized sum is exposed as ``total_raw``.
+    Scoring categories (12 total, max 120 pts):
+      1. Trend (15 pts) — HMA/EMA crossover, close above MA, ADX
+      2. Momentum (15 pts) — 1M/3M price change
+      3. RSI (8 pts) — RSI(14) in 40-70 range
+      4. MACD (7 pts) — MACD histogram positive/increasing
+      5. Stochastic (5 pts) — Stoch K in 20-80 range
+      6. OBV (5 pts) — OBV above SMA(20), rising
+      7. Volume (10 pts) — Volume > SMA(20), >1.2x, >50-bar MA
+      8. Relative Strength (10 pts) — Stock returns vs NIFTY 50
+      9. Volatility (5 pts) — ATR-based (Medium/Low = pass)
+      10. Fundamentals (20 pts) — P/E, EPS growth, Rev growth, ROE
+      11. Sentiment (8 pts) — News sentiment (MarketAux/NewsAPI/GNews)
+      12. Social (5 pts) — Reddit/Twitter social momentum
 
     Returns:
         Dictionary with all scores and metadata, or None if insufficient data.
@@ -710,21 +860,31 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     volat_score, atr_pct, volat_stat = _score_volatility(curr)
     fund_score, fund_detail = _score_fundamentals(df)
 
+    # ── Insider adjustment to Fundamentals ─────────────────────────────────
+    fund_score, insider_detail = _apply_insider_adjustment(fund_score, settings)
+
+    # ── Sentiment scoring (Category 11) ───────────────────────────────────
+    ticker = settings.get("_ticker", "")
+    sentiment_score, sentiment_detail = _score_sentiment(ticker, settings)
+
+    # ── Social scoring (Category 12) ──────────────────────────────────────
+    social_score, social_detail = _score_social(ticker, settings)
+
     # ── Total ──────────────────────────────────────────────────────────────
     raw_total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
-                 + obv_score + vol_score + rs_score + volat_score + fund_score)
+                 + obv_score + vol_score + rs_score + volat_score + fund_score
+                 + sentiment_score + social_score)
 
-    # Use raw_total directly.  Earlier versions normalised partial-data stocks
-    # upward (×100/max_possible), but that inflated them above complete-data
-    # stocks at the same raw level.  Missing fundamentals now simply contribute
-    # 0 pts — no penalty beyond the absent points themselves.
-    total = max(0.0, min(raw_total, 100.0))
+    # Cap at 120 (new max with 12 categories)
+    total = max(0.0, min(raw_total, 120.0))
 
     # ── Build result ───────────────────────────────────────────────────────
     return {
         "total": round(total, 1),
         "total_raw": round(raw_total, 1),
+        "max_possible": 120.0,
         "fundamentals_available": any(v != "N/A" for v in fund_detail.values()),
+        # Original 10 categories
         "trend":     round(trend_score, 1),
         "momentum":  round(mom_score, 1),
         "rsi":       round(rsi_score, 1),
@@ -735,6 +895,13 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         "rel_str":   round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
+        # New categories (11 & 12)
+        "sentiment": round(sentiment_score, 1),
+        "social":    round(social_score, 1),
+        # Detail for new categories
+        "sentiment_detail": sentiment_detail,
+        "social_detail": social_detail,
+        "insider_detail": insider_detail,
         # Key signals
         "ma_bullish": curr["ma_bullish"],
         "close_above_both_ma": curr["close_above_both_ma"],
@@ -763,7 +930,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         "trend_color": "bull" if curr["close"] > curr["slow_ma"] else "bear",
         # Fundamentals detail
         "fund_detail": fund_detail,
-        # Combined rating
+        # Combined rating (now uses 120 max scale)
         "combined_rating": _get_combined_rating(
             total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]
         ),
