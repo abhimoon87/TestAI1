@@ -197,7 +197,7 @@ def run_scan():
         if not hasattr(df, '_fundamentals') or df._fundamentals is None:
             fund = fetch_fundamentals(ticker)
             if fund is not None:
-                df._fundamentals = fund
+                object.__setattr__(df, '_fundamentals', fund)
 
         # ── MODEL 1: Stock Filter ──────────────────────────────────────────
         filter_result = check_filter(

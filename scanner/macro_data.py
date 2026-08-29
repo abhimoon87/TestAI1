@@ -195,13 +195,22 @@ class EcondbData:
     cached: bool = False
 
 
-def fetch_econdb_data() -> Optional[EcondbData]:
+def fetch_econdb_data(api_key: Optional[str] = None) -> Optional[EcondbData]:
     """
-    Fetch macro data from Econdb (free, no API key required).
+    Fetch macro data from Econdb (free tier requires API key).
+    
+    Args:
+        api_key: Econdb API key (or env ECONDB_API_KEY)
     
     Returns:
         EcondbData or None
     """
+    if not api_key:
+        api_key = os.environ.get("ECONDB_API_KEY")
+    if not api_key:
+        logger.debug("Econdb: No API key provided, skipping")
+        return None
+
     cache_k = hashlib.md5("econdb:global".encode()).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
@@ -210,7 +219,8 @@ def fetch_econdb_data() -> Optional[EcondbData]:
     try:
         # Econdb provides pre-built macro bundles
         url = "https://api.econdb.com/v1/series/US10Y,CL1.1,INREALGDPGR,INCPALTTM01IXNBY,INRREPRTD"
-        resp = requests.get(url, timeout=10)
+        headers = {"Authorization": f"Token {api_key}"}
+        resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -680,6 +690,7 @@ def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
 def fetch_macro_data(
     fred_key: Optional[str] = None,
     econpulse_key: Optional[str] = None,
+    econdb_key: Optional[str] = None,
 ) -> dict:
     """
     Fetch all macro data and detect market regime.
@@ -687,7 +698,7 @@ def fetch_macro_data(
     Sources:
       - FRED (requires API key)
       - EconPulse (requires API key)
-      - Econdb (free, no key)
+      - Econdb (requires API key)
       - Yahoo Finance (free, no key) — VIX, yields, oil, gold, INR, indices
       - Frankfurter (free, no key) — INR/USD exchange rates
       - CoinGecko (free, no key) — Crypto sentiment, BTC correlation
@@ -705,7 +716,7 @@ def fetch_macro_data(
     """
     fred = fetch_fred_data(fred_key)
     econpulse = fetch_econpulse_data(econpulse_key)
-    econdb = fetch_econdb_data()
+    econdb = fetch_econdb_data(econdb_key)
     yahoo = fetch_yahoo_macro_data()
     forex = fetch_forex_data()
     crypto = fetch_crypto_sentiment()

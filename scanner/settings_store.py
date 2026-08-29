@@ -194,6 +194,12 @@ API_KEY_REGISTRY = {
         "url": "https://econpulse.com/register",
         "category": "macro",
     },
+    "ECONDB_API_KEY": {
+        "description": "Econdb — Global macroeconomic data",
+        "free_tier": "Free tier available",
+        "url": "https://www.econdb.com/register",
+        "category": "macro",
+    },
     # Environment/ESG
     "CARBON_INTERFACE_API_KEY": {
         "description": "Carbon Interface — CO2 emissions estimates",

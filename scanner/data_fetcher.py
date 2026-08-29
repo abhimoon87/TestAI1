@@ -130,10 +130,10 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
                 df = resample_ohlcv(df, timeframe)
                 if df is None or df.empty:
                     continue
-                # Attach fundamentals
+                # Attach fundamentals using object attribute (not DataFrame column)
                 fund = provider.fetch_fundamentals(ticker)
                 if fund is not None:
-                    df._fundamentals = fund
+                    object.__setattr__(df, '_fundamentals', fund)
                 return df
         except Exception as e:
             if attempt < retries - 1:
@@ -260,7 +260,7 @@ def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> O
             if df is not None and not df.empty:
                 fund = provider.fetch_fundamentals(ticker)
                 if fund is not None:
-                    df._fundamentals = fund
+                    object.__setattr__(df, '_fundamentals', fund)
                 return df
     except Exception as e:
         logger.debug("fetch_stock_fast failed for %s: %s", ticker, e)

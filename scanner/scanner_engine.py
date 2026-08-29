@@ -172,6 +172,7 @@ class ScannerEngine:
                 macro = fetch_macro_data(
                     fred_key=get_api_key("FRED_API_KEY", api_config),
                     econpulse_key=get_api_key("ECONPULSE_API_KEY", api_config),
+                    econdb_key=get_api_key("ECONDB_API_KEY", api_config),
                 )
                 regime = macro.get("regime")
                 if regime:
@@ -335,7 +336,7 @@ class ScannerEngine:
                         try:
                             fund = fetch_fundamentals(ticker)
                             if fund is not None:
-                                df._fundamentals = fund
+                                object.__setattr__(df, '_fundamentals', fund)
                         except Exception as e:
                             logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
 
