@@ -40,7 +40,7 @@ if sys.platform == "win32":
     if hasattr(sys.stdout, "reconfigure"):
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
+        except (AttributeError, OSError):
             pass
 
 
@@ -91,85 +91,21 @@ DEFAULT_SETTINGS = {
 
 WARMUP_BARS = 260  # ~1 year of daily data for indicators to stabilize
 
-# Sector mapping for FNO/NIFTY stocks
-SECTOR_MAP = {
-    # Banking & Financial
-    "HDFCBANK": "Banking", "ICICIBANK": "Banking", "KOTAKBANK": "Banking",
-    "AXISBANK": "Banking", "INDUSINDBK": "Banking", "SBIN": "Banking",
-    "PNB": "Banking", "BANKBARODA": "Banking", "FEDERALBNK": "Banking",
-    "BANDHANBNK": "Banking", "AUBANK": "Banking", "IDFCFIRSTB": "Banking",
-    "CANBK": "Banking", "UNIONBANK": "Banking",
-    "BAJFINANCE": "Finance", "BAJAJFINSV": "Finance", "SBICARD": "Finance",
-    "SBILIFE": "Finance", "HDFCLIFE": "Finance", "HDFCAMC": "Finance",
-    "LICHSGFIN": "Finance", "MUTHOOTFIN": "Finance", "MANAPPURAM": "Finance",
-    "MFSL": "Finance", "SHRIRAMFIN": "Finance", "PFC": "Finance",
-    "RECLTD": "Finance", "CHOLAFIN": "Finance",
-    # IT
-    "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
-    "TECHM": "IT", "LTTS": "IT", "PERSISTENT": "IT", "MPHASIS": "IT",
-    "COFORGE": "IT", "KPITTECH": "IT", "TATAELXSI": "IT",
-    "ZENSARTECH": "IT", "BSOFT": "IT", "BIRLASOFT": "IT",
-    # Pharma
-    "SUNPHARMA": "Pharma", "DRREDDY": "Pharma", "CIPLA": "Pharma",
-    "DIVISLAB": "Pharma", "TORNTPHARM": "Pharma", "LUPIN": "Pharma",
-    "GLENMARK": "Pharma", "ALCHEMIST": "Pharma",
-    # Auto
-    "MARUTI": "Auto", "M&M": "Auto", "TATAMOTORS": "Auto",
-    "HEROMOTOCO": "Auto", "BAJAJ-AUTO": "Auto", "EICHERMOT": "Auto",
-    "ASHOKLEY": "Auto", "TVSMOTOR": "Auto", "MOTHERSON": "Auto",
-    "ESCORTS": "Auto", "BALKRISIND": "Auto",
-    # Metals & Mining
-    "TATASTEEL": "Metals", "HINDALCO": "Metals", "JSWSTEEL": "Metals",
-    "VEDL": "Metals", "SAIL": "Metals", "NMDC": "Metals",
-    "NATIONALUM": "Metals", "JINDALSTEL": "Metals",
-    # Oil & Gas
-    "RELIANCE": "OilGas", "ONGC": "OilGas", "BPCL": "OilGas",
-    "IOC": "OilGas", "GAIL": "OilGas", "PETRONET": "OilGas",
-    "TATACOMM": "OilGas",
-    # FMCG
-    "HINDUNILVR": "FMCG", "ITC": "FMCG", "BRITANNIA": "FMCG",
-    "NESTLEIND": "FMCG", "TATACONSUM": "FMCG", "MARICO": "FMCG",
-    "DABUR": "FMCG", "GODREJCP": "FMCG", "COLPAL": "FMCG",
-    "UBL": "FMCG", "RADICO": "FMCG",
-    # Power & Infrastructure
-    "NTPC": "Power", "POWERGRID": "Power", "TATAPOWER": "Power",
-    "ADANIGREEN": "Power",
-    # Real Estate
-    "GODREJPROP": "Realty", "OBEROIRLTY": "Realty", "PRESTIGE": "Realty",
-    "PHOENIXLTD": "Realty",
-    # Cement & Materials
-    "ULTRACEMCO": "Cement", "GRASIM": "Cement", "AMBUJACEM": "Cement",
-    "ACC": "Cement", "DALBHARAT": "Cement",
-    # Chemicals
-    "TATACHEM": "Chemicals", "COROMANDEL": "Chemicals",
-    "PIDILITIND": "Chemicals", "SRF": "Chemicals",
-    "CHAMBLFERT": "Chemicals", "GSPL": "Chemicals",
-    # Consumer
-    "TITAN": "Consumer", "TRENT": "Consumer", "VOLTAS": "Consumer",
-    "HAVELLS": "Consumer", "POLYCAB": "Consumer",
-    # Telecom
-    "BHARTIARTL": "Telecom", "IDEA": "Telecom",
-    # Ports & Logistics
-    "ADANIPORTS": "Infra", "CONCOR": "Infra", "DELHIVERY": "Infra",
-    # Defence & Industrials
-    "HAL": "Defence", "BEL": "Defence", "COCHINSHIP": "Defence",
-    # Miscellaneous
-    "IRCTC": "Misc", "PVRINOX": "Misc", "ZOMATO": "Misc",
-    "NYKAA": "Misc", "PAYTM": "Misc",
-    "LALPATHLAB": "Misc", "METROPOLIS": "Misc",
-    "DIXON": "Misc", "SONACOMS": "Misc",
-    "CROMPTON": "Misc",
-}
+# Sector config loaded from JSON
+def _load_sector_config() -> tuple[dict, dict]:
+    """Load sector mapping and colors from JSON config file."""
+    import json
+    from pathlib import Path
+    config_path = Path(__file__).with_name("sector_config.json")
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        return config.get("SECTOR_MAP", {}), config.get("SECTOR_COLORS", {})
+    except Exception as e:
+        logger.warning("Failed to load sector config: %s", e)
+        return {}, {}
 
-# Sector color coding for reports
-SECTOR_COLORS = {
-    "Banking": "#3b82f6", "Finance": "#8b5cf6", "IT": "#22c55e",
-    "Pharma": "#ec4899", "Auto": "#f97316", "Metals": "#94a3b8",
-    "OilGas": "#64748b", "FMCG": "#eab308", "Power": "#06b6d4",
-    "Realty": "#a855f7", "Cement": "#78716c", "Chemicals": "#14b8a6",
-    "Consumer": "#f43f5e", "Telecom": "#6366f1", "Infra": "#84cc16",
-    "Defence": "#0ea5e9", "Misc": "#6b7280",
-}
+SECTOR_MAP, SECTOR_COLORS = _load_sector_config()
 
 def get_sector(ticker: str) -> str:
     """Get the sector for a stock ticker."""
@@ -398,7 +334,7 @@ def precompute_nifty(index_df: pd.DataFrame) -> Optional[pd.DataFrame]:
     if not isinstance(df.index, pd.DatetimeIndex):
         try:
             df.index = pd.to_datetime(df.index)
-        except Exception:
+        except (ValueError, TypeError):
             return None
     if df.index.tz is not None:
         df.index = df.index.tz_localize(None)
@@ -747,6 +683,7 @@ class BacktestEngine:
 
                         if is_top and sector_momentum > 0:
                             # Add fixed bonus for top sectors (capped at +15 pts)
+                            sector_boost_weight = settings.get("sector_boost_weight", 0.5)
                             bonus = min(sector_momentum * sector_boost_weight, 15.0)
                             adjusted_score = base_score + bonus
                             signals_boosted += 1
