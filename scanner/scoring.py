@@ -708,6 +708,363 @@ def _apply_insider_adjustment(fund_score: float, settings: dict) -> tuple[float,
     return adjusted, detail
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 13: DELIVERY QUALITY (max 3 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_delivery_quality(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 13: DELIVERY QUALITY (max 3 pts).
+    
+    High delivery % indicates institutional/strong hands buying.
+    Low delivery % indicates speculative/weak hands activity.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    delivery_pct = settings.get("_delivery_pct", 0.0)
+    delivery_change = settings.get("_delivery_change_pct", 0.0)
+    source = settings.get("_delivery_source", "none")
+
+    if source == "none" or delivery_pct == 0:
+        return 0.0, {"delivery": "N/A", "source": "none"}
+
+    # Score based on delivery %
+    if delivery_pct > 70:
+        base_score = 3.0  # Very high delivery = strong conviction
+    elif delivery_pct > 60:
+        base_score = 2.5  # High delivery = institutional buying
+    elif delivery_pct > 50:
+        base_score = 1.5  # Moderate delivery
+    elif delivery_pct > 40:
+        base_score = 0.5  # Low delivery
+    else:
+        base_score = 0.0  # Very low = speculative
+
+    # Bonus for improving delivery trend
+    if delivery_change > 5:
+        base_score = min(base_score + 0.5, 3.0)
+    elif delivery_change < -5:
+        base_score = max(base_score - 0.5, 0.0)
+
+    detail = {
+        "delivery": f"{delivery_pct:.1f}%",
+        "change": f"{delivery_change:+.1f}%",
+        "source": source,
+    }
+
+    return min(base_score, 3.0), detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 14: INSTITUTIONAL FLOW (max 3 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_institutional_flow(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 14: INSTITUTIONAL FLOW (max 3 pts).
+    
+    FII (Foreign Institutional Investors) buying = positive signal
+    DII (Domestic Institutional Investors) buying = positive signal
+    
+    Returns:
+        (score, detail_dict)
+    """
+    fii_is_buying = settings.get("_fii_is_buying", None)
+    dii_is_buying = settings.get("_dii_is_buying", None)
+    fii_net = settings.get("_fii_net", 0.0)
+    dii_net = settings.get("_dii_net", 0.0)
+    source = settings.get("_institutional_source", "none")
+
+    if source == "none":
+        return 0.0, {"institutional": "N/A", "source": "none"}
+
+    base_score = 0.0
+
+    # FII buying signal
+    if fii_is_buying is True:
+        base_score += 1.5
+    elif fii_is_buying is False:
+        base_score -= 0.5
+
+    # DII buying signal
+    if dii_is_buying is True:
+        base_score += 1.0
+    elif dii_is_buying is False:
+        base_score -= 0.3
+
+    # Both buying = strong signal
+    if fii_is_buying is True and dii_is_buying is True:
+        base_score = min(base_score + 0.5, 3.0)
+
+    base_score = max(0.0, min(base_score, 3.0))
+
+    fii_status = "Buying" if fii_is_buying else ("Selling" if fii_is_buying is False else "N/A")
+    dii_status = "Buying" if dii_is_buying else ("Selling" if dii_is_buying is False else "N/A")
+
+    detail = {
+        "institutional": f"FII: {fii_status}, DII: {dii_status}",
+        "source": source,
+    }
+
+    return base_score, detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 15: 52-WEEK POSITION (max 2 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_52week_position(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 15: 52-WEEK POSITION (max 2 pts).
+    
+    Stocks near 52-week highs show strength.
+    Stocks near 52-week lows may be value opportunities or falling knives.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    position = settings.get("_52w_position", 50.0)  # 0 = at low, 100 = at high
+    pct_from_high = settings.get("_52w_pct_from_high", 0.0)
+    source = settings.get("_52w_source", "none")
+
+    if source == "none":
+        return 0.0, {"week52": "N/A", "source": "none"}
+
+    # Score based on position in range
+    if position > 80:
+        base_score = 2.0  # Near 52-week high = strong momentum
+    elif position > 60:
+        base_score = 1.5  # Upper range = healthy trend
+    elif position > 40:
+        base_score = 1.0  # Middle range = neutral
+    elif position > 20:
+        base_score = 0.5  # Lower range = weakness
+    else:
+        base_score = 0.0  # Near 52-week low = avoid
+
+    detail = {
+        "week52": f"Position: {position:.0f}%",
+        "from_high": f"{pct_from_high:+.1f}%",
+        "source": source,
+    }
+
+    return base_score, detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 16: VALUATION QUALITY (max 2 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_valuation_quality(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 16: VALUATION QUALITY (max 2 pts).
+    
+    Compares stock valuation vs industry peers.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    pe_relative = settings.get("_pe_relative_to_industry", None)
+    is_quality = settings.get("_is_quality_stock", None)
+    source = settings.get("_valuation_source", "none")
+
+    if source == "none":
+        return 0.0, {"valuation": "N/A", "source": "none"}
+
+    base_score = 0.0
+
+    # Cheap vs peers
+    if pe_relative is not None:
+        if pe_relative < 0.8:
+            base_score += 1.0  # Significantly cheaper
+        elif pe_relative < 1.0:
+            base_score += 0.5  # Slightly cheaper
+        elif pe_relative > 1.5:
+            base_score -= 0.5  # Expensive
+
+    # Quality stock (ROE > 15%)
+    if is_quality is True:
+        base_score += 1.0
+
+    base_score = max(0.0, min(base_score, 2.0))
+
+    pe_status = f"{pe_relative:.2f}x" if pe_relative else "N/A"
+    quality_status = "Yes" if is_quality else ("No" if is_quality is False else "N/A")
+
+    detail = {
+        "valuation": f"PE vs Industry: {pe_status}, Quality: {quality_status}",
+        "source": source,
+    }
+
+    return base_score, detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 17: COMMODITY EXPOSURE (max 2 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_commodity_exposure(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 17: COMMODITY EXPOSURE (max 2 pts).
+    
+    Commodity price trends affect commodity-linked stocks.
+    Rising commodity prices = bullish for commodity producers.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    commodity_trend = settings.get("_commodity_trend", None)  # "up", "down", "neutral"
+    commodity_source = settings.get("_commodity_source", "none")
+
+    if commodity_source == "none":
+        return 0.0, {"commodity": "N/A", "source": "none"}
+
+    base_score = 0.0
+
+    if commodity_trend == "up":
+        base_score = 2.0  # Rising commodities = bullish for producers
+    elif commodity_trend == "neutral":
+        base_score = 1.0  # Neutral = moderate
+    elif commodity_trend == "down":
+        base_score = 0.0  # Falling commodities = bearish
+
+    detail = {
+        "commodity": f"Trend: {commodity_trend or 'N/A'}",
+        "source": commodity_source,
+    }
+
+    return base_score, detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 18: FOREX IMPACT (max 2 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_forex_impact(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 18: FOREX IMPACT (max 2 pts).
+    
+    INR depreciation = negative for importers, positive for exporters.
+    INR appreciation = positive for importers, negative for exporters.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    inr_change_1d = settings.get("_inr_change_1d", 0.0)  # % change
+    inr_change_1w = settings.get("_inr_change_1w", 0.0)
+    forex_source = settings.get("_forex_source", "none")
+
+    if forex_source == "none":
+        return 0.0, {"forex": "N/A", "source": "none"}
+
+    base_score = 0.0
+
+    # For Indian stocks, weaker INR is generally negative
+    # (higher import costs, inflationary)
+    if inr_change_1d < -0.5:
+        base_score = 0.0  # Sharp INR depreciation = negative
+    elif inr_change_1d < 0:
+        base_score = 0.5  # Mild depreciation
+    elif inr_change_1d == 0:
+        base_score = 1.0  # Stable
+    elif inr_change_1d < 0.5:
+        base_score = 1.5  # Mild appreciation
+    else:
+        base_score = 2.0  # Strong INR appreciation = positive
+
+    detail = {
+        "forex": f"INR 1D: {inr_change_1d:+.2f}%, 1W: {inr_change_1w:+.2f}%",
+        "source": forex_source,
+    }
+
+    return base_score, detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 19: ESG / SUSTAINABILITY (max 2 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_esg(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 19: ESG / SUSTAINABILITY (max 2 pts).
+    
+    Companies with strong ESG profiles tend to outperform long-term.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    esg_score = settings.get("_esg_score", None)  # 0-100
+    carbon_intensity = settings.get("_carbon_intensity", None)  # tons CO2/revenue
+    esg_source = settings.get("_esg_source", "none")
+
+    if esg_source == "none":
+        return 0.0, {"esg": "N/A", "source": "none"}
+
+    base_score = 0.0
+
+    if esg_score is not None:
+        if esg_score > 70:
+            base_score = 2.0  # Strong ESG
+        elif esg_score > 50:
+            base_score = 1.5  # Moderate ESG
+        elif esg_score > 30:
+            base_score = 1.0  # Below average
+        else:
+            base_score = 0.0  # Poor ESG
+    elif carbon_intensity is not None:
+        # Lower carbon = better
+        if carbon_intensity < 10:
+            base_score = 1.5
+        elif carbon_intensity < 50:
+            base_score = 1.0
+        else:
+            base_score = 0.5
+
+    detail = {
+        "esg": f"Score: {esg_score or 'N/A'}, Carbon: {carbon_intensity or 'N/A'}",
+        "source": esg_source,
+    }
+
+    return base_score, detail
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY 20: SHARIAH COMPLIANCE (max 2 pts)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _score_shariah(ticker: str, settings: dict) -> tuple[float, dict]:
+    """
+    Category 20: SHARIAH COMPLIANCE (max 2 pts).
+    
+    Shariah-compliant stocks appeal to Islamic investors.
+    Non-compliant stocks may have debt-based revenue concerns.
+    
+    Returns:
+        (score, detail_dict)
+    """
+    is_shariah = settings.get("_is_shariah_compliant", None)
+    shariah_source = settings.get("_shariah_source", "none")
+
+    if shariah_source == "none":
+        return 0.0, {"shariah": "N/A", "source": "none"}
+
+    base_score = 0.0
+
+    if is_shariah is True:
+        base_score = 2.0  # Shariah compliant = full points
+    elif is_shariah is False:
+        base_score = 0.5  # Non-compliant = partial (still investable)
+    else:
+        base_score = 1.0  # Unknown = neutral
+
+    detail = {
+        "shariah": f"Compliant: {'Yes' if is_shariah else ('No' if is_shariah is False else 'Unknown')}",
+        "source": shariah_source,
+    }
+
+    return base_score, detail
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL 3: COMBINED RATING
@@ -773,7 +1130,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
                    index_df: Optional[pd.DataFrame] = None,
                    settings: Optional[dict] = None) -> Optional[dict]:
     """
-    Compute the 12-category score for a stock.
+    Compute the 20-category score for a stock.
 
     Args:
         df: OHLCV DataFrame with columns [open, high, low, close, volume]
@@ -782,7 +1139,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         settings: Dict with scoring parameters (see DEFAULT_SETTINGS in settings_store.py).
                   Falls back to defaults if not provided.
 
-    Scoring categories (12 total, max 120 pts):
+    Scoring categories (20 total, max 138 pts):
       1. Trend (15 pts) — HMA/EMA crossover, close above MA, ADX
       2. Momentum (15 pts) — 1M/3M price change
       3. RSI (8 pts) — RSI(14) in 40-70 range
@@ -794,7 +1151,15 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
       9. Volatility (5 pts) — ATR-based (Medium/Low = pass)
       10. Fundamentals (20 pts) — P/E, EPS growth, Rev growth, ROE
       11. Sentiment (8 pts) — News sentiment (MarketAux/NewsAPI/GNews)
-      12. Social (5 pts) — Reddit/Twitter social momentum
+      12. Social (5 pts) — Reddit/Twitter/WSB social momentum
+      13. Delivery Quality (3 pts) — High delivery % = institutional buying
+      14. Institutional Flow (3 pts) — FII/DII buying signals
+      15. 52-Week Position (2 pts) — Position in 52-week range
+      16. Valuation Quality (2 pts) — PE vs industry, quality metrics
+      17. Commodity Exposure (2 pts) — Commodity price trends
+      18. Forex Impact (2 pts) — INR/USD exchange rate impact
+      19. ESG (2 pts) — Environmental/Sustainability scores
+      20. Shariah (2 pts) — Shariah compliance screening
 
     Returns:
         Dictionary with all scores and metadata, or None if insufficient data.
@@ -870,19 +1235,45 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     # ── Social scoring (Category 12) ──────────────────────────────────────
     social_score, social_detail = _score_social(ticker, settings)
 
+    # ── Delivery Quality scoring (Category 13) ────────────────────────────
+    delivery_score, delivery_detail = _score_delivery_quality(ticker, settings)
+
+    # ── Institutional Flow scoring (Category 14) ──────────────────────────
+    institutional_score, institutional_detail = _score_institutional_flow(ticker, settings)
+
+    # ── 52-Week Position scoring (Category 15) ────────────────────────────
+    week52_score, week52_detail = _score_52week_position(ticker, settings)
+
+    # ── Valuation Quality scoring (Category 16) ────────────────────────────
+    valuation_score, valuation_detail = _score_valuation_quality(ticker, settings)
+
+    # ── Commodity Exposure scoring (Category 17) ───────────────────────────
+    commodity_score, commodity_detail = _score_commodity_exposure(ticker, settings)
+
+    # ── Forex Impact scoring (Category 18) ─────────────────────────────────
+    forex_score, forex_detail = _score_forex_impact(ticker, settings)
+
+    # ── ESG scoring (Category 19) ──────────────────────────────────────────
+    esg_score, esg_detail = _score_esg(ticker, settings)
+
+    # ── Shariah scoring (Category 20) ──────────────────────────────────────
+    shariah_score, shariah_detail = _score_shariah(ticker, settings)
+
     # ── Total ──────────────────────────────────────────────────────────────
     raw_total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
                  + obv_score + vol_score + rs_score + volat_score + fund_score
-                 + sentiment_score + social_score)
+                 + sentiment_score + social_score + delivery_score
+                 + institutional_score + week52_score + valuation_score
+                 + commodity_score + forex_score + esg_score + shariah_score)
 
-    # Cap at 120 (new max with 12 categories)
-    total = max(0.0, min(raw_total, 120.0))
+    # Cap at 138 (new max with 20 categories)
+    total = max(0.0, min(raw_total, 138.0))
 
     # ── Build result ───────────────────────────────────────────────────────
     return {
         "total": round(total, 1),
         "total_raw": round(raw_total, 1),
-        "max_possible": 120.0,
+        "max_possible": 138.0,
         "fundamentals_available": any(v != "N/A" for v in fund_detail.values()),
         # Original 10 categories
         "trend":     round(trend_score, 1),
@@ -895,13 +1286,31 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         "rel_str":   round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
-        # New categories (11 & 12)
+        # Categories 11-12
         "sentiment": round(sentiment_score, 1),
         "social":    round(social_score, 1),
+        # Categories 13-16 (free API categories)
+        "delivery":      round(delivery_score, 1),
+        "institutional": round(institutional_score, 1),
+        "week52":        round(week52_score, 1),
+        "valuation":     round(valuation_score, 1),
+        # Categories 17-20 (new public-apis categories)
+        "commodity": round(commodity_score, 1),
+        "forex":     round(forex_score, 1),
+        "esg":       round(esg_score, 1),
+        "shariah":   round(shariah_score, 1),
         # Detail for new categories
         "sentiment_detail": sentiment_detail,
         "social_detail": social_detail,
         "insider_detail": insider_detail,
+        "delivery_detail": delivery_detail,
+        "institutional_detail": institutional_detail,
+        "week52_detail": week52_detail,
+        "valuation_detail": valuation_detail,
+        "commodity_detail": commodity_detail,
+        "forex_detail": forex_detail,
+        "esg_detail": esg_detail,
+        "shariah_detail": shariah_detail,
         # Key signals
         "ma_bullish": curr["ma_bullish"],
         "close_above_both_ma": curr["close_above_both_ma"],
@@ -930,7 +1339,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         "trend_color": "bull" if curr["close"] > curr["slow_ma"] else "bear",
         # Fundamentals detail
         "fund_detail": fund_detail,
-        # Combined rating (now uses 120 max scale)
+        # Combined rating (now uses 130 max scale)
         "combined_rating": _get_combined_rating(
             total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]
         ),

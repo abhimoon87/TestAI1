@@ -375,10 +375,26 @@ def fetch_social_sentiment(
     if twitter and twitter.mention_count > 0:
         sources.append("twitter")
 
+    # ── WallstreetBets (free, no key) ──────────────────────────────────
+    wsb = None
+    try:
+        from .free_apis import fetch_wallstreetbets_sentiment
+        wsb = fetch_wallstreetbets_sentiment(ticker)
+        if wsb and wsb.mention_count > 0:
+            scores.append(wsb.sentiment_score)
+            weights.append(1.5)  # WSB weighted 1.5x
+            mention_total += wsb.mention_count
+            sources.append("wsb")
+            # Recalculate weighted score
+            weighted_score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
+    except Exception as e:
+        logger.debug("WSB sentiment fetch failed for %s: %s", ticker, e)
+
     return {
         "social_score": round(weighted_score, 3),
         "mention_count": mention_total,
         "source": "+".join(sources),
         "reddit": reddit,
         "twitter": twitter,
+        "wsb": wsb,
     }

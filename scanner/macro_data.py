@@ -245,6 +245,74 @@ def fetch_econdb_data() -> Optional[EcondbData]:
         return None
 
 
+# ── Yahoo Finance Macro Provider (Free, No Key) ───────────────────────────
+
+@dataclass
+class YahooMacroData:
+    """Free macro data from Yahoo Finance (no API key required)."""
+    us_10y_yield: Optional[float] = None
+    us_2y_yield: Optional[float] = None
+    vix: Optional[float] = None
+    crude_oil_wti: Optional[float] = None
+    gold_price: Optional[float] = None
+    inr_usd: Optional[float] = None
+    nifty_50: Optional[float] = None
+    sensex: Optional[float] = None
+    last_updated: str = ""
+    cached: bool = False
+
+
+def fetch_yahoo_macro_data() -> Optional[YahooMacroData]:
+    """
+    Fetch free macro data from Yahoo Finance (no API key required).
+    
+    Returns:
+        YahooMacroData or None
+    """
+    cache_k = hashlib.md5("yahoo:macro".encode()).hexdigest()
+    cached = _cache_get(cache_k)
+    if cached:
+        return YahooMacroData(**cached, cached=True)
+
+    try:
+        import yfinance as yf
+        
+        # Yahoo Finance ticker symbols for macro data
+        tickers = {
+            "us_10y_yield": "^TNX",   # US 10-Year Treasury Yield
+            "us_2y_yield": "^IRX",    # US 13-Week Treasury Bill (proxy for 2Y)
+            "vix": "^VIX",            # CBOE Volatility Index
+            "crude_oil_wti": "CL=F",  # WTI Crude Oil Futures
+            "gold_price": "GC=F",     # Gold Futures
+            "inr_usd": "INR=X",       # USD/INR exchange rate
+            "nifty_50": "^NSEI",      # NIFTY 50 Index
+            "sensex": "^BSESN",       # SENSEX Index
+        }
+        
+        result = {}
+        for field_name, ticker_symbol in tickers.items():
+            try:
+                ticker = yf.Ticker(ticker_symbol)
+                info = ticker.fast_info
+                price = info.get("lastPrice") or info.get("last_price")
+                if price is not None:
+                    result[field_name] = float(price)
+            except Exception as e:
+                logger.debug("Yahoo Finance %s failed: %s", ticker_symbol, e)
+                continue
+
+        from datetime import datetime
+        result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        ym = YahooMacroData(**result)
+        _cache_set(cache_k, result)
+        return ym
+
+    except Exception as e:
+        logger.warning("Yahoo Finance macro fetch failed: %s", e)
+        return None
+
+
 # ── Market Regime Detection ────────────────────────────────────────────────
 
 @dataclass
@@ -261,6 +329,7 @@ def detect_market_regime(
     fred: Optional[FredData] = None,
     econpulse: Optional[EconPulseData] = None,
     econdb: Optional[EcondbData] = None,
+    yahoo: Optional[YahooMacroData] = None,
 ) -> MarketRegime:
     """
     Detect market regime from macro economic data.
@@ -276,9 +345,26 @@ def detect_market_regime(
     risk_off_score = 0
     recession_score = 0
 
-    # Yield curve analysis
+    # VIX analysis (from Yahoo Finance - free)
+    if yahoo and yahoo.vix is not None:
+        vix = yahoo.vix
+        if vix > 30:
+            signals.append(f"High VIX ({vix:.1f}) — fear elevated")
+            risk_off_score += 2
+        elif vix > 20:
+            signals.append(f"Moderate VIX ({vix:.1f}) — normal volatility")
+        elif vix < 15:
+            signals.append(f"Low VIX ({vix:.1f}) — complacency")
+            risk_on_score += 1
+
+    # Yield curve analysis (from FRED or Yahoo)
+    spread = None
     if fred and fred.yield_curve_spread is not None:
         spread = fred.yield_curve_spread
+    elif yahoo and yahoo.us_10y_yield is not None and yahoo.us_2y_yield is not None:
+        spread = yahoo.us_10y_yield - yahoo.us_2y_yield
+    
+    if spread is not None:
         if spread < -0.5:
             signals.append(f"Yield curve deeply inverted ({spread:.2f}%)")
             recession_score += 3
@@ -385,6 +471,210 @@ def detect_market_regime(
     )
 
 
+# ── Frankfurter — Exchange Rates (Free, No Key) ────────────────────────────
+
+@dataclass
+class ForexData:
+    """Exchange rate data from Frankfurter API."""
+    base_currency: str
+    target_currency: str
+    rate: float
+    historical_rates: list[dict] = field(default_factory=list)
+    change_1d: float = 0.0
+    change_1w: float = 0.0
+    cached: bool = False
+
+
+def fetch_forex_data(
+    base: str = "USD",
+    target: str = "INR",
+    days: int = 7,
+) -> Optional[ForexData]:
+    """
+    Fetch exchange rates from Frankfurter API (free, no key).
+    
+    Args:
+        base: Base currency (default: USD)
+        target: Target currency (default: INR)
+        days: Lookback days for historical rates
+    
+    Returns:
+        ForexData or None
+    """
+    cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode()).hexdigest()
+    cached = _MACRO_CACHE.get(cache_k)
+    if cached:
+        result, ts = cached
+        if time.time() - ts < _MACRO_CACHE_TTL:
+            return ForexData(**result, cached=True)
+
+    try:
+        from datetime import date, timedelta
+
+        # Current rate
+        url = f"https://api.frankfurter.app/latest?from={base}&to={target}"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        current_rate = data.get("rates", {}).get(target)
+        if current_rate is None:
+            return None
+
+        # Historical rates
+        end = date.today()
+        start = end - timedelta(days=days + 5)
+        hist_url = f"https://api.frankfurter.app/{start}..{end}?from={base}&to={target}"
+        hist_resp = requests.get(hist_url, timeout=10)
+        hist_resp.raise_for_status()
+        hist_data = hist_resp.json()
+
+        rates_list = []
+        for dt, rates in sorted(hist_data.get("rates", {}).items()):
+            rates_list.append({"date": dt, "rate": rates.get(target, 0)})
+
+        # Calculate changes
+        change_1d = 0.0
+        change_1w = 0.0
+        if len(rates_list) >= 2:
+            prev_rate = rates_list[-2]["rate"]
+            change_1d = ((current_rate - prev_rate) / prev_rate) * 100
+        if len(rates_list) >= 6:
+            week_ago_rate = rates_list[0]["rate"]
+            change_1w = ((current_rate - week_ago_rate) / week_ago_rate) * 100
+
+        result = ForexData(
+            base_currency=base,
+            target_currency=target,
+            rate=current_rate,
+            historical_rates=rates_list,
+            change_1d=round(change_1d, 3),
+            change_1w=round(change_1w, 3),
+        )
+
+        _MACRO_CACHE[cache_k] = ({
+            "base_currency": base,
+            "target_currency": target,
+            "rate": current_rate,
+            "historical_rates": rates_list,
+            "change_1d": result.change_1d,
+            "change_1w": result.change_1w,
+        }, time.time())
+
+        return result
+
+    except Exception as e:
+        logger.debug("Frankfurter forex fetch failed: %s", e)
+        return None
+
+
+# ── CoinGecko — Crypto Sentiment (Free, No Key) ────────────────────────────
+
+@dataclass
+class CryptoSentiment:
+    """Crypto market data for correlation with equities."""
+    btc_price: float
+    btc_change_24h: float
+    btc_change_7d: float
+    eth_price: float
+    eth_change_24h: float
+    total_market_cap: float
+    total_volume_24h: float
+    btc_dominance: float
+    fear_greed_index: Optional[float] = None
+    fear_greed_label: Optional[str] = None
+    cached: bool = False
+
+
+def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
+    """
+    Fetch crypto market data from CoinGecko (free, no key).
+    Used for BTC correlation and risk sentiment analysis.
+    
+    Returns:
+        CryptoSentiment or None
+    """
+    cache_k = hashlib.md5("crypto:sentiment".encode()).hexdigest()
+    cached = _MACRO_CACHE.get(cache_k)
+    if cached:
+        result, ts = cached
+        if time.time() - ts < _MACRO_CACHE_TTL:
+            return CryptoSentiment(**result, cached=True)
+
+    try:
+        # CoinGecko global data
+        url = "https://api.coingecko.com/api/v3/global"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        global_data = resp.json().get("data", {})
+
+        btc_dominance = global_data.get("market_cap_percentage", {}).get("btc", 0)
+        total_market_cap = global_data.get("total_market_cap", {}).get("usd", 0)
+        total_volume = global_data.get("total_volume", {}).get("usd", 0)
+
+        # BTC and ETH prices
+        coins_url = "https://api.coingecko.com/api/v3/simple/price"
+        params = {
+            "ids": "bitcoin,ethereum",
+            "vs_currencies": "usd",
+            "include_24hr_change": "true",
+            "include_7d_change": "true",
+        }
+        coins_resp = requests.get(coins_url, params=params, timeout=10)
+        coins_resp.raise_for_status()
+        coins_data = coins_resp.json()
+
+        btc = coins_data.get("bitcoin", {})
+        eth = coins_data.get("ethereum", {})
+
+        # Fear & Greed Index
+        fear_greed = None
+        fear_greed_label = None
+        try:
+            fg_resp = requests.get(
+                "https://api.alternative.me/fng/?limit=1",
+                timeout=5,
+            )
+            fg_resp.raise_for_status()
+            fg_data = fg_resp.json().get("data", [{}])[0]
+            fear_greed = float(fg_data.get("value", 50))
+            fear_greed_label = fg_data.get("value_classification", "Neutral")
+        except Exception:
+            pass
+
+        result = CryptoSentiment(
+            btc_price=btc.get("usd", 0),
+            btc_change_24h=btc.get("usd_24h_change", 0),
+            btc_change_7d=btc.get("usd_7d_change", 0),
+            eth_price=eth.get("usd", 0),
+            eth_change_24h=eth.get("usd_24h_change", 0),
+            total_market_cap=total_market_cap,
+            total_volume_24h=total_volume,
+            btc_dominance=round(btc_dominance, 2),
+            fear_greed_index=fear_greed,
+            fear_greed_label=fear_greed_label,
+        )
+
+        _MACRO_CACHE[cache_k] = ({
+            "btc_price": result.btc_price,
+            "btc_change_24h": result.btc_change_24h,
+            "btc_change_7d": result.btc_change_7d,
+            "eth_price": result.eth_price,
+            "eth_change_24h": result.eth_change_24h,
+            "total_market_cap": result.total_market_cap,
+            "total_volume_24h": result.total_volume_24h,
+            "btc_dominance": result.btc_dominance,
+            "fear_greed_index": result.fear_greed_index,
+            "fear_greed_label": result.fear_greed_label,
+        }, time.time())
+
+        return result
+
+    except Exception as e:
+        logger.debug("CoinGecko crypto sentiment fetch failed: %s", e)
+        return None
+
+
 # ── Unified Macro Fetcher ──────────────────────────────────────────────────
 
 def fetch_macro_data(
@@ -394,23 +684,40 @@ def fetch_macro_data(
     """
     Fetch all macro data and detect market regime.
     
+    Sources:
+      - FRED (requires API key)
+      - EconPulse (requires API key)
+      - Econdb (free, no key)
+      - Yahoo Finance (free, no key) — VIX, yields, oil, gold, INR, indices
+      - Frankfurter (free, no key) — INR/USD exchange rates
+      - CoinGecko (free, no key) — Crypto sentiment, BTC correlation
+    
     Returns:
         {
             "fred": FredData | None,
             "econpulse": EconPulseData | None,
             "econdb": EcondbData | None,
+            "yahoo": YahooMacroData | None,
+            "forex": ForexData | None,
+            "crypto": CryptoSentiment | None,
             "regime": MarketRegime,
         }
     """
     fred = fetch_fred_data(fred_key)
     econpulse = fetch_econpulse_data(econpulse_key)
     econdb = fetch_econdb_data()
+    yahoo = fetch_yahoo_macro_data()
+    forex = fetch_forex_data()
+    crypto = fetch_crypto_sentiment()
 
-    regime = detect_market_regime(fred, econpulse, econdb)
+    regime = detect_market_regime(fred, econpulse, econdb, yahoo)
 
     return {
         "fred": fred,
         "econpulse": econpulse,
         "econdb": econdb,
+        "yahoo": yahoo,
+        "forex": forex,
+        "crypto": crypto,
         "regime": regime,
     }

@@ -11,6 +11,7 @@ from typing import Optional, Callable, List, Dict, Any
 from .data_fetcher import fetch_index_data, fetch_batch_yfinance, fetch_fundamentals
 from .scoring import compute_scores, check_filter, get_direction
 from .universes import UNIVERSES, get_universe
+from .settings_store import load_api_config, get_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,162 @@ class ScannerEngine:
     def _log(self, msg: str):
         if self._log_callback:
             self._log_callback(msg)
+
+    def _enrich_with_providers(self, ticker: str, settings: dict) -> dict:
+        """
+        Enrich settings with data from provider modules.
+        Calls sentiment, social, indian_market, indian_fundamentals, insider
+        providers and populates the settings dict keys that scoring.py expects.
+        """
+        enriched = settings.copy()
+
+        # Load API keys
+        api_config = load_api_config()
+
+        # ── Market Sentiment (Category 11) ──────────────────────────────
+        if settings.get("use_market_sentiment", True):
+            try:
+                from .market_sentiment import fetch_sentiment
+                sent = fetch_sentiment(
+                    ticker,
+                    marketaux_key=get_api_key("MARKETAUX_API_KEY", api_config),
+                    newsapi_key=get_api_key("NEWS_API_KEY", api_config),
+                    gnews_key=get_api_key("GNEWS_API_KEY", api_config),
+                )
+                enriched["_sentiment_score"] = sent.get("sentiment_score", 0.0)
+                enriched["_article_count"] = sent.get("article_count", 0)
+                enriched["_sentiment_source"] = sent.get("source", "none")
+            except Exception as e:
+                logger.debug("Sentiment fetch failed for %s: %s", ticker, e)
+
+        # ── Social Sentiment (Category 12) ──────────────────────────────
+        if settings.get("use_social_sentiment", True):
+            try:
+                from .social_sentiment import fetch_social_sentiment
+                social = fetch_social_sentiment(
+                    ticker,
+                    twitter_api_key=get_api_key("HF_API_KEY", api_config),
+                )
+                enriched["_social_score"] = social.get("social_score", 0.0)
+                enriched["_mention_count"] = social.get("mention_count", 0)
+                enriched["_social_source"] = social.get("source", "none")
+            except Exception as e:
+                logger.debug("Social sentiment fetch failed for %s: %s", ticker, e)
+
+        # ── Indian Market Data (Categories 13, 14, 15) ──────────────────
+        if settings.get("use_indian_market", True):
+            try:
+                from .indian_market import fetch_indian_market_data
+                india = fetch_indian_market_data(ticker)
+
+                delivery = india.get("delivery")
+                if delivery:
+                    enriched["_delivery_pct"] = delivery.delivery_pct
+                    enriched["_delivery_change_pct"] = delivery.delivery_change_pct
+                    enriched["_delivery_source"] = "nse"
+
+                fii_dii = india.get("fii_dii")
+                if fii_dii:
+                    enriched["_fii_is_buying"] = fii_dii.fii_is_buying
+                    enriched["_dii_is_buying"] = fii_dii.dii_is_buying
+                    enriched["_fii_net"] = fii_dii.fii_net
+                    enriched["_dii_net"] = fii_dii.dii_net
+                    enriched["_institutional_source"] = "nse"
+
+                week52 = india.get("week52")
+                if week52:
+                    enriched["_52w_position"] = week52.position_in_range
+                    enriched["_52w_pct_from_high"] = week52.pct_from_52w_high
+                    enriched["_52w_source"] = "nse"
+            except Exception as e:
+                logger.debug("Indian market fetch failed for %s: %s", ticker, e)
+
+        # ── Indian Fundamentals (Category 16) ───────────────────────────
+        if settings.get("use_indian_fundamentals", True):
+            try:
+                from .indian_fundamentals import fetch_indian_fundamentals
+                indian_fund = fetch_indian_fundamentals(ticker)
+
+                screener = indian_fund.get("screener")
+                if screener:
+                    if screener.industry_pe and screener.stock_pe:
+                        enriched["_pe_relative_to_industry"] = screener.stock_pe / screener.industry_pe
+                    enriched["_is_quality_stock"] = screener.is_quality
+                    enriched["_valuation_source"] = indian_fund.get("source", "none")
+            except Exception as e:
+                logger.debug("Indian fundamentals fetch failed for %s: %s", ticker, e)
+
+        # ── Insider Data (adjustment to Fundamentals) ───────────────────
+        if settings.get("use_insider_data", True):
+            try:
+                from .insider_data import fetch_insider_data
+                insider = fetch_insider_data(ticker)
+                enriched["_insider_score"] = insider.get("insider_score", 0.0)
+                enriched["_insider_source"] = insider.get("source", "none")
+            except Exception as e:
+                logger.debug("Insider data fetch failed for %s: %s", ticker, e)
+
+        # ── Macro Data ──────────────────────────────────────────────────
+        if settings.get("use_macro_data", True):
+            try:
+                from .macro_data import fetch_macro_data
+                macro = fetch_macro_data(
+                    fred_key=get_api_key("FRED_API_KEY", api_config),
+                    econpulse_key=get_api_key("ECONPULSE_API_KEY", api_config),
+                )
+                regime = macro.get("regime")
+                if regime:
+                    enriched["_macro_regime"] = regime.regime
+                    enriched["_macro_confidence"] = regime.confidence
+                    enriched["_macro_signals"] = regime.signals
+
+                # Forex data (Category 18)
+                forex = macro.get("forex")
+                if forex:
+                    enriched["_inr_change_1d"] = forex.change_1d
+                    enriched["_inr_change_1w"] = forex.change_1w
+                    enriched["_forex_source"] = "frankfurter"
+
+                # Crypto sentiment (for market regime context)
+                crypto = macro.get("crypto")
+                if crypto:
+                    enriched["_btc_fear_greed"] = crypto.fear_greed_index
+                    enriched["_btc_fear_greed_label"] = crypto.fear_greed_label
+            except Exception as e:
+                logger.debug("Macro data fetch failed: %s", e)
+
+        # ── Free APIs (Categories 17, 19, 20) ──────────────────────────
+        if settings.get("use_macro_data", True):
+            try:
+                from .free_apis import (
+                    fetch_mandi_prices,
+                    fetch_crypto_sentiment,
+                    fetch_wallstreetbets_sentiment,
+                )
+
+                # Commodity prices (Category 17)
+                mandi = fetch_mandi_prices()
+                if mandi:
+                    # Simple: if any commodity prices available, mark as "neutral"
+                    enriched["_commodity_trend"] = "neutral"
+                    enriched["_commodity_source"] = "mandi"
+            except Exception as e:
+                logger.debug("Free APIs fetch failed: %s", e)
+
+        # ── Premium Finance (Category 20 - Shariah) ────────────────────
+        try:
+            from .premium_finance import fetch_shariah_data
+            shariah = fetch_shariah_data(
+                ticker,
+                api_key=get_api_key("HALAL_API_KEY", api_config),
+            )
+            if shariah:
+                enriched["_is_shariah_compliant"] = shariah.is_shariah_compliant
+                enriched["_shariah_source"] = "halal_terminal"
+        except Exception as e:
+            logger.debug("Shariah data fetch failed for %s: %s", ticker, e)
+
+        return enriched
     
     def scan(
         self,
@@ -181,10 +338,13 @@ class ScannerEngine:
                                 df._fundamentals = fund
                         except Exception as e:
                             logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
-                    
+
+                    # ── Enrich settings with provider data ──────────────
+                    enriched_settings = self._enrich_with_providers(ticker, settings)
+
                     scores = compute_scores(
                         df, timeframe=timeframe, index_df=index_df,
-                        settings=settings,
+                        settings=enriched_settings,
                     )
                     if scores is None:
                         continue

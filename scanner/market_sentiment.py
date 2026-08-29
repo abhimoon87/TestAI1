@@ -384,6 +384,84 @@ def fetch_gnews_sentiment(
         return None
 
 
+# ── Yahoo Finance News Provider (Free, No Key) ─────────────────────────────
+
+@dataclass
+class YFinanceNewsSentiment:
+    """News sentiment from Yahoo Finance (free, no API key required)."""
+    ticker: str
+    sentiment_score: float
+    article_count: int
+    top_headlines: list[str] = field(default_factory=list)
+    cached: bool = False
+
+
+def fetch_yfinance_news_sentiment(ticker: str) -> Optional[YFinanceNewsSentiment]:
+    """
+    Fetch news sentiment from Yahoo Finance (free, no API key).
+    
+    Args:
+        ticker: Stock ticker (e.g., "RELIANCE.NS")
+    
+    Returns:
+        YFinanceNewsSentiment or None
+    """
+    cache_k = _cache_key(ticker, "yfinance_news")
+    cached = _cache_get(cache_k)
+    if cached:
+        return YFinanceNewsSentiment(**cached, cached=True)
+
+    try:
+        import yfinance as yf
+        
+        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
+        stock = yf.Ticker(nse_ticker)
+        news = stock.news  # Returns list of dicts with title, publisher, link, etc.
+        
+        if not news:
+            return YFinanceNewsSentiment(
+                ticker=ticker, sentiment_score=0.0,
+                article_count=0, top_headlines=[], cached=False,
+            )
+
+        sentiments = []
+        headlines = []
+        
+        for article in news[:20]:  # Analyze up to 20 articles
+            title = article.get("title", "")
+            publisher = article.get("publisher", "")
+            # Combine title + publisher for sentiment
+            text = f"{title} {publisher}"
+            score = _keyword_sentiment(text)
+            sentiments.append(score)
+            
+            if title and len(headlines) < 3:
+                headlines.append(title[:120])
+
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+        result = YFinanceNewsSentiment(
+            ticker=ticker,
+            sentiment_score=round(avg_sentiment, 3),
+            article_count=len(news),
+            top_headlines=headlines,
+            cached=False,
+        )
+
+        _cache_set(cache_k, {
+            "ticker": ticker,
+            "sentiment_score": result.sentiment_score,
+            "article_count": result.article_count,
+            "top_headlines": result.top_headlines,
+        })
+
+        return result
+
+    except Exception as e:
+        logger.debug("Yahoo Finance news failed for %s: %s", ticker, e)
+        return None
+
+
 # ── Unified Sentiment Fetcher ──────────────────────────────────────────────
 
 def fetch_sentiment(
@@ -395,11 +473,17 @@ def fetch_sentiment(
     """
     Fetch news sentiment from multiple sources with fallback.
     
+    Priority:
+      1. MarketAux (ticker-tagged, best quality)
+      2. NewsAPI (80k+ sources)
+      3. GNews (free tier)
+      4. Yahoo Finance (free, no key - fallback)
+    
     Returns:
         {
             "sentiment_score": float,  # -1.0 to 1.0
             "article_count": int,
-            "source": str,  # "marketaux" | "newsapi" | "gnews" | "keyword" | "none"
+            "source": str,  # "marketaux" | "newsapi" | "gnews" | "yfinance" | "none"
             "top_headlines": list[str],
         }
     """
@@ -432,6 +516,35 @@ def fetch_sentiment(
             "source": "gnews",
             "top_headlines": [],
         }
+
+    # Try Yahoo Finance (free fallback, no key needed)
+    yf_news = fetch_yfinance_news_sentiment(ticker)
+    if yf_news and yf_news.article_count > 0:
+        return {
+            "sentiment_score": yf_news.sentiment_score,
+            "article_count": yf_news.article_count,
+            "source": "yfinance",
+            "top_headlines": yf_news.top_headlines,
+        }
+
+    # ── Noozra RSS (free, no key) ──────────────────────────────────────
+    try:
+        from .free_apis import fetch_noozra_news
+        noozra = fetch_noozra_news(query=ticker, max_items=10)
+        if noozra:
+            # Keyword sentiment on headlines
+            headlines = [n.title for n in noozra]
+            combined_text = " ".join(headlines)
+            kw_score = _keyword_sentiment(combined_text)
+            if combined_text.strip():
+                return {
+                    "sentiment_score": kw_score,
+                    "article_count": len(noozra),
+                    "source": "noozra",
+                    "top_headlines": headlines[:5],
+                }
+    except Exception as e:
+        logger.debug("Noozra news fetch failed for %s: %s", ticker, e)
 
     # No sentiment data
     return {

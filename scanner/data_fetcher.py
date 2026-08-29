@@ -40,7 +40,7 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         df = df.copy()
         try:
             df.index = pd.to_datetime(df.index)
-        except Exception:
+        except (ValueError, TypeError):
             # If index can't be converted, try to find a date column
             for col in ["date", "Date", "DATE"]:
                 if col in df.columns:
