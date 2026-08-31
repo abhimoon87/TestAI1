@@ -9,6 +9,7 @@ scanner/nifty50_scan_report.html
 scanner/test_report.html
 scanner/test_report_columns.html
 scanner/test_report_columns.html
+scanner/scan.log
 
 # Settings (user-specific)
 scanner/settings.json
