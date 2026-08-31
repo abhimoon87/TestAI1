@@ -657,3 +657,50 @@
 [01:08:37]   Filtered out:  71 (no recent crossover)
 [01:08:37]   Passed filter: 11 (10 Bull, 1 Bear)
 [01:08:37]   Scored 50.0+: 3
+[18:36:31] 
+==================================================
+[18:36:31] START SCAN | 2026-08-31 18:36:31
+[18:36:31] ==================================================
+[18:36:31] Starting scan: ALL (Combined) (207 stocks)
+[18:36:31] Timeframe: Weekly | Period: 2y | Filter: All
+[18:36:31] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[18:36:31] NSEI index loaded (496 bars)
+[18:36:31] Batch downloading 207 stocks via yfinance...
+[18:36:43] Batch download complete: 200/207 stocks fetched
+[18:36:44]   ✗ PVRINOX: 46.3/100 (Bull)
+[18:36:44]   ✓ COFORGE: 52.7/100 (Bull)
+[18:36:45]   ✗ GODREJPROP: 42.1/100 (Bull)
+[18:36:45]   ✓ INDHOTEL: 58.7/100 (Bull)
+[18:36:46]   ✗ APTUS: 22.9/100 (Bull)
+[18:36:49]   ✗ HAL: 49.4/100 (Bull)
+[18:36:55]   ✗ PRESTIGE: 47.9/100 (Bull)
+[18:36:58] 
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━
+━ Scan Complete 
+[18:36:58]   Total stocks:  207
+[18:36:58]   Filtered out:  175 (no recent crossover)
+[18:36:58]   Passed filter: 25 (25 Bull, 0 Bear)
+[18:36:58]   Scored 50.0+: 11
