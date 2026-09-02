@@ -4,20 +4,19 @@ All external API calls (yfinance, jugaad, nselib) are mocked so tests
 run fast and offline.
 """
 
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-import pytest
-from unittest.mock import patch, MagicMock
 
 from scanner.data_fetcher import (
-    resample_ohlcv,
     _extend_period_for_timeframe,
     fetch_batch_yfinance,
-    fetch_stock_data,
-    fetch_index_data,
     fetch_fundamentals,
+    fetch_index_data,
+    fetch_stock_data,
+    resample_ohlcv,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

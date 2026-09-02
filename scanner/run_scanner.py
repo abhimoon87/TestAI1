@@ -16,10 +16,14 @@ import sys
 import webbrowser
 from datetime import datetime
 
-from .universes import UNIVERSES, NIFTY_50
-from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_batch_yfinance, fetch_fundamentals
-from .scoring import compute_scores, check_filter, get_direction
+from .data_fetcher import (
+    fetch_batch_yfinance,
+    fetch_fundamentals,
+    fetch_index_data,
+)
 from .report import generate_html_report, save_report
+from .scoring import check_filter, compute_scores, get_direction
+from .universes import UNIVERSES
 
 logger = logging.getLogger(__name__)
 
@@ -194,10 +198,10 @@ def run_scan():
         logger.info("  [%d/%d] %s...", i, len(stock_data), ticker)
 
         # Attach fundamentals if not already present
-        if not hasattr(df, '_fundamentals') or df._fundamentals is None:
+        if getattr(df, '_fundamentals', None) is None:
             fund = fetch_fundamentals(ticker)
             if fund is not None:
-                df._fundamentals = fund
+                object.__setattr__(df, '_fundamentals', fund)
 
         # ── MODEL 1: Stock Filter ──────────────────────────────────────────
         filter_result = check_filter(

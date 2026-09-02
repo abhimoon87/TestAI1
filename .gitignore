@@ -6,10 +6,15 @@ __pycache__/
 # Generated reports
 scanner/*_report_*.html
 scanner/nifty50_scan_report.html
+scanner/nifty50_weekly_report.html
 scanner/test_report.html
 scanner/test_report_columns.html
-scanner/test_report_columns.html
 scanner/scan.log
+scanner/trace.log
+scanner/trace.log.*
+
+# Stale CSVs
+scanner/*.csv
 
 # Settings (user-specific)
 scanner/settings.json
@@ -19,6 +24,5 @@ scanner/api_config.json
 .DS_Store
 Thumbs.db
 
-# Stale files
-scanner/'
+# Cache
 scanner/.cache/

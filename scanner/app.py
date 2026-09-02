@@ -13,94 +13,40 @@ Or double-click run.bat (Windows) / run.sh (macOS/Linux)
 
 import json
 import logging
+import math
 import os
 import sys
 import threading
-import time
 import tkinter as tk
 import webbrowser
 from datetime import datetime
+from pathlib import Path
 
 import customtkinter as ctk
+from PIL import Image
+
+from .trace import setup_trace
+
+try:
+    setup_trace()
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
+logger.info("app module loaded -- trace active at %s", __import__("pathlib").Path(__file__).parent / "trace.log")
 
+from .report import (
+    _sentiment,
+    generate_html_report,
+    save_report,
+)
+from .themes import THEMES
 from .universes import UNIVERSES
-from .data_fetcher import fetch_stock_data, fetch_index_data, fetch_stock_fast, fetch_batch_yfinance, fetch_fundamentals
-from .scoring import compute_scores, check_filter, get_direction
-from .report import generate_html_report, save_report, _sentiment, SENTIMENT_GOOD, SENTIMENT_BAD
 
 SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12  # Overwrite log file after 12 hours
-
-# ── Theme Definitions (matches scanner_report HTML palette) ─────────────────
-THEMES = {
-    "dark": {
-        "ctk_mode": "dark",
-        # Base surfaces (report CSS vars: --bg/--surface/--surface2/--border)
-        "root_bg": "#0a1a10",
-        "rail_bg": "#071309",
-        "side_bg": "#0c1e13",
-        "main_bg": "#0a1a10",
-        "panel_bg": "#0f2a1a",
-        # Cards / rows
-        "card": "#0f2a1a",
-        "card2": "#153520",
-        "border": "#1a4a2a",
-        "row_alt": "#0d2114",
-        # Text (--text / --text-dim)
-        "text": "#c8d8c0",
-        "text_dim": "#6a8a6a",
-        # Accents (--green --lime --orange --red --blue --cyan)
-        "purple": "#00ff88", "purple_hover": "#33ffaa",   # primary accent
-        "pink": "#aaff00",                                 # secondary accent
-        "cyan": "#00ddcc",
-        "green": "#00ff88", "lime": "#aaff00",
-        "orange": "#ffaa00", "red": "#ff4444",
-        "blue": "#00aaff",
-        # Controls
-        "option_bg": "#153520", "option_btn": "#1a4a2a", "option_drop": "#0f2a1a",
-        "entry_bg": "#153520", "entry_border": "#1a4a2a",
-        "progress_bg": "#153520", "progress_fg": "#00ff88",
-        "nav_active": "#0f3320",
-        "chip_good": "#0b3a20", "chip_bad": "#3a1414",
-        # Hero gradient (green → cyan → deep teal)
-        "hero_grad": ["#00ff88", "#00ddcc", "#0088aa", "#06251a"],
-    },
-    "light": {
-        "ctk_mode": "light",
-        # Base surfaces
-        "root_bg": "#eef6f0",
-        "rail_bg": "#e2eee6",
-        "side_bg": "#f4faf6",
-        "main_bg": "#fbfdfb",
-        "panel_bg": "#ffffff",
-        # Cards / rows
-        "card": "#ffffff",
-        "card2": "#e8f4ec",
-        "border": "#cfe4d7",
-        "row_alt": "#f1f9f4",
-        # Text
-        "text": "#12281c",
-        "text_dim": "#55705f",
-        # Accents (readable daylight variants of report hues)
-        "purple": "#047857", "purple_hover": "#036c4e",
-        "pink": "#65a30d",
-        "cyan": "#0e7490",
-        "green": "#059669", "lime": "#65a30d",
-        "orange": "#d97706", "red": "#dc2626",
-        "blue": "#0284c7",
-        # Controls
-        "option_bg": "#ffffff", "option_btn": "#cfe4d7", "option_drop": "#ffffff",
-        "entry_bg": "#ffffff", "entry_border": "#b7d8c5",
-        "progress_bg": "#dbeee3", "progress_fg": "#047857",
-        "nav_active": "#d9f2e4",
-        "chip_good": "#d7f2e2", "chip_bad": "#fbdfdf",
-        "hero_grad": ["#10b981", "#0ea5a5", "#0284c7", "#075985"],
-    },
-}
 
 
 def apply_theme(app, theme_name: str):
@@ -195,6 +141,7 @@ class GradientCanvas(tk.Canvas):
         self.delete("grad")
         w = max(self.winfo_width(), 1)
         h = max(self.winfo_height(), 1)
+        # Subtle vignette overlay for depth
         steps = max((w if self._horizontal else h) // 2, 1)
         n = len(self._colors) - 1
         for i in range(steps):
@@ -203,9 +150,9 @@ class GradientCanvas(tk.Canvas):
             f = t - seg
             c1, c2 = self._colors[seg], self._colors[seg + 1]
             rgb = tuple(int(c1[j] + (c2[j] - c1[j]) * f) for j in range(3))
-            col = "#%02x%02x%02x" % rgb
+            col = "#{:02x}{:02x}{:02x}".format(*rgb)
             if self._horizontal:
-                self.create_line(i * 2, 0, i * 2, h, width=3, fill=col, tags="grad")
+                self.create_line(i * 2, 0, i * 2, h, width=2, fill=col, tags="grad")
             else:
                 self.create_line(0, i * 2, w, i * 2, width=3, fill=col, tags="grad")
         self.tag_lower("grad")
@@ -241,6 +188,93 @@ class AvatarRing(tk.Canvas):
                          font=("Segoe UI", int(s / 3.4), "bold"), fill="#8dffc4")
 
 
+class RunningBull(ctk.CTkFrame):
+    """Running bull — displays the provided bull gif/png centered in grid."""
+
+    def __init__(self, master, width=220, height=110, bg="#0f271c", **kw):
+        super().__init__(master, width=width, height=height, fg_color=bg, **kw)
+        self._bull_w = width
+        self._bull_h = height
+        self._frame = 0
+        self._running = False
+        self._after_id = None
+        self._bg = bg
+        # Load bull image (gif/png) from assets
+        self._ctk_img = None
+        self._label = None
+        try:
+            # Try gif first, then png
+            candidates = [
+                Path(__file__).parent / "assets" / "bull.gif",
+                Path(__file__).parent / "assets" / "bull.png",
+                Path(__file__).parent / "assets" / "bull_small.png",
+            ]
+            img_path = next((p for p in candidates if p.exists()), None)
+            if img_path is not None:
+                pil = Image.open(img_path).convert("RGBA")
+                # Fit inside 220x110, keep aspect
+                pil.thumbnail((200, 90), Image.LANCZOS)
+                # For CTkImage, keep reference
+                self._ctk_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=pil.size)
+                self._label = ctk.CTkLabel(self, image=self._ctk_img, text="", fg_color="transparent")
+                self._label.place(relx=0.5, rely=0.5, anchor="center")
+            else:
+                # Fallback text if image missing
+                self._label = ctk.CTkLabel(self, text="\U0001F402", font=ctk.CTkFont(size=48), text_color="#2E86DE", fg_color="transparent")
+                self._label.place(relx=0.5, rely=0.5, anchor="center")
+        except Exception:
+            # Fallback to text bull on any load error
+            try:
+                self._label = ctk.CTkLabel(self, text="\U0001F402", font=ctk.CTkFont(size=48), text_color="#2E86DE", fg_color="transparent")
+                self._label.place(relx=0.5, rely=0.5, anchor="center")
+            except Exception:
+                pass
+        # Ground line under bull
+        try:
+            self._ground = tk.Canvas(self, width=width, height=14, bg=bg, highlightthickness=0, bd=0)
+            self._ground.place(relx=0.5, rely=0.92, anchor="center")
+            self._ground.create_line(18, 7, width - 18, 7, fill="#1e4a2f", width=2)
+        except Exception:
+            self._ground = None
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._tick()
+
+    def stop(self):
+        self._running = False
+        if self._after_id is not None:
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        self._frame = 0
+
+    def _tick(self):
+        if not self._running or not self.winfo_exists():
+            return
+        self._frame = (self._frame + 1) % 20
+        # Bobbing animation + subtle dust
+        try:
+            bob = math.sin(self._frame * 0.314) * 3.0
+            if self._label is not None and self._label.winfo_exists():
+                self._label.place_configure(rely=0.5 + bob * 0.008)
+            if getattr(self, "_ground", None) is not None and self._ground.winfo_exists():
+                self._ground.delete("dust")
+                dust_phase = self._frame % 4
+                for i, dx in enumerate([0, 28]):
+                    alpha = 0.35 if (dust_phase + i) % 2 == 0 else 0.15
+                    col = "#2a5a3a" if alpha > 0.3 else "#1e3a2a"
+                    self._ground.create_oval(28 + dx, 2, 38 + dx, 8, fill=col, outline="", tags="dust")
+        except Exception:
+            pass
+        if self._running:
+            self._after_id = self.after(80, self._tick)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
@@ -270,6 +304,15 @@ class ScannerApp(ctk.CTk):
         self.scanning = False
         self.filter_text = ""
         self.active_view = "dashboard"
+        # Pagination / virtualization for 5,900 rows
+        self.page_size = 100
+        self.current_page = 0
+        self.all_results: list = []  # full unfiltered
+        self.filtered_results: list = []  # after search filter
+        # Sorting state for scan results grid
+        self.sort_col: int | None = None
+        self.sort_reverse: bool = False
+        self._pending_stream_after: str | None = None
 
         # Apply saved theme
         theme_name = self.settings.get("theme", "dark")
@@ -280,6 +323,19 @@ class ScannerApp(ctk.CTk):
         self._build_ui()
         self._load_settings_to_ui()
         self._rotate_log()
+        # Pre-warm symbol disk cache in background (avoids 5-40s block on first scan)
+        def _warm_symbols():
+            try:
+                from .symbol_fetcher import _load_disk_cache
+                from .universes import get_universe
+                _load_disk_cache()
+                get_universe("FULL MARKET (NSE+BSE ~5,900)")
+            except Exception:
+                pass
+        try:
+            self.after(800, lambda: threading.Thread(target=_warm_symbols, daemon=True).start())
+        except Exception:
+            pass
 
     # ════════════════════════════════════════════════════════════════════════
     # UI CONSTRUCTION
@@ -391,7 +447,7 @@ class ScannerApp(ctk.CTk):
 
         p1, b1 = add_rail_item(1, "home", "dashboard", c["cyan"])
         p2, b2 = add_rail_item(2, "gear", "settings", c["purple"])
-        _, b3 = add_rail_item(3, "play", self._start_scan, c["green"])
+        _, _b3 = add_rail_item(3, "play", self._start_scan, c["green"])
         self.rail_pills = {"dashboard": p1, "settings": p2}
         self.rail_buttons = {"dashboard": b1, "settings": b2}
 
@@ -407,13 +463,15 @@ class ScannerApp(ctk.CTk):
         active = (view == self.active_view)
         item = ctk.CTkButton(
             parent, text=f"   {icon}   {label}",
-            anchor="w", height=40, corner_radius=12,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold" if active else "normal"),
+            anchor="w", height=38, corner_radius=10,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold" if active else "normal"),
             fg_color=c["nav_active"] if active else "transparent",
-            hover_color=c["card"] if not active else c["nav_active"],
+            hover_color=c["card_hover"] if not active else c["nav_active"],
             text_color=c["text"] if active else c["text_dim"],
+            border_width=1 if active else 0,
+            border_color=c["border"],
             command=lambda: self._show_view(view))
-        item.pack(fill="x", padx=10, pady=3)
+        item.pack(fill="x", padx=10, pady=2)
         return item
 
     def _build_sidebar(self):
@@ -454,8 +512,8 @@ class ScannerApp(ctk.CTk):
 
         def section_label(text):
             ctk.CTkLabel(ctrl, text=text.upper(),
-                         font=ctk.CTkFont(size=10, weight="bold"),
-                         text_color=c["cyan"]).pack(padx=14, pady=(12, 2), anchor="w")
+                         font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),
+                         text_color=c["text_faint"]).pack(padx=14, pady=(14, 3), anchor="w")
 
         # Universe
         section_label("Stock Universe")
@@ -533,9 +591,10 @@ class ScannerApp(ctk.CTk):
 
         self.run_btn = ctk.CTkButton(
             bottom, text="\u25b6   RUN SCAN",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             fg_color=c["purple"], hover_color=c["purple_hover"],
-            text_color="#04220f", height=44, corner_radius=14,
+            text_color="#052e16", height=42, corner_radius=12,
+            border_width=1, border_color=c["border"],
             command=self._start_scan)
         self.run_btn.pack(fill="x", pady=(0, 8))
 
@@ -659,10 +718,36 @@ class ScannerApp(ctk.CTk):
 
         # Table (header bar + rows live here; rebuilt on every display/filter change)
         self.table_frame = ctk.CTkFrame(view, fg_color="transparent")
-        self.table_frame.grid(row=3, column=0, sticky="ew", padx=6, pady=(6, 20))
+        self.table_frame.grid(row=3, column=0, sticky="ew", padx=6, pady=(6, 6))
         self.table_frame.grid_columnconfigure(0, weight=1)
 
         self._render_table_header()
+
+        # Pagination bar — virtualizes 5,900 rows into 100-row pages
+        self.pagination_frame = ctk.CTkFrame(view, fg_color="transparent")
+        self.pagination_frame.grid(row=4, column=0, sticky="ew", padx=6, pady=(0, 12))
+        self.pagination_frame.grid_remove()  # hidden until results
+        pag = self.pagination_frame
+        self.page_prev_btn = ctk.CTkButton(pag, text="◀ Prev", width=80, height=28, corner_radius=8,
+                                           fg_color=c["card"], hover_color=c["card_hover"], border_width=1, border_color=c["border"],
+                                           text_color=c["text"], command=lambda: self._change_page(-1))
+        self.page_prev_btn.pack(side="left", padx=2)
+        self.page_label = ctk.CTkLabel(pag, text="Page 1 / 1", font=ctk.CTkFont(size=11), text_color=c["text_dim"])
+        self.page_label.pack(side="left", padx=10)
+        self.page_next_btn = ctk.CTkButton(pag, text="Next ▶", width=80, height=28, corner_radius=8,
+                                           fg_color=c["card"], hover_color=c["card_hover"], border_width=1, border_color=c["border"],
+                                           text_color=c["text"], command=lambda: self._change_page(1))
+        self.page_next_btn.pack(side="left", padx=2)
+        # Page size selector
+        ctk.CTkLabel(pag, text="Rows:", font=ctk.CTkFont(size=10), text_color=c["text_dim"]).pack(side="left", padx=(16, 4))
+        self.page_size_var = ctk.StringVar(value="100")
+        ctk.CTkOptionMenu(pag, variable=self.page_size_var, values=["50", "100", "200", "500"],
+                          width=80, height=28, corner_radius=8,
+                          fg_color=c["card"], button_color=c["card2"], text_color=c["text"],
+                          command=self._on_page_size_change).pack(side="left")
+        ctk.CTkButton(pag, text="Load All (no pagination)", width=140, height=28, corner_radius=8,
+                      fg_color="transparent", hover_color=c["card"], border_width=1, border_color=c["border"],
+                      text_color=c["text_dim"], command=self._load_all_pages).pack(side="right")
 
         # Empty-state hint
         self.empty_label = ctk.CTkLabel(
@@ -671,43 +756,110 @@ class ScannerApp(ctk.CTk):
             font=ctk.CTkFont(size=13), text_color=c["text_dim"])
         self.empty_label.pack(pady=30, anchor="center")
 
+    def _get_sort_key(self, col_idx: int):
+        """Return a key function for sorting by column index."""
+        # Rating order (higher = better)
+        rating_order = {"EXCELLENT": 4, "GOOD": 3, "MODERATE": 2, "POOR": 1, "WEAK": 0}
+
+        def _ma_rank(r):
+            # Crossed above > Bullish > Bearish
+            if r.get("ma_crossed_above"):
+                return 2
+            if r.get("ma_bullish"):
+                return 1
+            return 0
+
+        sort_keys = {
+            0: lambda r: r.get("total", 0),  # # — same as Score
+            1: lambda r: r.get("ticker", ""),
+            2: lambda r: r.get("total", 0),
+            3: lambda r: rating_order.get(r.get("combined_rating", "POOR"), 0),
+            4: lambda r: 1 if r.get("entry_signal") else 0,
+            5: lambda r: r.get("close", 0) or 0,
+            6: lambda r: _ma_rank(r),
+            7: lambda r: r.get("trend", 0) or 0,
+            8: lambda r: r.get("momentum", 0) or 0,
+            9: lambda r: r.get("rsi", 0) or 0,
+            10: lambda r: r.get("macd", 0) or 0,
+            11: lambda r: r.get("volume", 0) or 0,
+            12: lambda r: r.get("rel_str", 0) or 0,
+            13: lambda r: r.get("fundamentals", 0) or 0,
+            14: lambda r: r.get("pc1m", 0) or 0,
+            15: lambda r: 1 if r.get("trend_dir") == "Bull" else 0,
+            16: lambda r: r.get("adx_val", 0) or 0,
+            17: lambda r: 1 if r.get("is_sideways") else 0,
+        }
+        return sort_keys.get(col_idx, lambda r: r.get("total", 0))
+
+    def _on_sort(self, col_idx: int):
+        """Handle header click — toggle sort column/direction."""
+        # Determine new sort state
+        if self.sort_col == col_idx:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_col = col_idx
+            # Default direction: Ticker & # ascending, others descending (higher is better)
+            if col_idx in (0, 1):
+                self.sort_reverse = False
+            else:
+                self.sort_reverse = True
+        self.current_page = 0
+        self._render_current_page()
+
     def _render_table_header(self):
         """Render the compact column-header bar as the first row of table_frame."""
         c = self.theme_colors
-        hdr = ctk.CTkFrame(self.table_frame, fg_color=c["card"], corner_radius=8,
-                           height=28)
-        hdr.pack(fill="x", pady=(0, 4))
+        hdr = ctk.CTkFrame(self.table_frame, fg_color=c["card2"], corner_radius=10,
+                           height=32, border_width=1, border_color=c["border"])
+        hdr.pack(fill="x", pady=(0, 6))
         hdr.pack_propagate(False)
         hdr.grid_propagate(False)
-        for text, width in RESULT_COLS:
-            ctk.CTkLabel(hdr, text=text, width=width, anchor="w",
-                         font=ctk.CTkFont(size=10, weight="bold"),
-                         text_color=c["cyan"]).pack(side="left", padx=1)
+        for idx, (text, width) in enumerate(RESULT_COLS):
+            is_sorted = (self.sort_col == idx)
+            arrow = " \u25b2" if is_sorted and not self.sort_reverse else (" \u25bc" if is_sorted else "")
+            label_text = f"{text}{arrow}"
+            # Use label with hand cursor and click binding for sorting
+            lbl = ctk.CTkLabel(hdr, text=label_text, width=width, anchor="w",
+                               font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),
+                               text_color=c["cyan"] if not is_sorted else c["green"])
+            lbl.pack(side="left", padx=2, pady=2)
+            # Make header clickable for sorting (all columns sortable)
+            lbl.configure(cursor="hand2")
+            lbl.bind("<Button-1>", lambda e, i=idx: self._on_sort(i))
+            # Also bind the same on the parent frame area for larger click target
+            # Tooltip hint
+            ToolTip(lbl, f"Sort by {text}{' (desc)' if is_sorted and self.sort_reverse else ' (asc)' if is_sorted else ''}")
 
     def _build_summary_panel(self, parent):
         """Build the summary statistic cards (values updated after a scan)."""
         c = self.theme_colors
         stats = [
-            ("TOTAL", "total", c["cyan"]),
-            ("PASSED", "passed", c["green"]),
-            ("ENTRY", "entry", c["pink"]),
-            ("AVG", "avg", c["lime"]),
-            ("HIGH", "high", c["green"]),
-            ("BULL", "bull", c["green"]),
-            ("BEAR", "bear", c["red"]),
+            ("TOTAL", "total", c["cyan"], "◈"),
+            ("PASSED", "passed", c["green"], "✓"),
+            ("ENTRY", "entry", c["pink"], "★"),
+            ("AVG", "avg", c["lime"], "⌀"),
+            ("HIGH", "high", c["green"], "▲"),
+            ("BULL", "bull", c["green"], "↗"),
+            ("BEAR", "bear", c["red"], "↘"),
         ]
         self.summary_cards = {}
-        for label, key, color in stats:
-            card = ctk.CTkFrame(parent, fg_color=c["card"], corner_radius=12,
+        for label, key, color, icon in stats:
+            card = ctk.CTkFrame(parent, fg_color=c["card"], corner_radius=14,
                                 border_width=1, border_color=c["border"])
-            card.pack(side="left", fill="both", expand=True, padx=4, pady=2)
+            card.pack(side="left", fill="both", expand=True, padx=5, pady=2)
+            # subtle top accent line
+            accent = ctk.CTkFrame(card, height=2, fg_color=color, corner_radius=1)
+            accent.pack(fill="x", padx=10, pady=(8, 0))
+            top = ctk.CTkFrame(card, fg_color="transparent")
+            top.pack(fill="x", padx=8, pady=(4, 0))
+            ctk.CTkLabel(top, text=icon, font=ctk.CTkFont(size=10),
+                         text_color=color).pack(side="left")
+            ctk.CTkLabel(top, text=label, font=ctk.CTkFont(family="Segoe UI", size=8, weight="bold"),
+                         text_color=c["text_faint"]).pack(side="left", padx=4)
             val_label = ctk.CTkLabel(card, text="\u2014",
-                                     font=ctk.CTkFont(size=20, weight="bold"),
+                                     font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
                                      text_color=color)
-            val_label.pack(pady=(8, 0))
-            ctk.CTkLabel(card, text=label,
-                         font=ctk.CTkFont(size=9, weight="bold"),
-                         text_color=c["text_dim"]).pack(pady=(0, 8))
+            val_label.pack(pady=(2, 10))
             self.summary_cards[key] = val_label
 
     # ── Settings view ────────────────────────────────────────────────────
@@ -998,7 +1150,11 @@ class ScannerApp(ctk.CTk):
         if event and getattr(event, "keysym", "") in ("Up", "Down", "Return"):
             return
         self.filter_text = self.search_entry.get().strip().upper()
-        self._display_results(self.results)
+        # Re-filter with pagination
+        if hasattr(self, 'all_results'):
+            self._display_results(self.all_results)
+        else:
+            self._display_results(self.results)
 
     # ── Settings Management ──────────────────────────────────────────────
 
@@ -1061,8 +1217,41 @@ class ScannerApp(ctk.CTk):
         self._log("Settings restored to defaults")
 
     def _on_universe_change(self, choice):
-        count = len(UNIVERSES.get(choice, []))
-        self.universe_count_label.configure(text=f"{count} stocks")
+        # Show placeholder immediately, fetch live count in background for 5,900
+        try:
+            base = len(UNIVERSES.get(choice, []))
+        except Exception:
+            base = 0
+        # Quick estimate for live universes
+        if "NSE ALL" in choice:
+            base = 2567 if base == 0 else base
+        elif "BSE ALL" in choice:
+            base = 4500 if base == 0 else base
+        elif "FULL MARKET" in choice:
+            base = 5900 if base == 0 else base
+        label = f"{base} stocks"
+        if base > 1000:
+            label += " (~5-10 min)"
+        if "FULL MARKET" in choice:
+            label += " — full 5,900"
+        self.universe_count_label.configure(text=label + " ...")
+        # Background fetch to get accurate live count without blocking UI
+        def _bg():
+            try:
+                from .universes import get_universe
+                live = get_universe(choice)
+                cnt = len(live)
+                if cnt and cnt != base:
+                    lbl = f"{cnt} stocks"
+                    if cnt > 1000:
+                        lbl += " (~5-10 min)"
+                    if "FULL MARKET" in choice:
+                        lbl += " — full 5,900"
+                    self.after(0, lambda: self.universe_count_label.configure(text=lbl))
+            except Exception:
+                pass
+        import threading
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _on_threshold_change(self, val):
         self.threshold_label.configure(text=str(int(float(val))))
@@ -1090,156 +1279,199 @@ class ScannerApp(ctk.CTk):
         for widget in self.table_frame.winfo_children():
             widget.destroy()
         self._render_table_header()
-        scanning_lbl = ctk.CTkLabel(
-            self.table_frame, text="\nScanning\u2026\n",
-            font=ctk.CTkFont(size=13), text_color=self.theme_colors["text_dim"])
-        scanning_lbl.pack(pady=30, anchor="center")
+        # Centered running bull animation — visible until first batch arrives
+        c = self.theme_colors
+        self._bull_frame = ctk.CTkFrame(self.table_frame, fg_color="transparent")
+        self._bull_frame.pack(pady=28, anchor="center", fill="x")
+        bull_bg = c.get("main_bg", c.get("panel_bg", "#0f271c"))
+        self._bull_anim = RunningBull(self._bull_frame, width=220, height=108, bg=bull_bg)
+        self._bull_anim.pack(anchor="center")
+        self._bull_anim.start()
+        ctk.CTkLabel(self._bull_frame, text="Scanning — fetching batches…",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=c["green"]).pack(pady=(6, 0), anchor="center")
+        ctk.CTkLabel(self._bull_frame, text="First results appear after ~1 batch (~20s)",
+                     font=ctk.CTkFont(size=11),
+                     text_color=c["text_dim"]).pack(anchor="center")
 
         thread = threading.Thread(target=self._run_scan, daemon=True)
         thread.start()
 
+    def _on_stream_batch(self, batch: list):
+        """Incremental grid update — debounced + dict-indexed (O(n))."""
+        if not batch:
+            return
+
+        # Coalesce rapid batches: cancel pending render, schedule newest
+        if self._pending_stream_after is not None:
+            try:
+                self.after_cancel(self._pending_stream_after)
+            except Exception:
+                pass
+
+        def _do():
+            self._pending_stream_after = None
+            # Merge into master lists (replace existing ticker if already present)
+            existing = {r.get("ticker"): idx for idx, r in enumerate(self.all_results)}
+            filtered_idx = {r.get("ticker"): idx for idx, r in enumerate(self.filtered_results)}
+            added = 0
+            updated = 0
+            for r in batch:
+                t = r.get("ticker")
+                if t in existing:
+                    self.all_results[existing[t]] = r
+                    updated += 1
+                else:
+                    self.all_results.append(r)
+                    existing[t] = len(self.all_results) - 1
+                    added += 1
+                # Filtered mirror
+                if self.filter_text:
+                    if self.filter_text in t.upper():
+                        if t in filtered_idx:
+                            self.filtered_results[filtered_idx[t]] = r
+                        else:
+                            self.filtered_results.append(r)
+                            filtered_idx[t] = len(self.filtered_results) - 1
+                    else:
+                        if t in filtered_idx:
+                            idx = filtered_idx[t]
+                            # remove and rebuild index for subsequent items in same batch
+                            self.filtered_results.pop(idx)
+                            # rebuild once after batch for correctness
+                            filtered_idx = {fr.get("ticker"): i for i, fr in enumerate(self.filtered_results)}
+                else:
+                    if t in filtered_idx:
+                        self.filtered_results[filtered_idx[t]] = r
+                    else:
+                        self.filtered_results.append(r)
+                        filtered_idx[t] = len(self.filtered_results) - 1
+            self.results = list(self.all_results)
+            try:
+                self._render_current_page()
+            except Exception as e:
+                logger.debug("Stream render failed: %s", e)
+            self._log(f"Grid updated: +{added} new, ~{updated} enriched (total {len(self.all_results)})")
+
+        # Debounce 120ms — coalesces progress+render floods during streaming
+        self._pending_stream_after = self.after(120, _do)
+
     def _run_scan(self):
-        """Run the scan in a background thread."""
+        """Run the scan in a background thread via ScannerEngine (streaming)."""
         try:
+            from .scanner_engine import ScannerEngine
+
             universe_name = self.universe_var.get()
-            tickers = UNIVERSES.get(universe_name, [])
             settings = self.settings
-            period = settings.get("data_period", "1y")
-            timeframe = settings.get("timeframe", "D")
-            trend_filter = settings.get("trend_filter", "All")
 
-            tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
-            self._log("\n" + "=" * 50)
-            self._log(f"START SCAN | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log("=" * 50)
-            self._log(f"Starting scan: {universe_name} ({len(tickers)} stocks)")
-            self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
-            self._log(f"FastMA={settings['fast_ma_type']}{settings['fast_ma_len']} "
-                       f"SlowMA={settings['slow_ma_type']}{settings['slow_ma_len']} "
-                       f"RSI={settings['rsi_len']} Threshold={settings['min_score']}")
+            # Reset incremental state before streaming
+            self.all_results = []
+            self.filtered_results = []
+            self.results = []
+            self.current_page = 0
+            self.after(0, self._render_current_page)
 
-            # Fetch NIFTY index
-            self._set_progress(0, "Fetching NIFTY 50 index...")
-            index_symbol = settings.get("index_symbol", "NSEI")
-            index_df = fetch_index_data(f"^{index_symbol}", period=period)
-            if index_df is not None:
-                self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
-            else:
-                self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
+            engine = ScannerEngine()
+            self._scan_engine = engine  # keep ref for cancel if needed
+            engine.set_progress_callback(
+                lambda p, m: self.after(0, lambda: self._set_progress(p, m))
+            )
+            engine.set_log_callback(lambda m: self.after(0, lambda: self._log(m)))
 
-            # FAST: Batch download all stocks at once via yfinance
-            self._set_progress(0.05, f"Batch downloading {len(tickers)} stocks...")
-            self._log(f"Batch downloading {len(tickers)} stocks via yfinance...")
-            batch_data = fetch_batch_yfinance(tickers, period=period, timeframe=timeframe)
-            self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
+            # Streaming: each batch (~200-1000 tickers) appears on grid immediately
+            def _on_batch(batch):
+                self._on_stream_batch(batch)
 
-            # ── 3-Model Pipeline ────────────────────────────────────────────
-            results = []
-            total = len(batch_data)
-            filtered_out = 0
-            direction_counts = {"Bull": 0, "Bear": 0}
+            result = engine.scan_stream(
+                universe=universe_name,
+                settings=settings,
+                period=settings.get("data_period", "1y"),
+                timeframe=settings.get("timeframe", "D"),
+                trend_filter=settings.get("trend_filter", "All"),
+                index_symbol=settings.get("index_symbol", "NSEI"),
+                on_batch=_on_batch,
+            )
 
-            for i, (ticker, df) in enumerate(batch_data.items(), 1):
-                progress = 0.1 + (i / total * 0.9) if total > 0 else 0.5
-                self._set_progress(progress, f"[{i}/{total}] {ticker}")
+            # Final sync — ensure sorted/filtered state matches full result (main-thread safe)
+            def _final_sync():
+                self.results = result.results
+                self.all_results = list(result.results)
+                if self.filter_text:
+                    self.filtered_results = [r for r in result.results if self.filter_text in r.get("ticker", "").upper()]
+                else:
+                    self.filtered_results = list(result.results)
+                self._render_current_page()
+                if result.error:
+                    self._log(f"Scan finished with error: {result.error}")
 
-                try:
-                    if df is None or df.empty:
-                        continue
-
-                    # ── MODEL 1: Stock Filter ────────────────────────────────
-                    filter_result = check_filter(
-                        df,
-                        fast_ma_type=settings["fast_ma_type"],
-                        fast_ma_len=settings["fast_ma_len"],
-                        slow_ma_type=settings["slow_ma_type"],
-                        slow_ma_len=settings["slow_ma_len"],
-                        crossover_lookback=settings["crossover_lookback"],
-                    )
-                    if filter_result is None:
-                        filtered_out += 1
-                        continue
-
-                    # ── MODEL 2: Bullish / Bearish ──────────────────────────
-                    direction = get_direction(filter_result)
-
-                    if trend_filter == "Bullish Only" and direction != "Bull":
-                        filtered_out += 1
-                        continue
-                    elif trend_filter == "Bearish Only" and direction != "Bear":
-                        filtered_out += 1
-                        continue
-
-                    direction_counts[direction] = direction_counts.get(direction, 0) + 1
-
-                    # ── MODEL 3: Techno-Fundamental Scoring ─────────────────
-                    if not hasattr(df, '_fundamentals') or df._fundamentals is None:
-                        try:
-                            fund = fetch_fundamentals(ticker)
-                            if fund is not None:
-                                df._fundamentals = fund
-                        except Exception as e:
-                            logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
-
-                    scores = compute_scores(
-                        df, timeframe=timeframe, index_df=index_df,
-                        settings=settings,
-                    )
-                    if scores is None:
-                        continue
-
-                    scores["ticker"] = ticker
-                    scores["trend_dir"] = direction  # Override with pipeline direction
-                    scores["trend_color"] = direction.lower()
-                    results.append(scores)
-
-                    if len(results) % 10 == 0 or len(results) <= 5:
-                        score_val = scores["total"]
-                        tag = "\u2713" if score_val >= settings["min_score"] else "\u2717"
-                        self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
-
-                except Exception as e:
-                    logger.debug("Skipping %s in batch scan: %s", ticker, e)
-
-            # Sort and store
-            results.sort(key=lambda x: x["total"], reverse=True)
-            self.results = results
-
-            passed = len([r for r in results if r["total"] >= settings["min_score"]])
-            self._log("\n\u2501" * 25 + " Scan Complete ")
-            self._log(f"  Total stocks:  {len(tickers)}")
-            self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
-            self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
-            self._log(f"  Scored {settings['min_score']}+: {passed}")
-
-            self.after(0, lambda: self._display_results(results))
+            self.after(0, _final_sync)
 
         except Exception as e:
-            self._log(f"\nERROR: {str(e)}")
+            self._log(f"\nERROR: {e!s}")
         finally:
             self.after(0, self._scan_complete)
 
     def _display_results(self, results):
-        """Display filtered results in the glassy table (main thread only)."""
-        tc = self.theme_colors
-
-        # Apply ticker filter
+        """Display filtered results with pagination (100/page) for 5,900 rows."""
+        # Store full results for pagination / filtering
+        self.all_results = list(results)
         if self.filter_text:
-            shown = [r for r in results if self.filter_text in r["ticker"].upper()]
+            self.filtered_results = [r for r in results if self.filter_text in r["ticker"].upper()]
         else:
-            shown = list(results)
+            self.filtered_results = list(results)
+        self.current_page = 0
+        self._render_current_page()
 
-        # Clear table and re-render header bar
+    def _render_current_page(self):
+        """Render only the current page (virtualized) — keeps 5,900 rows snappy."""
+        tc = self.theme_colors
+        results = getattr(self, 'all_results', [])
+        shown = getattr(self, 'filtered_results', results)
+        # Apply column sorting if active (sort filtered view before pagination)
+        if self.sort_col is not None and shown:
+            try:
+                key_fn = self._get_sort_key(self.sort_col)
+                shown = sorted(shown, key=key_fn, reverse=self.sort_reverse)
+            except Exception as e:
+                logger.debug("Sort failed for col %s: %s", self.sort_col, e)
+        # Clear table and re-render header bar (stop bull animation first)
+        try:
+            if getattr(self, "_bull_anim", None) is not None:
+                self._bull_anim.stop()
+        except Exception:
+            pass
+        self._bull_anim = None
         for widget in self.table_frame.winfo_children():
             widget.destroy()
         self._render_table_header()
 
         if not shown:
-            msg = ("No results match your filter." if results and self.filter_text
-                   else "No results found.")
-            ctk.CTkLabel(self.table_frame, text=msg,
-                         text_color=tc["red"] if not results else tc["text_dim"],
-                         font=ctk.CTkFont(size=13)).pack(pady=30, anchor="center")
+            # While scanning with no data yet — show centered running bull animation
+            if getattr(self, "scanning", False) and not results:
+                bull_bg = tc.get("main_bg", tc.get("panel_bg", "#0f271c"))
+                bull_frame = ctk.CTkFrame(self.table_frame, fg_color="transparent")
+                bull_frame.pack(pady=30, anchor="center", fill="x")
+                # Stop previous bull if any
+                try:
+                    if getattr(self, "_bull_anim", None) is not None:
+                        self._bull_anim.stop()
+                except Exception:
+                    pass
+                self._bull_anim = RunningBull(bull_frame, width=220, height=108, bg=bull_bg)
+                self._bull_anim.pack(anchor="center")
+                self._bull_anim.start()
+                ctk.CTkLabel(bull_frame, text="Scanning \u2014 fetching batches...",
+                             font=ctk.CTkFont(size=12, weight="bold"),
+                             text_color=tc["green"]).pack(pady=(6, 0), anchor="center")
+                ctk.CTkLabel(bull_frame, text="First results appear after ~1 batch (~20s)",
+                             font=ctk.CTkFont(size=11),
+                             text_color=tc["text_dim"]).pack(anchor="center")
+            else:
+                msg = ("No results match your filter." if results and self.filter_text
+                       else "No results found.")
+                ctk.CTkLabel(self.table_frame, text=msg,
+                             text_color=tc["red"] if not results else tc["text_dim"],
+                             font=ctk.CTkFont(size=13)).pack(pady=30, anchor="center")
         else:
             threshold = self.settings.get("min_score", 50)
 
@@ -1274,7 +1506,28 @@ class ScannerApp(ctk.CTk):
 
             cols = _make_cols()
 
-            for rank, r in enumerate(shown, 1):
+            # Pagination — slice to current page
+            page_size = int(getattr(self, 'page_size', 100))
+            total_pages = max(1, (len(shown) + page_size - 1) // page_size)
+            if getattr(self, 'current_page', 0) >= total_pages:
+                self.current_page = total_pages - 1
+            self.current_page = max(self.current_page, 0)
+            start = self.current_page * page_size
+            page_shown = shown[start:start + page_size]
+            # Update pagination bar
+            try:
+                if hasattr(self, 'pagination_frame'):
+                    if shown and len(shown) > page_size:
+                        self.pagination_frame.grid()
+                        self.page_label.configure(text=f"Page {self.current_page+1} / {total_pages}  ({len(shown)} stocks)")
+                        self.page_prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
+                        self.page_next_btn.configure(state="normal" if self.current_page < total_pages - 1 else "disabled")
+                    else:
+                        self.pagination_frame.grid_remove()
+            except Exception:
+                pass
+
+            for rank, r in enumerate(page_shown, start + 1):
                 score = r["total"]
                 is_above = score >= threshold
                 row_bg = tc["card"] if is_above else (tc["row_alt"] if rank % 2 else tc["main_bg"])
@@ -1295,12 +1548,14 @@ class ScannerApp(ctk.CTk):
                     if i == 1:  # Ticker clickable → inline news
                         lbl.configure(cursor="hand2")
                         lbl.bind("<Button-1>",
-                                 lambda e, t=r["ticker"], rf=row: self._toggle_stock_news(t, rf, rank))
+                                 lambda e, t=r["ticker"], rf=row, rk=rank: self._toggle_stock_news(t, rf, rk))
 
-        # Header meta
+        # Header meta — use filtered count but indicate pagination
         if results:
             threshold = self.settings.get("min_score", 50)
             suffix = f"  |  filter: '{self.filter_text}' ({len(shown)})" if self.filter_text else ""
+            if len(shown) > page_size:
+                suffix += f"  |  showing {len(page_shown)} of {len(shown)} (page {self.current_page+1}/{total_pages})"
             self.result_count_label.configure(
                 text=f"{len(results)} scanned  |  {len([r for r in results if r['total'] >= threshold])} above {threshold:.0f}+{suffix}")
         else:
@@ -1345,6 +1600,32 @@ class ScannerApp(ctk.CTk):
             return c["lime"]
         return c["red"]
 
+    def _change_page(self, delta: int):
+        """Paginate; delta -1 / +1 or 0 to refresh."""
+        shown = getattr(self, 'filtered_results', getattr(self, 'all_results', []))
+        page_size = int(getattr(self, 'page_size', 100))
+        total_pages = max(1, (len(shown) + page_size - 1) // page_size)
+        new_page = getattr(self, 'current_page', 0) + delta
+        new_page = max(0, min(new_page, total_pages - 1))
+        self.current_page = new_page
+        self._render_current_page()
+
+    def _on_page_size_change(self, value: str):
+        try:
+            self.page_size = int(value)
+        except Exception:
+            self.page_size = 100
+        self.current_page = 0
+        self._render_current_page()
+
+    def _load_all_pages(self):
+        """Render all results — capped at 500 rows to prevent UI freeze."""
+        MAX_RENDERED_ROWS = 500
+        total = len(getattr(self, 'filtered_results', []))
+        self.page_size = min(MAX_RENDERED_ROWS, total) if total > 0 else MAX_RENDERED_ROWS
+        self.current_page = 0
+        self._render_current_page()
+
     def _toggle_stock_news(self, ticker: str, row_frame, rank):
         """Expand/collapse news inline below the stock row."""
         for child in row_frame.master.winfo_children():
@@ -1385,6 +1666,7 @@ class ScannerApp(ctk.CTk):
         def _fetch():
             try:
                 from datetime import date, timedelta
+
                 import yfinance as yf
                 stock = yf.Ticker(f"{ticker}.NS")
                 news_items = stock.news or []
@@ -1412,7 +1694,7 @@ class ScannerApp(ctk.CTk):
                     })
                 self.after(0, lambda: _show(parsed[:10]))
             except Exception as e:
-                self.after(0, lambda: _show_error(str(e)))
+                self.after(0, lambda err=str(e): _show_error(err))
 
         def _show(items):
             if not news_frame.winfo_exists():
@@ -1473,6 +1755,13 @@ class ScannerApp(ctk.CTk):
     def _scan_complete(self):
         """Re-enable UI after scan finishes."""
         self.scanning = False
+        # Stop running bull animation if still present
+        try:
+            if getattr(self, "_bull_anim", None) is not None:
+                self._bull_anim.stop()
+                self._bull_anim = None
+        except Exception:
+            pass
         c = self.theme_colors
         self.run_btn.configure(state="normal", text="\u25b6   RUN SCAN",
                                fg_color=c["purple"])
@@ -1521,21 +1810,43 @@ class ScannerApp(ctk.CTk):
     def _export_html(self):
         if not self.results:
             return
+        # Prevent re-entry while generating
+        try:
+            self.html_btn.configure(state="disabled", text="\u23f3")
+        except Exception:
+            pass
         threshold = self.settings.get("min_score", 50)
         tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
         tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
-        self._log("Fetching news sentiment for exported stocks...")
-        html = generate_html_report(
-            self.results,
-            title=f"HMAxEMA Scanner — {self.universe_var.get()} — {tf_label}",
-            threshold=threshold,
-            fetch_news=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"scanner_report_{timestamp}.html"
-        filepath = os.path.join(SCANNER_DIR, filename)
-        save_report(html, filepath)
-        self._log(f"HTML report saved: {filename}")
-        webbrowser.open(f"file://{os.path.abspath(filepath)}")
+        # Snapshot results/universe on UI thread to avoid race
+        results_snapshot = list(self.results)
+        universe_name = self.universe_var.get()
+        safe_threshold = threshold
+        safe_title = f"HMAxEMA Scanner — {universe_name} — {tf_label}"
+
+        def _bg():
+            try:
+                self._log("Fetching news sentiment for exported stocks...")
+                html = generate_html_report(
+                    results_snapshot,
+                    title=safe_title,
+                    threshold=safe_threshold,
+                    fetch_news=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"scanner_report_{timestamp}.html"
+                filepath = os.path.join(SCANNER_DIR, filename)
+                save_report(html, filepath)
+                self.after(0, lambda: self._log(f"HTML report saved: {filename}"))
+                self.after(0, lambda: webbrowser.open(f"file://{os.path.abspath(filepath)}"))
+            except Exception as e:
+                logger.exception("HTML export failed: %s", e)
+                err_msg = str(e)
+                self.after(0, lambda m=err_msg: self._log(f"HTML export failed: {m}"))
+            finally:
+                self.after(0, lambda: self.html_btn.configure(state="normal", text="\u2913"))
+
+        import threading as _th
+        _th.Thread(target=_bg, daemon=True).start()
 
     def _export_csv(self):
         if not self.results:
@@ -1565,7 +1876,18 @@ class ScannerApp(ctk.CTk):
                 ])
 
         self._log(f"CSV saved: {filename}")
-        os.startfile(filepath) if sys.platform == "win32" else os.system(f"open '{filepath}'")
+        # B605 fix: avoid shell injection; validate inside scanner dir
+        try:
+            import pathlib
+            import subprocess
+
+            safe_path = pathlib.Path(filepath).resolve()
+            if sys.platform == "win32":
+                os.startfile(str(safe_path))  # nosec B606
+            else:
+                subprocess.Popen(["open", str(safe_path)])  # nosec B606
+        except Exception:
+            pass
 
     # ════════════════════════════════════════════════════════════════════════
     # UTILITIES
@@ -1599,6 +1921,12 @@ class ScannerApp(ctk.CTk):
 
     def _clear_results(self):
         """Clear the results table and reset state."""
+        try:
+            if getattr(self, "_bull_anim", None) is not None:
+                self._bull_anim.stop()
+                self._bull_anim = None
+        except Exception:
+            pass
         for widget in self.table_frame.winfo_children():
             widget.destroy()
         self._render_table_header()

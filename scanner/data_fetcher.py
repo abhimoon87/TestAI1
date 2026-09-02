@@ -11,13 +11,14 @@ All data is cached to disk to avoid repeated API calls.
 
 import logging
 import time
+
 import pandas as pd
-from typing import Optional
+
+from .trace import trace
 
 logger = logging.getLogger(__name__)
 
 from .data_providers import DataProvider
-
 
 # ── OHLCV Resampling ───────────────────────────────────────────────────────
 
@@ -103,7 +104,7 @@ def _extend_period_for_timeframe(period: str, timeframe: str) -> str:
 
 
 def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
-                     retries: int = 2) -> Optional[pd.DataFrame]:
+                     retries: int = 2) -> pd.DataFrame | None:
     """
     Fetch OHLCV data for an Indian NSE stock.
 
@@ -133,7 +134,7 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
                 # Attach fundamentals
                 fund = provider.fetch_fundamentals(ticker)
                 if fund is not None:
-                    df._fundamentals = fund
+                    object.__setattr__(df, '_fundamentals', fund)
                 return df
         except Exception as e:
             if attempt < retries - 1:
@@ -144,7 +145,7 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
     return None
 
 
-def fetch_index_data(ticker: str = "^NSEI", period: str = "1y") -> Optional[pd.DataFrame]:
+def fetch_index_data(ticker: str = "^NSEI", period: str = "1y") -> pd.DataFrame | None:
     """
     Fetch NIFTY 50 index data for relative strength comparison.
 
@@ -161,7 +162,7 @@ def fetch_index_data(ticker: str = "^NSEI", period: str = "1y") -> Optional[pd.D
     return provider.fetch_index(ticker, period)
 
 
-def fetch_fundamentals(ticker: str) -> Optional[dict]:
+def fetch_fundamentals(ticker: str) -> dict | None:
     """
     Fetch fundamental data for a stock.
 
@@ -174,82 +175,165 @@ def fetch_fundamentals(ticker: str) -> Optional[dict]:
     return provider.fetch_fundamentals(ticker)
 
 
+CHUNK = 200  # ~200 * 8 chars avg + commas ≈ 1.6k URL < 8k limit; safe for Yahoo
+MAX_PARALLEL_CHUNKS = 8  # parallel chunk downloads — 8×200 = 1600 tickers in flight
+SLEEP_BETWEEN_BATCH = 0.3  # throttle between parallel batches to avoid 429
+
+
+def fetch_batch_yfinance_stream(tickers: list, period: str = "1y", timeframe: str = "D"):
+    """
+    Streaming generator that yields one dict per parallel batch.
+
+    Each yielded dict is {ticker: DataFrame} for ~200-1000 tickers (one
+    outer batch of up to MAX_PARALLEL_CHUNKS chunks). Caller can render
+    incrementally instead of waiting for all ~5900.
+
+    Usage:
+        for chunk_data in fetch_batch_yfinance_stream(tickers):
+            # process chunk_data and update UI
+    """
+    if not tickers:
+        return
+
+    # Deduplicate while preserving order
+    seen = set()
+    uniq_tickers = []
+    for t in tickers:
+        u = str(t).strip().upper()
+        if u and u not in seen:
+            seen.add(u)
+            uniq_tickers.append(u)
+    tickers = uniq_tickers
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        import pandas as pd
+        import yfinance as yf
+
+        download_period = _extend_period_for_timeframe(period, timeframe)
+        total = len(tickers)
+        chunks = [tickers[i : i + CHUNK] for i in range(0, total, CHUNK)]
+        logger.info(
+            "Batch streaming %d stocks via yfinance in %d chunk(s) of %d (parallel x%d)...",
+            total,
+            len(chunks),
+            CHUNK,
+            MAX_PARALLEL_CHUNKS,
+        )
+
+        def _fetch_chunk(chunk: list, ci: int) -> dict:
+            yf_tickers = [f"{t}.NS" for t in chunk]
+            ticker_map = {f"{t}.NS": t for t in chunk}
+            try:
+                data = yf.download(
+                    yf_tickers,
+                    period=download_period,
+                    group_by="ticker",
+                    auto_adjust=True,
+                    progress=False,
+                    threads=False,
+                    timeout=15,
+                )
+            except Exception as e:
+                logger.warning("Chunk %d/%d download failed: %s", ci, len(chunks), e)
+                return {}
+            if data is None or data.empty:
+                logger.debug("Chunk %d/%d returned empty", ci, len(chunks))
+                return {}
+            chunk_results: dict = {}
+            multi_idx = isinstance(data.columns, pd.MultiIndex)
+            for yf_ticker, orig_ticker in ticker_map.items():
+                try:
+                    if len(chunk) == 1 and not multi_idx:
+                        df = data.copy()
+                    elif multi_idx:
+                        if yf_ticker not in data.columns.get_level_values(0):
+                            continue
+                        df = data[yf_ticker].copy()
+                    else:
+                        df = data.copy()
+                    if df is None or df.empty or len(df) < 20:
+                        continue
+                    df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+                    df.columns = ["open", "high", "low", "close", "volume"]
+                    df = df.dropna()
+                    if timeframe != "D":
+                        df = resample_ohlcv(df, timeframe)
+                    if df is not None and len(df) >= 50:
+                        chunk_results[orig_ticker] = df
+                except Exception as e:
+                    logger.debug("Skipping %s in chunk %d: %s", orig_ticker, ci, e)
+                    continue
+            logger.info("Chunk %d/%d done: %d tickers", ci, len(chunks), len(chunk_results))
+            return chunk_results
+
+        cumulative = 0
+        for batch_start in range(0, len(chunks), MAX_PARALLEL_CHUNKS):
+            batch = chunks[batch_start : batch_start + MAX_PARALLEL_CHUNKS]
+            batch_indices = list(range(batch_start + 1, batch_start + len(batch) + 1))
+            batch_results: dict = {}
+            with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                future_to_ci = {executor.submit(_fetch_chunk, chunk, ci): ci for chunk, ci in zip(batch, batch_indices)}
+                for future in as_completed(future_to_ci):
+                    ci = future_to_ci[future]
+                    try:
+                        chunk_res = future.result()
+                        batch_results.update(chunk_res)
+                    except Exception as e:
+                        logger.warning("Chunk %d failed in parallel batch: %s", ci, e)
+            cumulative += len(batch_results)
+            logger.info(
+                "Batch %d/%d done: %d this batch, %d/%d cumulative",
+                (batch_start // MAX_PARALLEL_CHUNKS) + 1,
+                (len(chunks) + MAX_PARALLEL_CHUNKS - 1) // MAX_PARALLEL_CHUNKS,
+                len(batch_results),
+                cumulative,
+                total,
+            )
+            yield batch_results
+            if batch_start + MAX_PARALLEL_CHUNKS < len(chunks):
+                time.sleep(SLEEP_BETWEEN_BATCH)
+
+    except ImportError:
+        logger.warning("yfinance not available for batch download")
+        return
+    except Exception:
+        logger.exception("Batch streaming failed")
+        return
+
+
+@trace(level=logging.INFO, log_args=True, log_result=False)
 def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D") -> dict:
     """
-    Fast batch fetch using yfinance download (single API call).
-    This is MUCH faster than individual fetches.
+    Fast batch fetch using yfinance download — chunked for 6k symbols.
+
+    Yahoo's URL limit (~8k chars) caps a single download to ~200-300 tickers.
+    For 5,900 symbols we chunk into 200-symbol batches, with a short
+    throttle between chunks to avoid 429. Much faster than individual fetches
+    and scales linearly.
 
     Args:
-        tickers: List of NSE symbols
+        tickers: List of NSE/BSE symbols (plain, without .NS)
         period: Data period
         timeframe: 'D' daily, 'W' weekly, 'M' monthly
 
     Returns:
         Dict mapping ticker -> DataFrame
     """
-    try:
-        import yfinance as yf
-        import pandas as pd
-
-        download_period = _extend_period_for_timeframe(period, timeframe)
-
-        # Add .NS suffix for NSE stocks
-        yf_tickers = [f"{t}.NS" for t in tickers]
-        ticker_map = {f"{t}.NS": t for t in tickers}  # Map back to original
-
-        # Single batch download
-        logger.info("Batch downloading %d stocks via yfinance...", len(tickers))
-        data = yf.download(yf_tickers, period=download_period, group_by="ticker",
-                           auto_adjust=True, progress=False, threads=True)
-
-        results = {}
-        multi_idx = isinstance(data.columns, pd.MultiIndex)
-        for yf_ticker, orig_ticker in ticker_map.items():
-            try:
-                if len(tickers) == 1 and not multi_idx:
-                    # Single ticker returned as a flat (non-MultiIndex) DataFrame
-                    df = data.copy()
-                elif multi_idx:
-                    if yf_ticker not in data.columns.get_level_values(0):
-                        continue
-                    df = data[yf_ticker].copy()
-                else:
-                    # Single ticker but returned flat anyway
-                    df = data.copy()
-
-                if df is None or df.empty or len(df) < 20:
-                    continue
-
-                # Normalize columns
-                df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-                df.columns = ["open", "high", "low", "close", "volume"]
-                df = df.dropna()
-
-                # Resample to the requested analysis timeframe
-                # ('D' = daily, no change; 'W' weekly; 'M' monthly)
-                if timeframe != "D":
-                    df = resample_ohlcv(df, timeframe)
-
-                if df is not None and len(df) >= 50:
-                    results[orig_ticker] = df
-            except Exception as e:
-                logger.debug("Skipping %s in batch: %s", orig_ticker, e)
-                continue
-
-        logger.info("Batch download complete: %d/%d stocks", len(results), len(tickers))
-        return results
-
-    except ImportError:
-        logger.warning("yfinance not available for batch download")
-        return {}
-    except Exception as e:
-        logger.error("Batch download failed: %s", e)
-        return {}
+    # Backward-compat wrapper: collect streaming batches
+    results: dict = {}
+    total = len(tickers) if tickers else 0
+    for batch_data in fetch_batch_yfinance_stream(tickers, period, timeframe):
+        results.update(batch_data)
+    logger.info("Batch download complete: %d/%d stocks (parallel chunked)", len(results), total)
+    return results
 
 
-def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> Optional[pd.DataFrame]:
+def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> pd.DataFrame | None:
     """
     Fast single stock fetch using cache-first approach.
+    Fundamentals are NOT fetched here — handled by ScannerEngine enrichment.
     """
     provider = _get_provider()
     download_period = _extend_period_for_timeframe(period, timeframe)
@@ -258,9 +342,6 @@ def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> O
         if df is not None and not df.empty and len(df) >= 50:
             df = resample_ohlcv(df, timeframe)
             if df is not None and not df.empty:
-                fund = provider.fetch_fundamentals(ticker)
-                if fund is not None:
-                    df._fundamentals = fund
                 return df
     except Exception as e:
         logger.debug("fetch_stock_fast failed for %s: %s", ticker, e)

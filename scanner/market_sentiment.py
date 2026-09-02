@@ -10,7 +10,6 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 
@@ -36,7 +35,7 @@ NEGATIVE_WORDS = {
     "decline", "declines", "declining", "negative", "pessimistic", "recession",
     "recessionary", "breakdown", "weakness", "weak", "downside", "bust", "slump",
     "slumps", "slumping", "fall", "falls", "falling", "retreat", "retreats",
-    "decline", "downturn", "crisis", "debt", "default", "bankruptcy", "insolvent",
+    "downturn", "crisis", "debt", "default", "bankruptcy", "insolvent",
     "fraud", "scandal", "investigation", "lawsuit", "penalty", "fine", "warning",
     "cut", "cuts", "cutting", "reduce", "reduces", "reducing", "layoff", "layoffs",
     "restructure", "restructuring", "impairment", "write-down", "overvalued",
@@ -49,10 +48,10 @@ _SENTIMENT_CACHE_TTL = 4 * 3600  # 4 hours
 
 
 def _cache_key(ticker: str, source: str) -> str:
-    return hashlib.md5(f"{ticker}:{source}".encode()).hexdigest()
+    return hashlib.md5(f"{ticker}:{source}".encode(), usedforsecurity=False).hexdigest()
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _SENTIMENT_CACHE:
         result, ts = _SENTIMENT_CACHE[key]
         if time.time() - ts < _SENTIMENT_CACHE_TTL:
@@ -93,9 +92,9 @@ class MarketAuxSentiment:
 
 def fetch_marketaux_sentiment(
     ticker: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     days: int = 7,
-) -> Optional[MarketAuxSentiment]:
+) -> MarketAuxSentiment | None:
     """
     Fetch news sentiment for a ticker from MarketAux.
     
@@ -209,9 +208,9 @@ class NewsAPISentiment:
 
 def fetch_newsapi_sentiment(
     ticker: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     days: int = 7,
-) -> Optional[NewsAPISentiment]:
+) -> NewsAPISentiment | None:
     """
     Fetch news sentiment from NewsAPI.org.
     
@@ -306,9 +305,9 @@ class GNewsSentiment:
 
 def fetch_gnews_sentiment(
     ticker: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     days: int = 7,
-) -> Optional[GNewsSentiment]:
+) -> GNewsSentiment | None:
     """
     Fetch news sentiment from GNews (free, 100 requests/day).
     
@@ -396,7 +395,7 @@ class YFinanceNewsSentiment:
     cached: bool = False
 
 
-def fetch_yfinance_news_sentiment(ticker: str) -> Optional[YFinanceNewsSentiment]:
+def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
     """
     Fetch news sentiment from Yahoo Finance (free, no API key).
     
@@ -466,9 +465,9 @@ def fetch_yfinance_news_sentiment(ticker: str) -> Optional[YFinanceNewsSentiment
 
 def fetch_sentiment(
     ticker: str,
-    marketaux_key: Optional[str] = None,
-    newsapi_key: Optional[str] = None,
-    gnews_key: Optional[str] = None,
+    marketaux_key: str | None = None,
+    newsapi_key: str | None = None,
+    gnews_key: str | None = None,
 ) -> dict:
     """
     Fetch news sentiment from multiple sources with fallback.

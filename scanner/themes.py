@@ -1,8 +1,8 @@
 """
-Theme definitions for the HMAxEMA Scanner GUI.
+Theme definitions for the HMAxEMA Scanner GUI — Aurora v3.
 
-Palette matches the scanner_report HTML CSS variables (--bg/--surface/
---green/--lime/...) in both dark and light variants.
+Palette inspired by premium trading terminals (linear.app / vercel dark).
+Matches scanner_report HTML CSS variables in both variants.
 """
 
 import customtkinter as ctk
@@ -12,66 +12,103 @@ from .settings_store import save_settings
 THEMES = {
     "dark": {
         "ctk_mode": "dark",
-        # Base surfaces (report CSS vars: --bg/--surface/--surface2/--border)
-        "root_bg": "#0a1a10",
-        "rail_bg": "#071309",
-        "side_bg": "#0c1e13",
-        "main_bg": "#0a1a10",
-        "panel_bg": "#0f2a1a",
-        # Cards / rows
-        "card": "#0f2a1a",
-        "card2": "#153520",
-        "border": "#1a4a2a",
-        "row_alt": "#0d2114",
-        # Text (--text / --text-dim)
-        "text": "#c8d8c0",
-        "text_dim": "#6a8a6a",
-        # Accents (--green --lime --orange --red --blue --cyan)
-        "purple": "#00ff88", "purple_hover": "#33ffaa",   # primary accent
-        "pink": "#aaff00",                                 # secondary accent
-        "cyan": "#00ddcc",
-        "green": "#00ff88", "lime": "#aaff00",
-        "orange": "#ffaa00", "red": "#ff4444",
-        "blue": "#00aaff",
+        # Base surfaces — deep forest with subtle blue undertone for depth
+        "root_bg": "#080f0c",
+        "rail_bg": "#060d09",
+        "side_bg": "#0b1a13",
+        "main_bg": "#080f0c",
+        "panel_bg": "#0e241b",
+        # Cards / rows — layered with 1px border for glass effect
+        "card": "#0f271c",
+        "card2": "#143323",
+        "card_hover": "#173a28",
+        "border": "#1e4a2f",
+        "border_light": "#244a32",
+        "row_alt": "#0c2016",
+        "row_hover": "#143323",
+        # Text — warm off-white for readability, muted sage for secondary
+        "text": "#dff0e2",
+        "text_dim": "#6b9a7a",
+        "text_faint": "#4a6b54",
+        # Accents — neon mint primary, amber secondary
+        "purple": "#00e67a",
+        "purple_hover": "#00ffa0",
+        "purple_muted": "#0a3d24",
+        "pink": "#c8ff00",
+        "cyan": "#22d3c4",
+        "cyan_dim": "#0e8f86",
+        "green": "#00e67a",
+        "lime": "#c8ff00",
+        "orange": "#ff9f1c",
+        "red": "#ff4d4d",
+        "blue": "#3b9eff",
+        "yellow": "#ffd23f",
         # Controls
-        "option_bg": "#153520", "option_btn": "#1a4a2a", "option_drop": "#0f2a1a",
-        "entry_bg": "#153520", "entry_border": "#1a4a2a",
-        "progress_bg": "#153520", "progress_fg": "#00ff88",
-        "nav_active": "#0f3320",
-        "chip_good": "#0b3a20", "chip_bad": "#3a1414",
-        # Hero gradient (green → cyan → deep teal)
-        "hero_grad": ["#00ff88", "#00ddcc", "#0088aa", "#06251a"],
+        "option_bg": "#143323",
+        "option_btn": "#1e4a2f",
+        "option_drop": "#0f271c",
+        "entry_bg": "#0f271c",
+        "entry_border": "#1e4a2f",
+        "entry_focus": "#00e67a",
+        "progress_bg": "#143323",
+        "progress_fg": "#00e67a",
+        "nav_active": "#143323",
+        "chip_good": "#0d3320",
+        "chip_bad": "#3d1a1a",
+        "chip_neutral": "#1a2e1f",
+        # Hero gradient — mint → teal → deep forest
+        "hero_grad": ["#00e67a", "#14c9b0", "#0a8a7a", "#062419"],
+        # Shadows
+        "shadow": "#00000066",
     },
     "light": {
         "ctk_mode": "light",
-        # Base surfaces
-        "root_bg": "#eef6f0",
-        "rail_bg": "#e2eee6",
-        "side_bg": "#f4faf6",
-        "main_bg": "#fbfdfb",
+        # Base surfaces — warm paper with sage tint
+        "root_bg": "#f0f5f1",
+        "rail_bg": "#e6efe8",
+        "side_bg": "#f7fbf8",
+        "main_bg": "#f0f5f1",
         "panel_bg": "#ffffff",
         # Cards / rows
         "card": "#ffffff",
-        "card2": "#e8f4ec",
-        "border": "#cfe4d7",
-        "row_alt": "#f1f9f4",
+        "card2": "#eef5f0",
+        "card_hover": "#e6efe8",
+        "border": "#d1e3d6",
+        "border_light": "#e6efe8",
+        "row_alt": "#f7fbf8",
+        "row_hover": "#eef5f0",
         # Text
-        "text": "#12281c",
-        "text_dim": "#55705f",
-        # Accents (readable daylight variants of report hues)
-        "purple": "#047857", "purple_hover": "#036c4e",
+        "text": "#0f2318",
+        "text_dim": "#5a7a65",
+        "text_faint": "#8aa89a",
+        # Accents — deeper for light contrast
+        "purple": "#047857",
+        "purple_hover": "#065f46",
+        "purple_muted": "#d1fae5",
         "pink": "#65a30d",
         "cyan": "#0e7490",
-        "green": "#059669", "lime": "#65a30d",
-        "orange": "#d97706", "red": "#dc2626",
+        "cyan_dim": "#0c6580",
+        "green": "#059669",
+        "lime": "#65a30d",
+        "orange": "#d97706",
+        "red": "#dc2626",
         "blue": "#0284c7",
+        "yellow": "#ca8a04",
         # Controls
-        "option_bg": "#ffffff", "option_btn": "#cfe4d7", "option_drop": "#ffffff",
-        "entry_bg": "#ffffff", "entry_border": "#b7d8c5",
-        "progress_bg": "#dbeee3", "progress_fg": "#047857",
+        "option_bg": "#ffffff",
+        "option_btn": "#d1e3d6",
+        "option_drop": "#ffffff",
+        "entry_bg": "#ffffff",
+        "entry_border": "#c1d9c8",
+        "entry_focus": "#047857",
+        "progress_bg": "#dbeee3",
+        "progress_fg": "#047857",
         "nav_active": "#d9f2e4",
-        "chip_good": "#d7f2e2", "chip_bad": "#fbdfdf",
+        "chip_good": "#d7f2e2",
+        "chip_bad": "#fbdfdf",
+        "chip_neutral": "#eef5f0",
         "hero_grad": ["#10b981", "#0ea5a5", "#0284c7", "#075985"],
+        "shadow": "#00000014",
     },
 }
 

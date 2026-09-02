@@ -11,25 +11,23 @@ Tests verify:
 import pytest
 
 from scanner.universes import (
-    UNIVERSES,
-    NIFTY_50,
     BANK_NIFTY,
-    NIFTY_NEXT_50,
-    NIFTY_MIDCAP_100,
-    NIFTY_SMALLCAP_100,
-    FNO_STOCKS,
-    CASH_MARKET,
     BSE_SENSEX,
-    NIFTY_IT,
-    NIFTY_PHARMA,
+    CASH_MARKET,
+    FNO_STOCKS,
+    NIFTY_50,
     NIFTY_AUTO,
-    NIFTY_METAL,
-    NIFTY_REALTY,
     NIFTY_ENERGY,
     NIFTY_FINANCIAL,
-    NIFTY_BROAD,
+    NIFTY_IT,
+    NIFTY_METAL,
+    NIFTY_MIDCAP_100,
+    NIFTY_NEXT_50,
+    NIFTY_PHARMA,
+    NIFTY_REALTY,
+    NIFTY_SMALLCAP_100,
+    UNIVERSES,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # List Properties

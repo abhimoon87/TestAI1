@@ -15,22 +15,29 @@ from __future__ import annotations
 import argparse
 import logging
 import math
-import sys
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from .indicators import (
-    hull_ma, ema, sma, rsi, macd, stochastic, obv, atr, adx,
-    price_change, highest, lowest, volume_profile_poc,
-)
-from .scoring import get_ma, detect_crossover
 from .data_fetcher import fetch_batch_yfinance, fetch_index_data
-from .universes import NIFTY_50, FNO_STOCKS, NIFTY_BROAD
+from .indicators import (
+    adx,
+    atr,
+    ema,
+    hull_ma,
+    macd,
+    obv,
+    rsi,
+    sma,
+    stochastic,
+    volume_profile_poc,
+)
+from .scoring import detect_crossover, get_ma
+from .universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +164,7 @@ SECTOR_MAP = {
     "NYKAA": "Misc", "PAYTM": "Misc",
     "LALPATHLAB": "Misc", "METROPOLIS": "Misc",
     "DIXON": "Misc", "SONACOMS": "Misc",
-    "CROMPTON": "Misc", "VOLTAS": "Misc",
+    "CROMPTON": "Misc",
 }
 
 # Sector color coding for reports
@@ -303,7 +310,7 @@ class Position:
     hit_target: bool = False
     peak_price: float = 0.0
     trail_stop: float = 0.0
-    exit_date: Optional[datetime] = None
+    exit_date: datetime | None = None
     exit_price: float = 0.0
     exit_reason: str = ""
     pnl: float = 0.0
@@ -355,7 +362,7 @@ class StockData:
 # ============================================================
 
 def precompute_stock(ticker: str, df: pd.DataFrame,
-                     settings: dict) -> Optional[StockData]:
+                     settings: dict) -> StockData | None:
     """Precompute all technical indicators for a stock's entire history."""
     if df is None or len(df) < WARMUP_BARS:
         return None
@@ -388,7 +395,7 @@ def precompute_stock(ticker: str, df: pd.DataFrame,
     return stock
 
 
-def precompute_nifty(index_df: pd.DataFrame) -> Optional[pd.DataFrame]:
+def precompute_nifty(index_df: pd.DataFrame) -> pd.DataFrame | None:
     """Precompute NIFTY index indicators for relative strength scoring."""
     if index_df is None or len(index_df) < 50:
         return None
@@ -409,8 +416,8 @@ def precompute_nifty(index_df: pd.DataFrame) -> Optional[pd.DataFrame]:
 # ============================================================
 
 def compute_score_at_bar(stock: StockData, bar_idx: int,
-                         nifty_df: Optional[pd.DataFrame],
-                         settings: dict) -> Optional[dict]:
+                         nifty_df: pd.DataFrame | None,
+                         settings: dict) -> dict | None:
     """
     Compute the 10-category score at a specific bar index.
     Returns None if data is insufficient.
@@ -442,8 +449,8 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
         return None
 
     close_val = close.iloc[bar_idx]
-    high_val = df["high"].iloc[bar_idx]
-    low_val = df["low"].iloc[bar_idx]
+    df["high"].iloc[bar_idx]
+    df["low"].iloc[bar_idx]
     vol_val = volume.iloc[bar_idx]
 
     # --- Crossover detection (look back from this bar) ---
@@ -699,7 +706,7 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
 # ============================================================
 
 def update_position(pos: Position, bar: pd.Series,
-                    bar_idx: int, settings: dict) -> Optional[TradeResult]:
+                    bar_idx: int, settings: dict) -> TradeResult | None:
     """Check if a position should be exited on this bar. Returns TradeResult if closed."""
     high = bar["high"]
     low = bar["low"]
@@ -780,10 +787,10 @@ def _close_position(pos: Position, exit_price: float,
 class BacktestEngine:
     """Run the HMA/EMA multi-score swing strategy backtest."""
 
-    def __init__(self, settings: Optional[dict] = None):
+    def __init__(self, settings: dict | None = None):
         self.settings = {**DEFAULT_SETTINGS, **(settings or {})}
         self.stocks: list[StockData] = []
-        self.nifty_df: Optional[pd.DataFrame] = None
+        self.nifty_df: pd.DataFrame | None = None
         self.positions: list[Position] = []
         self.trades: list[TradeResult] = []
         self.equity_curve: list[tuple[datetime, float]] = []
@@ -794,7 +801,7 @@ class BacktestEngine:
 
     def load_data(self, tickers: list[str], period: str = "5y"):
         """Fetch and precompute indicators for all tickers."""
-        print("")
+        print()
         print("=" * 60)
         print("  BACKTEST: HMA/EMA Multi-Score Swing Strategy")
         print("=" * 60)
@@ -808,7 +815,7 @@ class BacktestEngine:
               f"{self.settings['target_pct']}% target / "
               f"{self.settings['trail_pct']}% trail")
         print("=" * 60)
-        print("")
+        print()
 
         # Fetch batch data
         print("  Downloading stock data...")
@@ -829,7 +836,7 @@ class BacktestEngine:
                     self.stocks.append(stock)
 
         print(f"  Ready: {len(self.stocks)}/{len(tickers)} stocks loaded")
-        print("")
+        print()
 
     def run(self) -> dict:
         """Run the full backtest simulation."""
@@ -864,12 +871,12 @@ class BacktestEngine:
         print(f"  {backtest_dates[0].strftime('%Y-%m-%d')} to "
               f"{backtest_dates[-1].strftime('%Y-%m-%d')}")
         print(f"  Initial capital: Rs.{capital:,.0f}")
-        print("")
+        print()
 
         # -- Sector rotation config --
         rotation_enabled = settings.get("sector_rotation_enabled", False)
         rotation_lookback = settings.get("sector_rotation_lookback", 8)
-        sector_boost_weight = settings.get("sector_boost_weight", 1.5)
+        settings.get("sector_boost_weight", 1.5)
         sector_block_threshold = settings.get("sector_block_threshold", -0.05)
         self.sector_tracker.lookback = rotation_lookback
         self.sector_tracker.block_threshold = sector_block_threshold
@@ -1124,8 +1131,7 @@ class BacktestEngine:
         max_dd = 0
         max_dd_pct = 0
         for _, val in eq:
-            if val > peak_val:
-                peak_val = val
+            peak_val = max(peak_val, val)
             dd = peak_val - val
             dd_pct = dd / peak_val * 100
             if dd_pct > max_dd_pct:
@@ -1230,7 +1236,7 @@ class BacktestEngine:
             s["total_pnl"] += t.pnl
             s["total_pnl_pct"] += t.pnl_pct
 
-        for ticker, s in stock_stats.items():
+        for s in stock_stats.values():
             s["win_rate"] = s["wins"] / s["trades"] * 100 if s["trades"] > 0 else 0
             s["avg_pnl_pct"] = s["total_pnl_pct"] / s["trades"] if s["trades"] > 0 else 0
 
@@ -1271,20 +1277,20 @@ class BacktestEngine:
         m = metrics
         sep = "=" * 60
 
-        print("")
+        print()
         print(sep)
         print("  BACKTEST RESULTS")
         print(sep)
-        print("")
+        print()
 
         print(f"  Period: {m['years']:.1f} years")
         print(f"  Stocks tested: {len(self.stocks)}")
         print(f"  Initial capital: Rs.{m['initial_capital']:,.0f}")
         print(f"  Final value: Rs.{m['final_value']:,.0f}")
-        print("")
+        print()
 
         print(f"  {'-' * 56}")
-        print(f"  PERFORMANCE SUMMARY")
+        print("  PERFORMANCE SUMMARY")
         print(f"  {'-' * 56}")
         print(f"  Total return:     {m['total_return_pct']:>+8.1f}%")
         print(f"  Annual return:    {m['annual_return_pct']:>+8.1f}%")
@@ -1293,10 +1299,10 @@ class BacktestEngine:
         print(f"  Sharpe ratio:     {m['sharpe_ratio']:>8.2f}")
         print(f"  Sortino ratio:    {m['sortino_ratio']:>8.2f}")
         print(f"  Profit factor:    {m['profit_factor']:>8.2f}")
-        print("")
+        print()
 
         print(f"  {'-' * 56}")
-        print(f"  TRADE STATISTICS")
+        print("  TRADE STATISTICS")
         print(f"  {'-' * 56}")
         print(f"  Total trades:     {m['total_trades']:>8d}")
         print(f"  Win rate:         {m['win_rate']:>8.1f}%")
@@ -1306,26 +1312,26 @@ class BacktestEngine:
         print(f"  Worst trade:      {m['worst_trade'].ticker} {m['worst_trade'].pnl_pct:+.1f}%")
         print(f"  Max consec wins:  {m['max_consec_wins']:>8d}")
         print(f"  Max consec losses:{m['max_consec_losses']:>8d}")
-        print("")
+        print()
 
         print(f"  {'-' * 56}")
-        print(f"  ENTRY SIGNALS")
+        print("  ENTRY SIGNALS")
         print(f"  {'-' * 56}")
         print(f"  Signals generated:{m['signals_generated']:>8d}")
         print(f"  Signals taken:    {m['signals_taken']:>8d}")
         print(f"  Conversion rate:  {m['signal_conversion']:>8.1f}%")
         print(f"  Avg winner score: {m['avg_winner_score']:>8.1f}")
         print(f"  Avg loser score:  {m['avg_loser_score']:>8.1f}")
-        print("")
+        print()
 
         print(f"  {'-' * 56}")
-        print(f"  EXIT REASONS")
+        print("  EXIT REASONS")
         print(f"  {'-' * 56}")
         for reason, count in sorted(m["exit_reasons"].items(),
                                      key=lambda x: -x[1]):
             pct = count / m["total_trades"] * 100
             print(f"  {reason:<20s} {count:>5d} ({pct:.0f}%)")
-        print("")
+        print()
 
         # Sector rotation summary
         if m.get("sector_rotation_enabled"):
@@ -1333,11 +1339,11 @@ class BacktestEngine:
             rot_summary = tracker.get_sector_summary()
             if rot_summary:
                 print(f"  {'-' * 56}")
-                print(f"  SECTOR ROTATION")
+                print("  SECTOR ROTATION")
                 print(f"  {'-' * 56}")
                 print(f"  Signals blocked:  {m['signals_blocked']:>8d} (losing sectors)")
                 print(f"  Signals boosted:  {m['signals_boosted']:>8d} (top sectors)")
-                print(f"")
+                print()
                 print(f"  {'Sector':<14s} {'Mom':>6s} {'Status':>10s} {'Trades':>6s} {'Win%':>6s}")
                 print(f"  {'-' * 56}")
                 for sec, info in rot_summary.items():
@@ -1346,13 +1352,13 @@ class BacktestEngine:
                     color_start = "\033[91m" if status == "BLOCKED" else ("\033[92m" if status == "TOP" else "")
                     color_end = "\033[0m" if color_start else ""
                     print(f"  {sec:<14s} {mom:>+5.1f}% {color_start}{status:>10s}{color_end} {info['trades']:>6d} {info['win_rate']:>5.0f}%")
-                print("")
+                print()
 
         # Sector breakdown
         sector_stats = m.get("sector_stats", {})
         if sector_stats:
             print(f"  {'-' * 56}")
-            print(f"  SECTOR BREAKDOWN")
+            print("  SECTOR BREAKDOWN")
             print(f"  {'-' * 56}")
             print(f"  {'Sector':<14s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Stocks':>7s}")
             print(f"  {'-' * 56}")
@@ -1360,11 +1366,11 @@ class BacktestEngine:
                 ss = sector_stats[sec]
                 print(f"  {sec:<14s} {ss['trades']:>6d} {ss['win_rate']:>5.0f}% "
                       f"Rs.{ss['total_pnl']:>+10,.0f} {ss['stock_count']:>6d}")
-            print("")
+            print()
 
         # Per-stock breakdown
         print(f"  {'-' * 56}")
-        print(f"  PER-STOCK BREAKDOWN")
+        print("  PER-STOCK BREAKDOWN")
         print(f"  {'-' * 56}")
         print(f"  {'Ticker':<12s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Avg%':>8s}")
         print(f"  {'-' * 56}")
@@ -1376,9 +1382,9 @@ class BacktestEngine:
                   f"Rs.{s['total_pnl']:>+10,.0f} {s['avg_pnl_pct']:>+7.1f}%")
 
         # Top trades
-        print("")
+        print()
         print(f"  {'-' * 56}")
-        print(f"  TOP 10 TRADES")
+        print("  TOP 10 TRADES")
         print(f"  {'-' * 56}")
         sorted_trades = sorted(self.trades, key=lambda t: -t.pnl_pct)[:10]
         print(f"  {'Ticker':<12s} {'Entry':>10s} {'Exit':>10s} {'P&L%':>8s} {'Days':>5s} {'Reason'}")
@@ -1387,9 +1393,9 @@ class BacktestEngine:
             print(f"  {t.ticker:<12s} Rs.{t.entry_price:>9,.0f} Rs.{t.exit_price:>9,.0f} "
                   f"{t.pnl_pct:>+7.1f}% {t.days_held:>4d}  {t.exit_reason} [{t.sector}]")
 
-        print("")
+        print()
         print(sep)
-        print("")
+        print()
 
 
 # ============================================================
@@ -1515,8 +1521,8 @@ def generate_html_report(engine: BacktestEngine, metrics: dict,
         return
 
     # --- Equity curve data ---
-    eq_dates = [d.strftime("%Y-%m-%d") for d, _ in engine.equity_curve]
-    eq_values = [round(v, 0) for _, v in engine.equity_curve]
+    [d.strftime("%Y-%m-%d") for d, _ in engine.equity_curve]
+    [round(v, 0) for _, v in engine.equity_curve]
 
     # --- Build stock data dict for trade charts ---
     stock_data_for_charts = {}

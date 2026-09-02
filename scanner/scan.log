@@ -1,376 +1,15 @@
-[13:55:03] 
-==================================================
-[13:55:03] START SCAN | 2026-08-22 13:55:03
-[13:55:03] ==================================================
-[13:55:03] Starting scan: NIFTY 50 (50 stocks)
-[13:55:03] Timeframe: Weekly | Period: 1y | Filter: All
-[13:55:03] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[13:55:03] NSEI index loaded (247 bars)
-[13:55:03] Batch downloading 50 stocks via yfinance...
-[13:55:07] Batch download complete: 50/50 stocks fetched
-[13:55:08]   ✓ ASIANPAINT: 58.9/100 (Bull)
-[13:55:09]   ✓ BAJFINANCE: 64.5/100 (Bull)
-[13:55:10]   ✗ CIPLA: 47.1/100 (Bull)
-[13:55:11]   ✓ ICICIBANK: 54.0/100 (Bull)
-[13:55:12]   ✗ TATACONSUM: 8.2/100 (Bear)
-[13:55:12] 
-━━━ Scan Complete ━━━
-[13:55:12]   Total stocks:  50
-[13:55:12]   Filtered out:  44 (no recent crossover)
-[13:55:12]   Passed filter: 6 (5 Bull, 1 Bear)
-[13:55:12]   Scored 50.0+: 4
-[13:55:12] ==================================================
-[13:55:12] END SCAN
-[13:55:12] ==================================================
-[13:55:21] 
-==================================================
-[13:55:21] START SCAN | 2026-08-22 13:55:21
-[13:55:21] ==================================================
-[13:55:21] Starting scan: ALL (Combined) (207 stocks)
-[13:55:21] Timeframe: Weekly | Period: 1y | Filter: All
-[13:55:21] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[13:55:21] NSEI index loaded (247 bars)
-[13:55:21] Batch downloading 207 stocks via yfinance...
-[13:55:35] Batch download complete: 200/207 stocks fetched
-[13:55:36]   ✗ IDFCFIRSTB: 48.1/100 (Bull)
-[13:55:37]   ✗ GODREJPROP: 47.8/100 (Bull)
-[13:55:37]   ✓ BAJFINANCE: 64.5/100 (Bull)
-[13:55:38]   ✓ INDHOTEL: 52.8/100 (Bull)
-[13:55:39]   ✗ ALKYLAMINE: 46.7/100 (Bull)
-[13:55:44]   ✗ VAIBHAVGBL: 43.9/100 (Bull)
-[13:55:51]   ✓ KRBL: 70.7/100 (Bull)
-[13:56:00]   ✗ RELAXO: 46.9/100 (Bull)
-[13:56:01] 
-━━━ Scan Complete ━━━
-[13:56:01]   Total stocks:  207
-[13:56:01]   Filtered out:  168 (no recent crossover)
-[13:56:01]   Passed filter: 32 (31 Bull, 1 Bear)
-[13:56:01]   Scored 50.0+: 18
-[13:56:01] ==================================================
-[13:56:01] END SCAN
-[13:56:01] ==================================================
-[14:42:11] Theme switched to light
-[14:42:17] Theme switched to dark
-[14:42:48] 
-==================================================
-[14:42:48] START SCAN | 2026-08-22 14:42:48
-[14:42:48] ==================================================
-[14:42:48] Starting scan: FnO STOCKS (110 stocks)
-[14:42:48] Timeframe: Weekly | Period: 1y | Filter: All
-[14:42:48] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[14:42:48] NSEI index loaded (247 bars)
-[14:42:48] Batch downloading 110 stocks via yfinance...
-[14:42:55] Batch download complete: 108/110 stocks fetched
-[14:42:56]   ✓ ASIANPAINT: 58.9/100 (Bull)
-[14:42:57]   ✓ BAJFINANCE: 64.5/100 (Bull)
-[14:42:58]   ✗ CHAMBLFERT: 21.0/100 (Bull)
-[14:42:58]   ✗ CIPLA: 47.1/100 (Bull)
-[14:42:59]   ✓ DEEPAKNTR: 54.3/100 (Bull)
-[14:43:03]   ✓ ICICIBANK: 54.0/100 (Bull)
-[14:43:07] 
-━━━ Scan Complete ━━━
-[14:43:07]   Total stocks:  110
-[14:43:07]   Filtered out:  92 (no recent crossover)
-[14:43:07]   Passed filter: 16 (15 Bull, 1 Bear)
-[14:43:07]   Scored 50.0+: 10
-[14:43:07] ==================================================
-[14:43:07] END SCAN
-[14:43:07] ==================================================
-[14:44:29] 
-==================================================
-[14:44:29] START SCAN | 2026-08-22 14:44:29
-[14:44:29] ==================================================
-[14:44:29] Starting scan: NIFTY PHARMA (10 stocks)
-[14:44:29] Timeframe: Weekly | Period: 1y | Filter: All
-[14:44:29] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[14:44:29] NSEI index loaded (247 bars)
-[14:44:29] Batch downloading 10 stocks via yfinance...
-[14:44:29] Batch download complete: 10/10 stocks fetched
-[14:44:31]   ✗ ALKEM: 33.7/100 (Bull)
-[14:44:32]   ✗ CIPLA: 47.1/100 (Bull)
-[14:44:32] 
-━━━ Scan Complete ━━━
-[14:44:32]   Total stocks:  10
-[14:44:32]   Filtered out:  8 (no recent crossover)
-[14:44:32]   Passed filter: 2 (2 Bull, 0 Bear)
-[14:44:32]   Scored 50.0+: 0
-[14:44:32] ==================================================
-[14:44:32] END SCAN
-[14:44:32] ==================================================
-[14:44:37] 
-==================================================
-[14:44:37] START SCAN | 2026-08-22 14:44:37
-[14:44:37] ==================================================
-[14:44:37] Starting scan: NIFTY ENERGY (9 stocks)
-[14:44:37] Timeframe: Weekly | Period: 1y | Filter: All
-[14:44:37] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[14:44:37] NSEI index loaded (247 bars)
-[14:44:37] Batch downloading 9 stocks via yfinance...
-[14:44:37] Batch download complete: 9/9 stocks fetched
-[14:44:39]   ✓ GAIL: 53.8/100 (Bull)
-[14:44:39] 
-━━━ Scan Complete ━━━
-[14:44:39]   Total stocks:  9
-[14:44:39]   Filtered out:  8 (no recent crossover)
-[14:44:39]   Passed filter: 1 (1 Bull, 0 Bear)
-[14:44:39]   Scored 50.0+: 1
-[14:44:39] ==================================================
-[14:44:39] END SCAN
-[14:44:39] ==================================================
-[14:45:03] 
-==================================================
-[14:45:03] START SCAN | 2026-08-22 14:45:03
-[14:45:03] ==================================================
-[14:45:03] Starting scan: NIFTY FINANCIAL (12 stocks)
-[14:45:03] Timeframe: Weekly | Period: 1y | Filter: All
-[14:45:03] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[14:45:03] NSEI index loaded (247 bars)
-[14:45:03] Batch downloading 12 stocks via yfinance...
-[14:45:04] Batch download complete: 12/12 stocks fetched
-[14:45:05]   ✓ BAJFINANCE: 64.5/100 (Bull)
-[14:45:06]   ✓ ICICIBANK: 54.0/100 (Bull)
-[14:45:06] 
-━━━ Scan Complete ━━━
-[14:45:06]   Total stocks:  12
-[14:45:06]   Filtered out:  10 (no recent crossover)
-[14:45:06]   Passed filter: 2 (2 Bull, 0 Bear)
-[14:45:06]   Scored 50.0+: 2
-[14:45:06] ==================================================
-[14:45:06] END SCAN
-[14:45:06] ==================================================
-[14:45:28] 
-==================================================
-[14:45:28] START SCAN | 2026-08-22 14:45:28
-[14:45:28] ==================================================
-[14:45:28] Starting scan: ALL (Combined) (207 stocks)
-[14:45:28] Timeframe: Weekly | Period: 1y | Filter: All
-[14:45:28] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[14:45:28] NSEI index loaded (247 bars)
-[14:45:28] Batch downloading 207 stocks via yfinance...
-[14:45:39] Batch download complete: 200/207 stocks fetched
-[14:45:40]   ✗ RELAXO: 46.9/100 (Bull)
-[14:45:41]   ✗ HAL: 45.9/100 (Bull)
-[14:45:41]   ✓ MOTILALOFS: 74.0/100 (Bull)
-[14:45:42]   ✗ CHAMBLFERT: 21.0/100 (Bull)
-[14:45:43]   ✗ IDFCFIRSTB: 48.1/100 (Bull)
-[14:45:46]   ✗ ALKEM: 33.7/100 (Bull)
-[14:45:52]   ✓ CANFINHOME: 60.7/100 (Bull)
-[14:45:58]   ✗ RECLTD: 26.9/100 (Bull)
-[14:45:59] 
-━━━ Scan Complete ━━━
-[14:45:59]   Total stocks:  207
-[14:45:59]   Filtered out:  168 (no recent crossover)
-[14:45:59]   Passed filter: 32 (31 Bull, 1 Bear)
-[14:45:59]   Scored 50.0+: 18
-[14:45:59] ==================================================
-[14:45:59] END SCAN
-[14:45:59] ==================================================
-[14:46:43] Fetching news sentiment for exported stocks...
-[14:46:50] HTML report saved: scanner_report_20260822_144650.html
-[16:59:22] 
-==================================================
-[16:59:22] START SCAN | 2026-08-22 16:59:22
-[16:59:22] ==================================================
-[16:59:22] Starting scan: ALL (Combined) (207 stocks)
-[16:59:22] Timeframe: Weekly | Period: 1y | Filter: All
-[16:59:22] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[16:59:22] NSEI index loaded (247 bars)
-[16:59:22] Batch downloading 207 stocks via yfinance...
-[16:59:34] Batch download complete: 200/207 stocks fetched
-[16:59:35]   ✓ ZEEL: 52.1/100 (Bull)
-[16:59:36]   ✗ IDFCFIRSTB: 48.1/100 (Bull)
-[16:59:37]   ✓ DEEPAKNTR: 54.3/100 (Bull)
-[16:59:37]   ✓ ICICIBANK: 54.0/100 (Bull)
-[16:59:38]   ✓ SUDARSCHEM: 65.2/100 (Bull)
-[16:59:42]   ✓ CENTURYPLY: 52.1/100 (Bull)
-[16:59:49]   ✗ RELAXO: 46.9/100 (Bull)
-[16:59:57]   ✗ TATACONSUM: 8.2/100 (Bear)
-[16:59:59] 
-━━━ Scan Complete ━━━
-[16:59:59]   Total stocks:  207
-[16:59:59]   Filtered out:  168 (no recent crossover)
-[16:59:59]   Passed filter: 32 (31 Bull, 1 Bear)
-[16:59:59]   Scored 50.0+: 18
-[16:59:59] ==================================================
-[16:59:59] END SCAN
-[16:59:59] ==================================================
-[17:35:09] 
-==================================================
-[17:35:09] START SCAN | 2026-08-22 17:35:09
-[17:35:09] ==================================================
-[17:35:09] Starting scan: NIFTY IT (10 stocks)
-[17:35:09] Timeframe: Weekly | Period: 1y | Filter: All
-[17:35:09] FastMA=HMA44 SlowMA=EMA30 RSI=14 Threshold=50.0
-[17:35:09] NSEI index loaded (247 bars)
-[17:35:09] Batch downloading 10 stocks via yfinance...
-[17:35:10] Batch download complete: 10/10 stocks fetched
-[17:35:11]   ✓ TECHM: 52.0/100 (Bull)
-[17:35:11] 
-━━━ Scan Complete ━━━
-[17:35:11]   Total stocks:  10
-[17:35:11]   Filtered out:  9 (no recent crossover)
-[17:35:11]   Passed filter: 1 (1 Bull, 0 Bear)
-[17:35:11]   Scored 50.0+: 1
-[17:35:11] ==================================================
-[17:35:11] END SCAN
-[17:35:11] ==================================================
-[22:07:31] 
-==================================================
-[22:07:31] START SCAN | 2026-08-22 22:07:31
-[22:07:31] ==================================================
-[22:07:31] Starting scan: NIFTY IT (10 stocks)
-[22:07:31] Timeframe: Weekly | Period: 1y | Filter: All
-[22:07:31] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[22:07:31] NSEI index loaded (247 bars)
-[22:07:31] Batch downloading 10 stocks via yfinance...
-[22:07:32] Batch download complete: 10/10 stocks fetched
-[22:07:34]   ✓ TECHM: 52.0/100 (Bull)
-[22:07:34] 
-━━━ Scan Complete ━━━
-[22:07:34]   Total stocks:  10
-[22:07:34]   Filtered out:  9 (no recent crossover)
-[22:07:34]   Passed filter: 1 (1 Bull, 0 Bear)
-[22:07:34]   Scored 50.0+: 1
-[22:07:34] ==================================================
-[22:07:34] END SCAN
-[22:07:34] ==================================================
-[22:07:43] 
-==================================================
-[22:07:43] START SCAN | 2026-08-22 22:07:43
-[22:07:43] ==================================================
-[22:07:43] Starting scan: BSE MIDCAP (45 stocks)
-[22:07:43] Timeframe: Weekly | Period: 1y | Filter: All
-[22:07:43] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[22:07:43] NSEI index loaded (247 bars)
-[22:07:43] Batch downloading 45 stocks via yfinance...
-[22:07:45] Batch download complete: 45/45 stocks fetched
-[22:07:46]   ✗ ALKEM: 31.7/100 (Bull)
-[22:07:47]   ✓ DIXON: 51.3/100 (Bull)
-[22:07:47]   ✗ GODREJPROP: 48.8/100 (Bull)
-[22:07:47]   ✗ HAL: 45.9/100 (Bull)
-[22:07:48]   ✗ HONAUT: 49.9/100 (Bull)
-[22:07:49] 
-━━━ Scan Complete ━━━
-[22:07:49]   Total stocks:  45
-[22:07:49]   Filtered out:  37 (no recent crossover)
-[22:07:49]   Passed filter: 8 (8 Bull, 0 Bear)
-[22:07:49]   Scored 50.0+: 3
-[22:07:49] ==================================================
-[22:07:49] END SCAN
-[22:07:49] ==================================================
-[22:07:57] 
-==================================================
-[22:07:57] START SCAN | 2026-08-22 22:07:57
-[22:07:57] ==================================================
-[22:07:57] Starting scan: BSE SMALLCAP (38 stocks)
-[22:07:57] Timeframe: Weekly | Period: 1y | Filter: All
-[22:07:57] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[22:07:57] NSEI index loaded (247 bars)
-[22:07:57] Batch downloading 38 stocks via yfinance...
-[22:08:00] Batch download complete: 35/38 stocks fetched
-[22:08:00]   ✗ APTUS: 28.0/100 (Bull)
-[22:08:01]   ✓ KRBL: 70.2/100 (Bull)
-[22:08:01]   ✗ VAIBHAVGBL: 43.9/100 (Bull)
-[22:08:01] 
-━━━ Scan Complete ━━━
-[22:08:01]   Total stocks:  38
-[22:08:01]   Filtered out:  32 (no recent crossover)
-[22:08:01]   Passed filter: 3 (3 Bull, 0 Bear)
-[22:08:01]   Scored 50.0+: 1
-[22:08:01] ==================================================
-[22:08:01] END SCAN
-[22:08:01] ==================================================
-[22:08:10] 
-==================================================
-[22:08:10] START SCAN | 2026-08-22 22:08:10
-[22:08:10] ==================================================
-[22:08:10] Starting scan: NIFTY SMALLCAP 100 (56 stocks)
-[22:08:10] Timeframe: Weekly | Period: 1y | Filter: All
-[22:08:10] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[22:08:10] NSEI index loaded (247 bars)
-[22:08:10] Batch downloading 56 stocks via yfinance...
-[22:08:13] Batch download complete: 52/56 stocks fetched
-[22:08:14]   ✗ ALKYLAMINE: 46.7/100 (Bull)
-[22:08:14]   ✗ APTUS: 28.0/100 (Bull)
-[22:08:15]   ✓ CENTURYPLY: 52.1/100 (Bull)
-[22:08:15]   ✓ IIFL: 71.0/100 (Bull)
-[22:08:16]   ✓ KRBL: 70.2/100 (Bull)
-[22:08:17] 
-━━━ Scan Complete ━━━
-[22:08:17]   Total stocks:  56
-[22:08:17]   Filtered out:  45 (no recent crossover)
-[22:08:17]   Passed filter: 7 (7 Bull, 0 Bear)
-[22:08:17]   Scored 50.0+: 4
-[22:08:17] ==================================================
-[22:08:17] END SCAN
-[22:08:17] ==================================================
-[23:07:50] 
-==================================================
-[23:07:50] START SCAN | 2026-08-22 23:07:50
-[23:07:50] ==================================================
-[23:07:50] Starting scan: NIFTY 50 (51 stocks)
-[23:07:50] Timeframe: Weekly | Period: 1y | Filter: All
-[23:07:50] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[23:07:50] NSEI index loaded (247 bars)
-[23:07:50] Batch downloading 51 stocks via yfinance...
-[23:07:53] Batch download complete: 51/51 stocks fetched
-[23:07:55]   ✓ ASIANPAINT: 58.9/100 (Bull)
-[23:07:55]   ✓ BAJFINANCE: 63.0/100 (Bull)
-[23:07:56]   ✗ CIPLA: 48.1/100 (Bull)
-[23:07:57]   ✓ ICICIBANK: 53.0/100 (Bull)
-[23:07:58]   ✓ TECHM: 52.0/100 (Bull)
-[23:07:58] 
-━━━ Scan Complete ━━━
-[23:07:58]   Total stocks:  51
-[23:07:58]   Filtered out:  46 (no recent crossover)
-[23:07:58]   Passed filter: 5 (5 Bull, 0 Bear)
-[23:07:58]   Scored 50.0+: 4
-[23:07:58] ==================================================
-[23:07:58] END SCAN
-[23:07:58] ==================================================
-[23:16:33] 
-==================================================
-[23:16:33] START SCAN | 2026-08-22 23:16:33
-[23:16:33] ==================================================
-[23:16:33] Starting scan: NIFTY AUTO (10 stocks)
-[23:16:33] Timeframe: Weekly | Period: 1y | Filter: All
-[23:16:33] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[23:16:33] NSEI index loaded (247 bars)
-[23:16:33] Batch downloading 10 stocks via yfinance...
-[23:16:34] Batch download complete: 10/10 stocks fetched
-[23:16:34] 
-━━━ Scan Complete ━━━
-[23:16:34]   Total stocks:  10
-[23:16:34]   Filtered out:  10 (no recent crossover)
-[23:16:34]   Passed filter: 0 (0 Bull, 0 Bear)
-[23:16:34]   Scored 50.0+: 0
-[23:16:34] ==================================================
-[23:16:34] END SCAN
-[23:16:34] ==================================================
-[23:48:17] Theme switched to light
-[23:49:27] Theme switched to dark
-[23:50:08] Theme switched to light
-[23:51:24] Theme switched to dark
-[23:51:25] Theme switched to light
-[23:51:26] Results cleared
-[00:01:48] Theme switched to light
-[00:01:51] Theme switched to dark
-[00:01:55] 
-==================================================
-[00:01:55] START SCAN | 2026-08-23 00:01:55
-[00:01:55] ==================================================
-[00:01:55] Starting scan: NIFTY 50 (51 stocks)
-[00:01:55] Timeframe: Weekly | Period: 1y | Filter: All
-[00:01:55] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[00:01:56] NSEI index loaded (246 bars)
-[00:01:56] Batch downloading 51 stocks via yfinance...
-[00:02:00] Batch download complete: 51/51 stocks fetched
-[00:02:01]   ✓ ASIANPAINT: 58.9/100 (Bull)
-[00:02:02]   ✓ BAJFINANCE: 63.0/100 (Bull)
-[00:02:02]   ✗ CIPLA: 48.1/100 (Bull)
-[00:02:03]   ✓ ICICIBANK: 53.0/100 (Bull)
-[00:02:04]   ✓ TECHM: 52.0/100 (Bull)
-[00:02:04] 
+[21:03:50] Batch download complete: 200/207 stocks fetched
+[21:03:51]   ✗ PVRINOX: 46.1/100 (Bull)
+[21:03:52]   ✗ ELECON: 8.0/100 (Bull)
+[21:03:53]   ✗ ASIANPAINT: 32.0/100 (Bull)
+[21:03:53]   ✗ CENTURYPLY: 28.9/100 (Bull)
+[21:03:54]   ✗ RATNAMANI: 44.7/100 (Bull)
+[21:03:58]   ✓ SUPRAJIT: 60.0/100 (Bull)
+[21:04:06]   ✗ ANGELONE: 16.6/100 (Bull)
+[21:04:14]   ✓ GRASIM: 63.0/100 (Bull)
+[21:04:22]   ✗ VSTIND: 5.2/100 (Bear)
+[21:04:30]   ✓ MOTILALOFS: 55.9/100 (Bull)
+[21:04:37] 
 ━
 ━
 ━
@@ -396,28 +35,32 @@
 ━
 ━
 ━ Scan Complete 
-[00:02:04]   Total stocks:  51
-[00:02:04]   Filtered out:  46 (no recent crossover)
-[00:02:04]   Passed filter: 5 (5 Bull, 0 Bear)
-[00:02:04]   Scored 50.0+: 4
-[00:02:48] 
+[21:04:37]   Total stocks:  207
+[21:04:37]   Filtered out:  142 (no recent crossover)
+[21:04:37]   Passed filter: 58 (55 Bull, 3 Bear)
+[21:04:37]   Scored 50.0+: 29
+[21:04:46] Cache cleared successfully
+[21:19:18] 
 ==================================================
-[00:02:48] START SCAN | 2026-08-23 00:02:48
-[00:02:48] ==================================================
-[00:02:48] Starting scan: ALL (Combined) (207 stocks)
-[00:02:48] Timeframe: Weekly | Period: 1y | Filter: All
-[00:02:48] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[00:02:48] NSEI index loaded (246 bars)
-[00:02:48] Batch downloading 207 stocks via yfinance...
-[00:02:59] Batch download complete: 200/207 stocks fetched
-[00:03:00]   ✗ HAL: 45.9/100 (Bull)
-[00:03:01]   ✗ LICHSGFIN: 27.6/100 (Bull)
-[00:03:01]   ✓ TECHM: 52.0/100 (Bull)
-[00:03:02]   ✓ IIFL: 71.0/100 (Bull)
-[00:03:02]   ✓ BAJFINANCE: 63.0/100 (Bull)
-[00:03:06]   ✓ INDHOTEL: 53.8/100 (Bull)
-[00:03:13]   ✓ SUPRAJIT: 59.4/100 (Bull)
-[00:03:16] 
+[21:19:18] START SCAN | 2026-09-02 21:19:18
+[21:19:18] ==================================================
+[21:19:18] Starting scan: ALL (Combined) (207 stocks)
+[21:19:18] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[21:19:18] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[21:19:18] NSEI index loaded (497 bars)
+[21:19:18] Batch downloading 207 stocks via yfinance...
+[21:20:23] Batch download complete: 200/207 stocks fetched
+[21:20:24]   ✓ KRBL: 57.3/100 (Bull)
+[21:20:24]   ✓ COFORGE: 51.8/100 (Bull)
+[21:20:25]   ✓ DIXON: 52.0/100 (Bull)
+[21:20:26]   ✓ LALPATHLAB: 53.2/100 (Bull)
+[21:20:27]   ✗ TECHM: 44.6/100 (Bull)
+[21:20:31]   ✗ RELAXO: 39.0/100 (Bull)
+[21:20:39]   ✓ SUDARSCHEM: 56.6/100 (Bull)
+[21:20:47]   ✓ ADANIENT: 57.7/100 (Bull)
+[21:20:55]   ✓ SOLARINDS: 58.2/100 (Bull)
+[21:21:03]   ✗ THERMAX: 22.8/100 (Bull)
+[21:21:08] 
 ━
 ━
 ━
@@ -443,31 +86,103 @@
 ━
 ━
 ━ Scan Complete 
-[00:03:16]   Total stocks:  207
-[00:03:16]   Filtered out:  177 (no recent crossover)
-[00:03:16]   Passed filter: 23 (22 Bull, 1 Bear)
-[00:03:16]   Scored 50.0+: 11
-[00:07:26] Theme switched to light
-[00:07:28] Theme switched to dark
-[00:07:29] Results cleared
-[00:08:27] 
+[21:21:08]   Total stocks:  207
+[21:21:08]   Filtered out:  145 (no recent crossover)
+[21:21:08]   Passed filter: 55 (55 Bull, 0 Bear)
+[21:21:08]   Scored 50.0+: 28
+[21:28:21] Full-market scan: 2567 stocks — chunked download, ~5-10 min, please wait...
+[21:28:21] 
 ==================================================
-[00:08:27] START SCAN | 2026-08-23 00:08:27
-[00:08:27] ==================================================
-[00:08:27] Starting scan: ALL (Combined) (207 stocks)
-[00:08:27] Timeframe: Weekly | Period: 1y | Filter: All
-[00:08:27] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[00:08:27] NSEI index loaded (246 bars)
-[00:08:27] Batch downloading 207 stocks via yfinance...
-[00:08:36] Batch download complete: 200/207 stocks fetched
-[00:08:37]   ✗ HAL: 45.9/100 (Bull)
-[00:08:37]   ✗ LICHSGFIN: 27.6/100 (Bull)
-[00:08:38]   ✓ TECHM: 52.0/100 (Bull)
-[00:08:38]   ✓ IIFL: 71.0/100 (Bull)
-[00:08:39]   ✓ BAJFINANCE: 63.0/100 (Bull)
-[00:08:41]   ✓ INDHOTEL: 53.8/100 (Bull)
-[00:08:46]   ✓ SUPRAJIT: 59.4/100 (Bull)
-[00:08:47] 
+[21:28:21] START SCAN | 2026-09-02 21:28:21
+[21:28:21] ==================================================
+[21:28:21] Starting scan: NSE ALL (Live ~2,200) (2567 stocks)
+[21:28:21] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[21:28:21] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[21:28:21] NSEI index loaded (497 bars)
+[21:28:21] Batch downloading 2567 stocks via yfinance...
+[21:31:25] Batch download complete: 2176/2567 stocks fetched
+[21:31:26]   ✓ 20MICRONS: 50.8/100 (Bull)
+[21:31:27]   ✓ 360ONE: 51.7/100 (Bull)
+[21:31:28]   ✗ 3IINFOLTD: 48.5/100 (Bull)
+[21:31:29]   ✓ 3MINDIA: 52.4/100 (Bull)
+[21:31:30]   ✗ 5PAISA: 36.5/100 (Bull)
+[21:31:34]   ✓ AARTIDRUGS: 53.5/100 (Bull)
+[21:31:43]   ✓ AEGISLOG: 59.5/100 (Bull)
+[21:31:51]   ✓ AKUMS: 50.8/100 (Bull)
+[21:31:59]   ✓ ANANTRAJ: 56.1/100 (Bull)
+[21:32:08]   ✗ ARE&M: 43.5/100 (Bull)
+[21:32:16]   ✓ CAPLIPOINT: 66.2/100 (Bull)
+[21:32:24]   ✓ CGCL: 65.2/100 (Bull)
+[21:32:33]   ✗ CONCORDBIO: 49.1/100 (Bull)
+[21:32:41]   ✗ DAMODARIND: 35.7/100 (Bull)
+[21:32:49]   ✗ DENORA: 40.0/100 (Bull)
+[21:32:58]   ✗ ASAL: 17.6/100 (Bull)
+[21:33:06]   ✓ AURUM: 54.7/100 (Bull)
+[21:33:14]   ✓ BAJAJHLDNG: 52.6/100 (Bull)
+[21:33:22]   ✗ BANSWRAS: 36.6/100 (Bull)
+[21:33:31]   ✗ BHARATGEAR: 31.0/100 (Bull)
+[21:33:40]   ✗ BOROSCI: 22.8/100 (Bull)
+[21:33:49]   ✗ GOKEX: 42.0/100 (Bull)
+[21:33:58]   ✗ GREENLAM: 38.0/100 (Bull)
+[21:34:06]   ✓ GULPOLY: 57.0/100 (Bull)
+[21:34:15]   ✗ HECPROJECT: 22.9/100 (Bull)
+[21:34:24]   ✓ HOMEFIRST: 56.6/100 (Bull)
+[21:34:32]   ✗ IDFCFIRSTB: 49.1/100 (Bull)
+[21:34:40]   ✓ DSKULKARNI: 59.0/100 (Bull)
+[21:34:50]   ✓ ELGIRUBCO: 54.4/100 (Bull)
+[21:34:58]   ✓ ETERNAL: 63.2/100 (Bull)
+[21:35:06]   ✗ FDC: 13.5/100 (Bull)
+[21:35:15]   ✗ FUSION: 45.5/100 (Bull)
+[21:35:24]   ✓ GARFIBRES: 55.4/100 (Bull)
+[21:35:31]   ✓ MAXESTATES: 58.8/100 (Bull)
+[21:35:39]   ✗ MIDHANI: 37.4/100 (Bull)
+[21:35:48]   ✗ MONARCH: 49.1/100 (Bull)
+[21:35:56]   ✓ MUNJALAU: 64.6/100 (Bull)
+[21:36:04]   ✗ NAVKARCORP: 26.2/100 (Bull)
+[21:36:13]   ✗ NIBE: 17.8/100 (Bull)
+[21:36:22]   ✓ NRBBEARING: 56.7/100 (Bull)
+[21:36:30]   ✗ KIRLOSBROS: 47.2/100 (Bull)
+[21:36:38]   ✓ KPIL: 66.9/100 (Bull)
+[21:36:47]   ✓ KSL: 64.3/100 (Bull)
+[21:36:55]   ✓ LMW: 65.3/100 (Bull)
+[21:37:03]   ✓ MAHLIFE: 58.7/100 (Bull)
+[21:37:11]   ✗ MANORG: 27.1/100 (Bull)
+[21:37:20]   ✗ OLAELEC: 18.0/100 (Bull)
+[21:37:28]   ✓ ORCHPHARMA: 51.0/100 (Bull)
+[21:37:37]   ✓ PANAMAPET: 63.2/100 (Bull)
+[21:37:45]   ✗ PGHL: 19.4/100 (Bull)
+[21:37:54]   ✗ POLICYBZR: 49.9/100 (Bull)
+[21:38:03]   ✗ PREMEXPLN: 39.6/100 (Bull)
+[21:38:11]   ✗ PYRAMID: 22.8/100 (Bull)
+[21:38:19]   ✓ RAMRAT: 56.5/100 (Bull)
+[21:38:28]   ✗ RELAXO: 39.0/100 (Bull)
+[21:38:37]   ✓ RPEL: 58.2/100 (Bull)
+[21:38:45]   ✗ SANATHAN: 36.3/100 (Bull)
+[21:38:53]   ✓ SECMARK: 58.0/100 (Bull)
+[21:39:01]   ✗ IL&FSENGG: 42.8/100 (Bull)
+[21:39:10]   ✓ INDOCO: 63.2/100 (Bull)
+[21:39:18]   ✗ IRISDOREME: 43.2/100 (Bull)
+[21:39:26]   ✗ JBMA: 32.2/100 (Bull)
+[21:39:34]   ✗ JPPOWER: 19.2/100 (Bull)
+[21:39:42]   ✓ KALYANIFRG: 69.0/100 (Bull)
+[21:39:51]   ✓ UYFINCORP: 64.1/100 (Bull)
+[21:39:59]   ✓ VERANDA: 57.7/100 (Bull)
+[21:40:07]   ✓ VIPULLTD: 50.4/100 (Bull)
+[21:40:16]   ✓ WELCORP: 63.2/100 (Bull)
+[21:40:25]   ✓ XPROINDIA: 68.4/100 (Bull)
+[21:40:33]   ✗ SUPRIYA: 44.3/100 (Bull)
+[21:40:42]   ✗ TAINWALCHM: 49.0/100 (Bull)
+[21:40:51]   ✓ TBZ: 73.2/100 (Bull)
+[21:40:59]   ✗ THERMAX: 22.8/100 (Bull)
+[21:41:08]   ✗ TRITURBINE: 22.2/100 (Bull)
+[21:41:17]   ✗ UMESLTD: 14.5/100 (Bull)
+[21:41:25]   ✓ SETCO: 52.7/100 (Bull)
+[21:41:34]   ✗ SHRIRAMPPS: 9.3/100 (Bull)
+[21:41:43]   ✗ SINDHUTRAD: 24.1/100 (Bull)
+[21:41:52]   ✓ SOMANYCERA: 61.0/100 (Bull)
+[21:42:01]   ✗ SRGHFL: 19.2/100 (Bull)
+[21:42:10]   ✗ SUBEXLTD: 49.5/100 (Bull)
+[21:42:17] 
 ━
 ━
 ━
@@ -493,38 +208,33 @@
 ━
 ━
 ━ Scan Complete 
-[00:08:47]   Total stocks:  207
-[00:08:47]   Filtered out:  177 (no recent crossover)
-[00:08:47]   Passed filter: 23 (22 Bull, 1 Bear)
-[00:08:47]   Scored 50.0+: 11
-[00:13:49] Fetching news sentiment for exported stocks...
-[00:13:50] HTML report saved: scanner_report_20260823_001350.html
-[00:14:15] Theme switched to light
-[00:14:30] Theme switched to dark
-[00:25:30] Theme switched to light
-[00:25:32] Theme switched to dark
-[00:25:33] Results cleared
-[00:27:23] Theme switched to light
-[00:27:25] Theme switched to dark
-[00:32:00] Theme switched to light
-[00:32:02] Theme switched to dark
-[00:32:02] Results cleared
-[00:33:03] 
+[21:42:17]   Total stocks:  2567
+[21:42:17]   Filtered out:  1408 (no recent crossover)
+[21:42:17]   Passed filter: 768 (768 Bull, 0 Bear)
+[21:42:17]   Scored 50.0+: 440
+[22:20:45] 
 ==================================================
-[00:33:03] START SCAN | 2026-08-23 00:33:03
-[00:33:03] ==================================================
-[00:33:03] Starting scan: NIFTY 50 (51 stocks)
-[00:33:03] Timeframe: Weekly | Period: 1y | Filter: All
-[00:33:03] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[00:33:03] NSEI index loaded (246 bars)
-[00:33:03] Batch downloading 51 stocks via yfinance...
-[00:33:07] Batch download complete: 51/51 stocks fetched
-[00:33:08]   ✓ ASIANPAINT: 58.9/100 (Bull)
-[00:33:09]   ✓ BAJFINANCE: 63.0/100 (Bull)
-[00:33:10]   ✗ CIPLA: 48.1/100 (Bull)
-[00:33:10]   ✓ ICICIBANK: 53.0/100 (Bull)
-[00:33:11]   ✓ TECHM: 52.0/100 (Bull)
-[00:33:11] 
+[22:20:45] START SCAN | 2026-09-02 22:20:45
+[22:20:45] ==================================================
+[22:20:45] Starting scan: ALL (Combined) (207 stocks)
+[22:20:45] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[22:20:45] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[22:20:45] NSEI index loaded (497 bars)
+[22:20:45] Batch downloading 207 stocks via yfinance...
+[22:21:44] Batch download complete: 200/207 stocks fetched
+[22:21:44] Fetching global macro/commodity data...
+[22:22:03] Global enrichment: 8 keys (macro, forex, crypto, commodity)
+[22:22:06]   ✓ PETRONET: 55.4/100 (Bull)
+[22:22:08]   ✓ IIFL: 61.1/100 (Bull)
+[22:22:11]   ✗ VAIBHAVGBL: 22.3/100 (Bull)
+[22:22:14]   ✗ HAL: 49.6/100 (Bull)
+[22:22:16]   ✗ PRESTIGE: 43.9/100 (Bull)
+[22:22:30]   ✗ RELAXO: 39.0/100 (Bull)
+[22:22:55]   ✓ WELCORP: 63.2/100 (Bull)
+[22:23:18]   ✓ OFSS: 58.2/100 (Bull)
+[22:23:46]   ✓ METROPOLIS: 64.2/100 (Bull)
+[22:24:10]   ✓ KRBL: 57.3/100 (Bull)
+[22:24:23] 
 ━
 ━
 ━
@@ -550,30 +260,69 @@
 ━
 ━
 ━ Scan Complete 
-[00:33:11]   Total stocks:  51
-[00:33:11]   Filtered out:  46 (no recent crossover)
-[00:33:11]   Passed filter: 5 (5 Bull, 0 Bear)
-[00:33:11]   Scored 50.0+: 4
-[00:40:57] Theme switched to light
-[00:40:59] Theme switched to dark
-[00:40:59] Results cleared
-[00:44:00] 
+[22:24:23]   Total stocks:  207
+[22:24:23]   Filtered out:  145 (no recent crossover)
+[22:24:23]   Passed filter: 55 (55 Bull, 0 Bear)
+[22:24:23]   Scored 50.0+: 28
+[22:35:38] 
 ==================================================
-[00:44:00] START SCAN | 2026-08-23 00:44:00
-[00:44:00] ==================================================
-[00:44:00] Starting scan: CASH MARKET (144 stocks)
-[00:44:00] Timeframe: Weekly | Period: 1y | Filter: All
-[00:44:00] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[00:44:00] NSEI index loaded (246 bars)
-[00:44:00] Batch downloading 144 stocks via yfinance...
-[00:44:09] Batch download complete: 141/144 stocks fetched
-[00:44:09]   ✗ HAL: 45.9/100 (Bull)
-[00:44:10]   ✗ CIPLA: 48.1/100 (Bull)
-[00:44:11]   ✓ PIDILITIND: 55.2/100 (Bull)
-[00:44:12]   ✗ HONAUT: 49.9/100 (Bull)
-[00:44:13]   ✓ ICICIBANK: 53.0/100 (Bull)
-[00:44:16]   ✗ GODREJPROP: 48.8/100 (Bull)
-[00:44:20] 
+[22:35:38] START SCAN | 2026-09-02 22:35:38
+[22:35:38] ==================================================
+[22:35:38] Starting scan: NSE ALL (Live ~2,200) (2567 stocks)
+[22:35:38] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[22:35:38] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[22:35:38] NSEI index loaded (497 bars)
+[22:35:38] Batch downloading 2567 stocks via yfinance...
+[22:38:14] Batch download complete: 2176/2567 stocks fetched
+[22:38:14] Fetching global macro/commodity data...
+[22:38:31] Global enrichment: 8 keys (macro, forex, crypto, commodity)
+[22:38:31] Large universe fast mode: 2567 stocks — technicals first, enrich top 200 only
+[22:38:31] Parallel scoring 2176 stocks with 8 workers...
+[22:38:35]   ✗ ASKAUTOLTD: 45.8/100 (Bull)
+[22:38:36]   ✗ ASAHIINDIA: 49.0/100 (Bull)
+[22:38:36]   ✗ ASAHISONG: 36.2/100 (Bull)
+[22:38:36]   ✗ ASAL: 7.6/100 (Bull)
+[22:38:37]   ✗ ASHAPURMIN: 20.6/100 (Bull)
+[22:38:38]   ✗ BAJEL: 21.9/100 (Bull)
+[22:38:39]   ✓ BETA: 50.8/100 (Bull)
+[22:38:39]   ✗ GODREJIND: 30.0/100 (Bull)
+[22:38:42]   ✗ GTLINFRA: 5.2/100 (Bull)
+[22:38:43]   ✗ HIRECT: 44.1/100 (Bull)
+[22:38:44]   ✗ CARTRADE: 46.3/100 (Bull)
+[22:38:44]   ✗ CONCORDBIO: 39.1/100 (Bull)
+[22:38:46]   ✗ DEEPINDS: 45.2/100 (Bull)
+[22:38:47]   ✗ E2E: 48.2/100 (Bull)
+[22:38:47]   ✓ EXIDEIND: 51.8/100 (Bull)
+[22:38:48]   ✗ GALAXYSURF: 39.5/100 (Bull)
+[22:38:50]   ✗ 63MOONS: 45.5/100 (Bull)
+[22:38:51]   ✗ AKUMS: 42.8/100 (Bull)
+[22:38:51]   ✗ APTECHT: 13.1/100 (Bull)
+[22:38:53]   ✓ MMP: 53.2/100 (Bull)
+[22:38:55]   ✓ MUNJALAU: 51.6/100 (Bull)
+[22:38:57]   ✗ NIITLTD: 44.1/100 (Bull)
+[22:38:59]   ✗ ONESOURCE: 11.7/100 (Bull)
+[22:39:00]   ✗ PAISALO: 39.6/100 (Bull)
+[22:39:00]   ✗ PNBHOUSING: 44.9/100 (Bull)
+[22:39:00]   ✓ PVP: 55.0/100 (Bull)
+[22:39:00]   ✓ RGL: 54.0/100 (Bull)
+[22:39:00]   ✗ SANSTAR: 35.2/100 (Bull)
+[22:39:00]   ✗ IKIO: 45.5/100 (Bull)
+[22:39:00]   ✓ IVC: 63.2/100 (Bull)
+[22:39:00]   ✗ JSFB: 49.6/100 (Bull)
+[22:39:00]   ✗ KILITCH: 19.9/100 (Bull)
+[22:39:00]   ✗ KRITINUT: 28.0/100 (Bull)
+[22:39:00]   ✗ LUXIND: 7.2/100 (Bull)
+[22:39:00]   ✗ UTTAMSUGAR: 44.0/100 (Bull)
+[22:39:00]   ✗ VISHAL: 14.0/100 (Bull)
+[22:39:00]   ✓ XPROINDIA: 63.4/100 (Bull)
+[22:39:00]   ✗ SIEMENS: 46.7/100 (Bull)
+[22:39:00]   ✗ SOMANYCERA: 48.0/100 (Bull)
+[22:39:00]   ✓ STOVEKRAFT: 50.2/100 (Bull)
+[22:39:00]   ✗ TALBROAUTO: 45.9/100 (Bull)
+[22:39:00]   ✗ TIPSMUSIC: 24.6/100 (Bull)
+[22:39:00]   ✗ UNIMECH: 39.5/100 (Bull)
+[22:39:00] Enriching top 200 of 768 with fundamentals/sentiment...
+[22:43:19] 
 ━
 ━
 ━
@@ -599,108 +348,237 @@
 ━
 ━
 ━ Scan Complete 
-[00:44:20]   Total stocks:  144
-[00:44:20]   Filtered out:  126 (no recent crossover)
-[00:44:20]   Passed filter: 15 (15 Bull, 0 Bear)
-[00:44:20]   Scored 50.0+: 9
-[00:46:19] Theme switched to light
-[00:46:58] Theme switched to dark
-[00:54:42] Theme switched to light
-[00:54:44] Theme switched to dark
-[00:54:45] Results cleared
-[01:05:20] Theme switched to light
-[01:05:22] Theme switched to dark
-[01:05:23] Results cleared
-[01:08:24] 
+[22:43:19]   Total stocks:  2567
+[22:43:19]   Filtered out:  1408 (no recent crossover)
+[22:43:19]   Passed filter: 768 (768 Bull, 0 Bear)
+[22:43:19]   Scored 50.0+: 208
+[23:10:31] 
 ==================================================
-[01:08:24] START SCAN | 2026-08-23 01:08:24
-[01:08:24] ==================================================
-[01:08:24] Starting scan: NIFTY MIDCAP 100 (84 stocks)
-[01:08:24] Timeframe: Weekly | Period: 1y | Filter: All
-[01:08:24] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[01:08:24] NSEI index loaded (246 bars)
-[01:08:24] Batch downloading 84 stocks via yfinance...
-[01:08:29] Batch download complete: 82/84 stocks fetched
-[01:08:29]   ✗ ALKEM: 31.7/100 (Bull)
-[01:08:30]   ✓ DIXON: 51.3/100 (Bull)
-[01:08:31]   ✗ GODREJPROP: 48.8/100 (Bull)
-[01:08:32]   ✗ HAL: 45.9/100 (Bull)
-[01:08:32]   ✗ HONAUT: 49.9/100 (Bull)
-[01:08:36]   ✗ IDFCFIRSTB: 47.1/100 (Bull)
-[01:08:37] 
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━ Scan Complete 
-[01:08:37]   Total stocks:  84
-[01:08:37]   Filtered out:  71 (no recent crossover)
-[01:08:37]   Passed filter: 11 (10 Bull, 1 Bear)
-[01:08:37]   Scored 50.0+: 3
-[18:36:31] 
+[23:10:31] START STREAM SCAN | 2026-09-02 23:10:31
+[23:10:31] ==================================================
+[23:10:31] Starting scan: NSE ALL (Live ~2,200) (2567 stocks)
+[23:10:31] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[23:10:31] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[23:10:31] NSEI index loaded (497 bars)
+[23:10:31] Fetching global macro/commodity data...
+[23:10:49] Global enrichment: 8 keys
+[23:10:49] Large universe streaming mode: 2567 stocks — per-batch technical scoring, enrich top 200 at end
+[23:11:48] Batch 1 received: 854 tickers (cumulative 854) — scoring...
+[23:11:59]   ✗ ASAHIINDIA: 49.0/100 (Bull)
+[23:11:59]   ✗ ASAL: 7.6/100 (Bull)
+[23:11:59]   ✗ ASAHISONG: 36.2/100 (Bull)
+[23:11:59]   ... +285 more in this batch
+[23:12:00] Grid updated: +288 new, ~0 enriched (total 288)
+[23:12:55] Batch 2 received: 854 tickers (cumulative 1708) — scoring...
+[23:13:04]   ✗ RAINBOW: 39.7/100 (Bull)
+[23:13:04]   ✗ RAIN: 43.4/100 (Bull)
+[23:13:04]   ✗ RADICO: 43.2/100 (Bull)
+[23:13:04]   ... +307 more in this batch
+[23:13:07] Grid updated: +310 new, ~0 enriched (total 598)
+[23:13:52] Batch 3 received: 468 tickers (cumulative 2176) — scoring...
+[23:13:57]   ✗ UYFINCORP: 49.1/100 (Bull)
+[23:13:57]   ✗ V2RETAIL: 30.8/100 (Bull)
+[23:13:57]   ✗ UTTAMSUGAR: 44.0/100 (Bull)
+[23:13:57]   ... +167 more in this batch
+[23:13:59] Grid updated: +170 new, ~0 enriched (total 768)
+[23:13:59] Enriching top 200 of 768 with fundamentals/sentiment...
+[23:18:19] Grid updated: +0 new, ~200 enriched (total 768)
+[23:18:19] Top 200 enrichment complete — grid updated
+[23:18:19] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[23:18:19]   Total tickers: 2567 | fetched: 2176
+[23:18:19]   Filtered out: 1408
+[23:18:19]   Passed filter: 768 (768 Bull, 0 Bear)
+[23:18:19]   Scored 50.0+: 208
+[23:30:19] 
 ==================================================
-[18:36:31] START SCAN | 2026-08-31 18:36:31
-[18:36:31] ==================================================
-[18:36:31] Starting scan: ALL (Combined) (207 stocks)
-[18:36:31] Timeframe: Weekly | Period: 2y | Filter: All
-[18:36:31] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
-[18:36:31] NSEI index loaded (496 bars)
-[18:36:31] Batch downloading 207 stocks via yfinance...
-[18:36:43] Batch download complete: 200/207 stocks fetched
-[18:36:44]   ✗ PVRINOX: 46.3/100 (Bull)
-[18:36:44]   ✓ COFORGE: 52.7/100 (Bull)
-[18:36:45]   ✗ GODREJPROP: 42.1/100 (Bull)
-[18:36:45]   ✓ INDHOTEL: 58.7/100 (Bull)
-[18:36:46]   ✗ APTUS: 22.9/100 (Bull)
-[18:36:49]   ✗ HAL: 49.4/100 (Bull)
-[18:36:55]   ✗ PRESTIGE: 47.9/100 (Bull)
-[18:36:58] 
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━
-━ Scan Complete 
-[18:36:58]   Total stocks:  207
-[18:36:58]   Filtered out:  175 (no recent crossover)
-[18:36:58]   Passed filter: 25 (25 Bull, 0 Bear)
-[18:36:58]   Scored 50.0+: 11
+[23:30:19] START STREAM SCAN | 2026-09-02 23:30:19
+[23:30:19] ==================================================
+[23:30:19] Starting scan: NSE ALL (Live ~2,200) (2567 stocks)
+[23:30:19] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[23:30:19] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[23:30:19] NSEI index loaded (497 bars)
+[23:30:19] Fetching global macro/commodity data...
+[23:30:34] Global enrichment: 8 keys
+[23:30:34] Large universe streaming mode: 2567 stocks — per-batch technical scoring, enrich top 200 at end
+[23:31:26] Batch 1 received: 1366 tickers (cumulative 1366) — scoring...
+[23:31:33]   ✗ BUTTERFLY: 12.5/100 (Bull)
+[23:31:33]   ✗ CAMS: 18.6/100 (Bull)
+[23:31:33]   ✗ CAPITALSFB: 43.5/100 (Bull)
+[23:31:33]   ... +476 more in this batch
+[23:31:35] Grid updated: +479 new, ~0 enriched (total 479)
+[23:32:22] Batch 2 received: 810 tickers (cumulative 2176) — scoring...
+[23:32:27]   ✓ UYFINCORP: 51.6/100 (Bull)
+[23:32:27]   ✗ VADILALIND: 43.4/100 (Bull)
+[23:32:27]   ✗ V2RETAIL: 33.3/100 (Bull)
+[23:32:27]   ... +286 more in this batch
+[23:32:27] Enriching top 200 of 768 with fundamentals/sentiment...
+[23:32:31] Grid updated: +289 new, ~0 enriched (total 768)
+[23:37:08] Top 200 enrichment complete — grid updated
+[23:37:08] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[23:37:08]   Total tickers: 2567 | fetched: 2176
+[23:37:08]   Filtered out: 1408
+[23:37:08]   Passed filter: 768 (768 Bull, 0 Bear)
+[23:37:08]   Scored 50.0+: 240
+[23:37:13] Grid updated: +0 new, ~200 enriched (total 768)
+[23:40:39] Fetching news sentiment for exported stocks...
+[23:41:12] HTML report saved: scanner_report_20260902_234112.html
+[23:45:54] Fetching news sentiment for exported stocks...
+[23:46:46] HTML report saved: scanner_report_20260902_234646.html
+[23:47:06] 
+==================================================
+[23:47:06] START STREAM SCAN | 2026-09-02 23:47:06
+[23:47:06] ==================================================
+[23:47:06] Starting scan: NIFTY NEXT 50 (50 stocks)
+[23:47:06] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[23:47:06] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[23:47:06] NSEI index loaded (497 bars)
+[23:47:06] Fetching global macro/commodity data...
+[23:47:16] Global enrichment: 8 keys
+[23:47:30] Batch 1 received: 48 tickers (cumulative 48) — scoring...
+[23:50:31]   ✓ ADANIENT: 57.7/100 (Bull)
+[23:50:31]   ✗ ADANIGREEN: 35.4/100 (Bull)
+[23:50:31]   ✓ BOSCHLTD: 50.4/100 (Bull)
+[23:50:31]   ... +10 more in this batch
+[23:50:31] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[23:50:31]   Total tickers: 50 | fetched: 48
+[23:50:31]   Filtered out: 35
+[23:50:31]   Passed filter: 13 (13 Bull, 0 Bear)
+[23:50:31]   Scored 50.0+: 9
+[23:50:32] Grid updated: +0 new, ~13 enriched (total 13)
+[23:53:32] 
+==================================================
+[23:53:32] START STREAM SCAN | 2026-09-02 23:53:32
+[23:53:32] ==================================================
+[23:53:32] Starting scan: FnO STOCKS (110 stocks)
+[23:53:32] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[23:53:32] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[23:53:32] NSEI index loaded (497 bars)
+[23:53:32] Fetching global macro/commodity data...
+[23:53:43] Global enrichment: 8 keys
+[23:54:09] Batch 1 received: 108 tickers (cumulative 108) — scoring...
+[23:56:14]   ✓ ADANIENT: 57.7/100 (Bull)
+[23:56:14]   ✗ ADANIGREEN: 35.4/100 (Bull)
+[23:56:14]   ✗ ASIANPAINT: 32.0/100 (Bull)
+[23:56:14]   ... +16 more in this batch
+[23:56:14] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[23:56:14]   Total tickers: 110 | fetched: 108
+[23:56:14]   Filtered out: 89
+[23:56:14]   Passed filter: 19 (19 Bull, 0 Bear)
+[23:56:14]   Scored 50.0+: 9
+[23:56:15] Grid updated: +0 new, ~19 enriched (total 19)
+[23:59:25] 
+==================================================
+[23:59:25] START STREAM SCAN | 2026-09-02 23:59:25
+[23:59:25] ==================================================
+[23:59:25] Starting scan: NIFTY 50 (51 stocks)
+[23:59:25] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[23:59:25] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[23:59:25] NSEI index loaded (497 bars)
+[23:59:25] Fetching global macro/commodity data...
+[23:59:35] Global enrichment: 8 keys
+[23:59:50] Batch 1 received: 51 tickers (cumulative 51) — scoring...
+[00:00:13]   ✗ ASIANPAINT: 32.0/100 (Bull)
+[00:00:13]   ✓ BAJFINANCE: 65.5/100 (Bull)
+[00:00:13]   ✗ BHARTIARTL: 45.3/100 (Bull)
+[00:00:13]   ... +4 more in this batch
+[00:00:13] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[00:00:13]   Total tickers: 51 | fetched: 51
+[00:00:13]   Filtered out: 44
+[00:00:13]   Passed filter: 7 (7 Bull, 0 Bear)
+[00:00:13]   Scored 50.0+: 3
+[00:00:14] Grid updated: +0 new, ~7 enriched (total 7)
+[00:05:27] 
+==================================================
+[00:05:27] START STREAM SCAN | 2026-09-03 00:05:27
+[00:05:27] ==================================================
+[00:05:27] Starting scan: NIFTY 50 (51 stocks)
+[00:05:27] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[00:05:27] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[00:05:27] NSEI index loaded (497 bars)
+[00:05:27] Fetching global macro/commodity data...
+[00:05:38] Global enrichment: 8 keys
+[00:05:51] Batch 1 received: 51 tickers (cumulative 51) — scoring...
+[00:06:12]   ✗ ASIANPAINT: 34.6/100 (Bull)
+[00:06:12]   ✓ BAJFINANCE: 65.7/100 (Bull)
+[00:06:12]   ✗ BHARTIARTL: 47.3/100 (Bull)
+[00:06:12]   ... +4 more in this batch
+[00:06:12] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[00:06:12]   Total tickers: 51 | fetched: 51
+[00:06:12]   Filtered out: 44
+[00:06:12]   Passed filter: 7 (7 Bull, 0 Bear)
+[00:06:12]   Scored 50.0+: 3
+[00:06:13] Grid updated: +0 new, ~7 enriched (total 7)
+[00:09:19] 
+==================================================
+[00:09:19] START STREAM SCAN | 2026-09-03 00:09:19
+[00:09:19] ==================================================
+[00:09:19] Starting scan: NIFTY 50 (51 stocks)
+[00:09:19] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[00:09:19] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[00:09:20] NSEI index loaded (497 bars)
+[00:09:20] Fetching global macro/commodity data...
+[00:09:30] Global enrichment: 8 keys
+[00:09:43] Batch 1 received: 51 tickers (cumulative 51) — scoring...
+[00:10:05]   ✗ ASIANPAINT: 34.6/100 (Bull)
+[00:10:05]   ✓ BAJFINANCE: 65.7/100 (Bull)
+[00:10:05]   ✗ BHARTIARTL: 47.3/100 (Bull)
+[00:10:05]   ... +4 more in this batch
+[00:10:05] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[00:10:05]   Total tickers: 51 | fetched: 51
+[00:10:05]   Filtered out: 44
+[00:10:05]   Passed filter: 7 (7 Bull, 0 Bear)
+[00:10:05]   Scored 50.0+: 3
+[00:10:06] Grid updated: +0 new, ~7 enriched (total 7)
+[00:11:22] 
+==================================================
+[00:11:22] START STREAM SCAN | 2026-09-03 00:11:22
+[00:11:22] ==================================================
+[00:11:22] Starting scan: CASH MARKET (144 stocks)
+[00:11:22] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[00:11:22] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[00:11:22] NSEI index loaded (497 bars)
+[00:11:22] Fetching global macro/commodity data...
+[00:11:34] Global enrichment: 8 keys
+[00:12:11] Batch 1 received: 141 tickers (cumulative 141) — scoring...
+[00:13:14]   ✗ TATACOMM: 35.5/100 (Bull)
+[00:13:14]   ✓ BAJFINANCE: 65.7/100 (Bull)
+[00:13:14]   ✓ LALPATHLAB: 53.7/100 (Bull)
+[00:13:14]   ... +24 more in this batch
+[00:13:14] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[00:13:14]   Total tickers: 144 | fetched: 141
+[00:13:14]   Filtered out: 114
+[00:13:14]   Passed filter: 27 (27 Bull, 0 Bear)
+[00:13:14]   Scored 50.0+: 13
+[00:13:15] Grid updated: +0 new, ~27 enriched (total 27)
+[00:13:51] Fetching news sentiment for exported stocks...
+[00:13:52] HTML report saved: scanner_report_20260903_001352.html
+[00:30:42] 
+==================================================
+[00:30:42] START STREAM SCAN | 2026-09-03 00:30:42
+[00:30:42] ==================================================
+[00:30:42] Starting scan: ALL (Combined) (207 stocks)
+[00:30:42] Timeframe: Weekly | Period: 2y | Filter: Bullish Only
+[00:30:42] FastMA=HMA44 SlowMA=EMA50 RSI=14 Threshold=50.0
+[00:30:42] NSEI index loaded (497 bars)
+[00:30:42] Fetching global macro/commodity data...
+[00:30:53] Global enrichment: 8 keys
+[00:31:43] Batch 1 received: 200 tickers (cumulative 200) — scoring...
+[00:33:33]   ✓ GRINDWELL: 55.9/100 (Bull)
+[00:33:33]   ✓ GRASIM: 62.8/100 (Bull)
+[00:33:33]   ✓ ICICIBANK: 52.5/100 (Bull)
+[00:33:33]   ... +42 more in this batch
+[00:33:33] 
+━━━━━━━━━━━━━━━━━━━━━━━━━ Stream Scan Complete 
+[00:33:33]   Total tickers: 207 | fetched: 200
+[00:33:33]   Filtered out: 155
+[00:33:33]   Passed filter: 45 (45 Bull, 0 Bear)
+[00:33:33]   Scored 50.0+: 22
+[00:33:36] Grid updated: +0 new, ~45 enriched (total 45)

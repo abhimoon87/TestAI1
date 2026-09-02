@@ -7,7 +7,6 @@ import html as _html
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ def _sentiment(title: str, summary: str = "") -> str:
     return "Neutral"
 
 
-def _parse_date(date_str: str) -> Optional[datetime]:
+def _parse_date(date_str: str) -> datetime | None:
     """Parse ISO date string to datetime, return None on failure."""
     if not date_str:
         return None
@@ -220,7 +219,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         sideways = r.get('is_sideways', False)
         sideways_cls = 'sideways' if sideways else 'trending'
         sideways_reasons = _html.escape(', '.join(r.get('sideways_reasons', [])))
-        sideways_label = f'⚠ Chop' if sideways else '✓ Trend'
+        sideways_label = '⚠ Chop' if sideways else '✓ Trend'
 
         # ─── News sentiment (pre-fetched in parallel) ─────────────────────
         news_html = ""
@@ -345,50 +344,61 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_html.escape(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
     :root {{
-        --bg: #0a1a10; --surface: #0f2a1a; --surface2: #153520;
-        --border: #1a4a2a; --text: #c8d8c0; --text-dim: #6a8a6a;
-        --green: #00ff88; --lime: #aaff00; --orange: #ffaa00; --red: #ff4444;
-        --blue: #00aaff; --cyan: #00ddcc;
+        --bg: #080f0c; --surface: #0f271c; --surface2: #143323; --surface3: #1a3d2a;
+        --border: #1e4a2f; --border-light: #244a32; --text: #dff0e2; --text-dim: #6b9a7a; --text-faint: #4a6b54;
+        --green: #00e67a; --lime: #c8ff00; --orange: #ff9f1c; --red: #ff4d4d;
+        --blue: #3b9eff; --cyan: #22d3c4; --yellow: #ffd23f;
+        --radius: 12px; --radius-sm: 8px;
     }}
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: 'JetBrains Mono', 'Fira Code', monospace; background: var(--bg); color: var(--text); padding: 20px; }}
-    h1 {{ color: var(--green); font-size: 1.4em; margin-bottom: 5px; }}
-    .meta {{ color: var(--text-dim); font-size: 0.85em; margin-bottom: 15px; }}
-    .summary {{ display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap; }}
-    .stat {{ background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px 18px; }}
-    .stat .num {{ font-size: 1.8em; font-weight: bold; }}
-    .stat .label {{ color: var(--text-dim); font-size: 0.8em; margin-top: 2px; }}
-    .filters {{ margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+    body {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(1200px 600px at 0% -10%, #0a2a1c 0%, var(--bg) 55%), var(--bg); color: var(--text); padding: 24px; line-height: 1.5; min-height: 100vh; }}
+    h1 {{ font-family: 'Inter', sans-serif; color: var(--green); font-size: 1.6em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }}
+    .subtitle {{ color: var(--text-dim); font-size: 0.9em; margin-bottom: 6px; }}
+    .meta {{ color: var(--text-faint); font-size: 0.8em; margin-bottom: 18px; display: flex; gap: 12px; flex-wrap: wrap; }}
+    .meta span {{ background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; }}
+    .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }}
+    .stat {{ background: linear-gradient(180deg, var(--surface) 0%, var(--surface2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 14px; position: relative; overflow: hidden; }}
+    .stat::before {{ content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--accent, var(--green)); opacity: 0.9; }}
+    .stat.green {{ --accent: var(--green); }} .stat.lime {{ --accent: var(--lime); }} .stat.cyan {{ --accent: var(--cyan); }} .stat.orange {{ --accent: var(--orange); }} .stat.red {{ --accent: var(--red); }}
+    .stat .num {{ font-family: 'JetBrains Mono', monospace; font-size: 1.9em; font-weight: 700; line-height: 1; }}
+    .stat .label {{ color: var(--text-dim); font-size: 0.7em; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 6px; }}
+    .stat .sub {{ color: var(--text-faint); font-size: 0.7em; margin-top: 2px; }}
+    .filters {{ margin-bottom: 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); padding: 10px 12px; border-radius: var(--radius); }}
     .filters input, .filters select {{
-        background: var(--surface); border: 1px solid var(--border); color: var(--text);
-        padding: 6px 12px; border-radius: 4px; font-family: inherit; font-size: 0.85em;
+        background: var(--bg); border: 1px solid var(--border); color: var(--text);
+        padding: 8px 14px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 0.85em; transition: border-color 0.2s, box-shadow 0.2s;
     }}
-    .filters input {{ width: 250px; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 0.82em; }}
-    th {{ background: var(--surface2); color: var(--cyan); padding: 8px 6px; text-align: left;
-          border-bottom: 2px solid var(--border); cursor: pointer; user-select: none; position: sticky; top: 0; }}
-    th:hover {{ color: var(--green); }}
+    .filters input:focus, .filters select:focus {{ outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(0,230,122,0.15); }}
+    .filters input {{ width: 280px; }}
+    .table-wrap {{ background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; overflow-x: auto; }}
+    table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8em; min-width: 1100px; }}
+    th {{ background: var(--surface2); color: var(--text-dim); padding: 10px 8px; text-align: left; font-weight: 600; font-size: 0.75em; letter-spacing: 0.06em; text-transform: uppercase;
+          border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; position: sticky; top: 0; white-space: nowrap; transition: color 0.15s, background 0.15s; }}
+    th:hover {{ color: var(--green); background: var(--surface3); }}
     th.sorted-asc::after {{ content: " ▲"; color: var(--green); }}
     th.sorted-desc::after {{ content: " ▼"; color: var(--green); }}
-    td {{ padding: 6px; border-bottom: 1px solid var(--border); }}
-    tr:hover {{ background: var(--surface2); }}
-    tr.highlight {{ background: rgba(0,255,136,0.06); }}
-    .ticker {{ color: var(--green); font-weight: bold; cursor: pointer; }}
-    .ticker:hover {{ text-decoration: underline; color: #ffffff; }}
-    .score {{ font-size: 1.1em; font-weight: bold; }}
-    .score-excellent {{ color: var(--green); }}
+    td {{ padding: 9px 8px; border-bottom: 1px solid rgba(30,74,47,0.6); vertical-align: middle; }}
+    tbody tr {{ transition: background 0.15s; }}
+    tbody tr:hover {{ background: rgba(0,230,122,0.06); }}
+    tbody tr.highlight {{ background: rgba(0,230,122,0.1) !important; box-shadow: inset 3px 0 0 var(--green); }}
+    .ticker {{ color: var(--green); font-weight: 700; cursor: pointer; font-family: 'JetBrains Mono', monospace; }}
+    .ticker:hover {{ color: #fff; text-decoration: none; background: rgba(0,230,122,0.12); padding: 2px 6px; border-radius: 4px; margin: -2px -6px; }}
+    .score {{ font-family: 'JetBrains Mono', monospace; font-size: 1.15em; font-weight: 700; }}
+    .score-excellent {{ color: var(--green); text-shadow: 0 0 8px rgba(0,230,122,0.3); }}
     .score-good {{ color: var(--lime); }}
     .score-moderate {{ color: var(--orange); }}
     .score-poor {{ color: var(--red); }}
-    .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
-    .bull {{ color: var(--green); }}
-    .bear {{ color: var(--red); }}
+    .num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: 'JetBrains Mono', monospace; }}
+    .bull {{ color: var(--green); font-weight: 600; }}
+    .bear {{ color: var(--red); font-weight: 600; }}
     .bar-cell {{ white-space: nowrap; }}
-    .bar-container {{ display: inline-block; width: 45px; height: 8px; background: var(--surface);
-                      border-radius: 3px; vertical-align: middle; margin-right: 4px; }}
-    .bar {{ height: 100%; border-radius: 3px; background: var(--green); transition: width 0.3s; }}
+    .bar-container {{ display: inline-block; width: 52px; height: 6px; background: rgba(255,255,255,0.06);
+                      border-radius: 99px; vertical-align: middle; margin-right: 6px; overflow: hidden; }}
+    .bar {{ height: 100%; border-radius: 99px; background: var(--green); transition: width 0.4s cubic-bezier(0.22,1,0.36,1); }}
     .bar.mom {{ background: var(--cyan); }}
     .bar.rsi {{ background: var(--blue); }}
     .bar.macd {{ background: #aa88ff; }}
@@ -398,11 +408,11 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .sideways {{ color: var(--orange); font-weight: bold; }}
     .trending {{ color: var(--green); font-weight: bold; }}
     .bar-val {{ color: var(--text-dim); font-size: 0.9em; }}
-    .badge {{ padding: 2px 8px; border-radius: 3px; font-size: 0.75em; font-weight: bold; }}
-    .badge.excellent {{ background: rgba(0,255,136,0.15); color: var(--green); }}
-    .badge.good {{ background: rgba(170,255,0,0.15); color: var(--lime); }}
-    .badge.moderate {{ background: rgba(255,170,0,0.15); color: var(--orange); }}
-    .badge.poor {{ background: rgba(255,68,68,0.15); color: var(--red); }}
+    .badge {{ padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid transparent; }}
+    .badge.excellent {{ background: rgba(0,230,122,0.15); color: var(--green); border-color: rgba(0,230,122,0.25); }}
+    .badge.good {{ background: rgba(200,255,0,0.12); color: var(--lime); border-color: rgba(200,255,0,0.2); }}
+    .badge.moderate {{ background: rgba(255,159,28,0.12); color: var(--orange); border-color: rgba(255,159,28,0.2); }}
+    .badge.poor {{ background: rgba(255,77,77,0.1); color: var(--red); border-color: rgba(255,77,77,0.18); }}
     .ma-cross {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
     .ma-bull {{ color: #aaff00; font-weight: bold; font-size: 0.9em; }}
     .ma-bear {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
@@ -454,25 +464,35 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 </head>
 <body>
 
-<h1>📊 {_html.escape(title)}</h1>
-<div class="meta">Scanned: {now} &nbsp;|&nbsp; Threshold: {threshold}+ &nbsp;|&nbsp; Total stocks: {len(results)}</div>
+<div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
+  <div style="width:38px; height:38px; background: linear-gradient(135deg, var(--green), var(--cyan)); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">◈</div>
+  <div>
+    <h1 style="margin:0;">{_html.escape(title)}</h1>
+    <div class="subtitle">HMA × EMA Swing System — 10-factor score · Volume Profile · News Sentiment</div>
+  </div>
+</div>
+<div class="meta"><span>⏱ {now}</span><span>🎯 Threshold {threshold}+</span><span>📦 {len(results)} total</span><span>⚡ Generated locally</span></div>
 
 <div class="summary">
-    <div class="stat">
-        <div class="num" style="color: var(--green)">{len(passed)}</div>
-        <div class="label">Passed ({threshold}+)</div>
+    <div class="stat green">
+        <div class="num">{len(passed)}</div>
+        <div class="label">Passed · {threshold}+</div>
+        <div class="sub">{len(passed)/max(len(results),1)*100:.0f}% hit rate</div>
     </div>
-    <div class="stat">
-        <div class="num" style="color: var(--red)">{len(failed)}</div>
+    <div class="stat red">
+        <div class="num">{len(failed)}</div>
         <div class="label">Below threshold</div>
+        <div class="sub">filtered out</div>
     </div>
-    <div class="stat">
-        <div class="num" style="color: var(--cyan)">{len(results)}</div>
+    <div class="stat cyan">
+        <div class="num">{len(results)}</div>
         <div class="label">Total scanned</div>
+        <div class="sub">{len({r.get('ticker','')[:3] for r in results})} sectors</div>
     </div>
-    <div class="stat">
-        <div class="num" style="color: var(--lime)">{passed[0]['total'] if passed else 0:.1f}</div>
+    <div class="stat lime">
+        <div class="num">{passed[0]['total'] if passed else 0:.0f}</div>
         <div class="label">Highest score</div>
+        <div class="sub">{passed[0]['ticker'] if passed else '—'}</div>
     </div>
 </div>
 
@@ -505,6 +525,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     </select>
 </div>
 
+<div class="table-wrap">
 <table id="stockTable">
 <thead>
 <tr>
@@ -534,6 +555,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 {rows_html}
 </tbody>
 </table>
+</div>
 
 <div class="footer">
     Generated by HMAxEMA Stock Scanner &nbsp;|&nbsp; Scoring engine mirrors the Pine Script indicator<br>
@@ -545,7 +567,7 @@ let sortDir = {{}};
 function sortTable(col) {{
     const table = document.getElementById("stockTable");
     const tbody = table.tBodies[0];
-    const rows = Array.from(tbody.rows);
+    const allRows = Array.from(tbody.rows);
     const th = table.tHead.rows[0].cells[col];
 
     sortDir[col] = sortDir[col] === "asc" ? "desc" : "asc";
@@ -556,20 +578,48 @@ function sortTable(col) {{
     }}
     th.classList.add(dir === "asc" ? "sorted-asc" : "sorted-desc");
 
-    rows.sort((a, b) => {{
-        let aVal = a.cells[col].textContent.trim();
-        let bVal = b.cells[col].textContent.trim();
+    // Build pairs: each data row + its following news row (if any) - keep them together
+    const pairs = [];
+    for (let i = 0; i < allRows.length; i++) {{
+        const row = allRows[i];
+        if (row.classList.contains("news-row")) continue;
+        const newsRow = (i + 1 < allRows.length && allRows[i + 1].classList.contains("news-row")) ? allRows[i + 1] : null;
+        pairs.push({{dataRow: row, newsRow: newsRow}});
+        if (newsRow) i++;
+    }}
+
+    const ratingOrder = {{"EXCELLENT":4,"GOOD":3,"MODERATE":2,"POOR":1}};
+
+    pairs.sort((a, b) => {{
+        let aCell = a.dataRow.cells[col];
+        let bCell = b.dataRow.cells[col];
+        let aVal = aCell ? aCell.textContent.trim() : "";
+        let bVal = bCell ? bCell.textContent.trim() : "";
         let aText = aVal.replace(/<[^>]*>/g, "").trim();
         let bText = bVal.replace(/<[^>]*>/g, "").trim();
-        let aNum = parseFloat(aText.replace(/[+%]/g, ""));
-        let bNum = parseFloat(bText.replace(/[+%]/g, ""));
-        if (!isNaN(aNum) && !isNaN(bNum)) {{
+
+        // Rating column (2) — custom order, not alphabetical
+        if (col === 2) {{
+            let aR = ratingOrder[aText.toUpperCase()] || 0;
+            let bR = ratingOrder[bText.toUpperCase()] || 0;
+            return dir === "asc" ? aR - bR : bR - aR;
+        }}
+
+        let aNum = parseFloat(aText.replace(/[^0-9.\\-]/g, ""));
+        let bNum = parseFloat(bText.replace(/[^0-9.\\-]/g, ""));
+        let aIsNum = !isNaN(aNum) && /[0-9]/.test(aText);
+        let bIsNum = !isNaN(bNum) && /[0-9]/.test(bText);
+        if (aIsNum && bIsNum) {{
             return dir === "asc" ? aNum - bNum : bNum - aNum;
         }}
         return dir === "asc" ? aText.localeCompare(bText) : bText.localeCompare(aText);
     }});
 
-    rows.forEach(row => tbody.appendChild(row));
+    // Re-append in sorted order, keeping news rows attached to their parent
+    pairs.forEach(p => {{
+        tbody.appendChild(p.dataRow);
+        if (p.newsRow) tbody.appendChild(p.newsRow);
+    }});
 }}
 
 function toggleNews(tickerId) {{

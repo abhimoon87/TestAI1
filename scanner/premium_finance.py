@@ -17,7 +17,6 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 
@@ -29,7 +28,7 @@ _PREMIUM_CACHE: dict[str, tuple[dict, float]] = {}
 _PREMIUM_CACHE_TTL = 6 * 3600  # 6 hours
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _PREMIUM_CACHE:
         result, ts = _PREMIUM_CACHE[key]
         if time.time() - ts < _PREMIUM_CACHE_TTL:
@@ -60,8 +59,8 @@ class MarketstackData:
 
 def fetch_marketstack_data(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[MarketstackData]:
+    api_key: str | None = None,
+) -> MarketstackData | None:
     """
     Fetch real-time market data from Marketstack (requires API key).
     
@@ -75,7 +74,7 @@ def fetch_marketstack_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"marketstack:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"marketstack:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return MarketstackData(**cached, cached=True)
@@ -134,18 +133,18 @@ class EODData:
     """Historical market data from EOD."""
     ticker: str
     current_price: float
-    pe_ratio: Optional[float] = None
-    pb_ratio: Optional[float] = None
-    eps: Optional[float] = None
-    dividend_yield: Optional[float] = None
-    market_cap: Optional[float] = None
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    eps: float | None = None
+    dividend_yield: float | None = None
+    market_cap: float | None = None
     cached: bool = False
 
 
 def fetch_eod_data(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[EODData]:
+    api_key: str | None = None,
+) -> EODData | None:
     """
     Fetch historical market data from EOD (requires API key).
     
@@ -159,7 +158,7 @@ def fetch_eod_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"eod:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"eod:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return EODData(**cached, cached=True)
@@ -208,24 +207,24 @@ def fetch_eod_data(
 class FMPData:
     """Financial data from Financial Modeling Prep."""
     ticker: str
-    pe_ratio: Optional[float] = None
-    pb_ratio: Optional[float] = None
-    eps: Optional[float] = None
-    roe: Optional[float] = None
-    roa: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    current_ratio: Optional[float] = None
-    revenue_growth: Optional[float] = None
-    earnings_growth: Optional[float] = None
-    profit_margin: Optional[float] = None
-    market_cap: Optional[float] = None
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    eps: float | None = None
+    roe: float | None = None
+    roa: float | None = None
+    debt_to_equity: float | None = None
+    current_ratio: float | None = None
+    revenue_growth: float | None = None
+    earnings_growth: float | None = None
+    profit_margin: float | None = None
+    market_cap: float | None = None
     cached: bool = False
 
 
 def fetch_fmp_data(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[FMPData]:
+    api_key: str | None = None,
+) -> FMPData | None:
     """
     Fetch financial data from Financial Modeling Prep (requires API key).
     
@@ -239,7 +238,7 @@ def fetch_fmp_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"fmp:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"fmp:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return FMPData(**cached, cached=True)
@@ -292,17 +291,17 @@ class IEXData:
     change: float
     change_pct: float
     volume: int
-    market_cap: Optional[float] = None
-    pe_ratio: Optional[float] = None
-    week52_high: Optional[float] = None
-    week52_low: Optional[float] = None
+    market_cap: float | None = None
+    pe_ratio: float | None = None
+    week52_high: float | None = None
+    week52_low: float | None = None
     cached: bool = False
 
 
 def fetch_iex_data(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[IEXData]:
+    api_key: str | None = None,
+) -> IEXData | None:
     """
     Fetch market data from IEX Cloud (requires API key).
     
@@ -316,7 +315,7 @@ def fetch_iex_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"iex:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"iex:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return IEXData(**cached, cached=True)
@@ -379,9 +378,9 @@ class PolygonData:
 
 def fetch_polygon_data(
     ticker: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     days: int = 1,
-) -> Optional[list[PolygonData]]:
+) -> list[PolygonData] | None:
     """
     Fetch historical data from Polygon (requires API key).
     
@@ -396,7 +395,7 @@ def fetch_polygon_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"polygon:{ticker}:{days}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"polygon:{ticker}:{days}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return [PolygonData(**item) for item in cached.get("bars", [])]
@@ -455,8 +454,8 @@ class StockDataNews:
 
 def fetch_stockdata_news(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[StockDataNews]:
+    api_key: str | None = None,
+) -> StockDataNews | None:
     """
     Fetch news + sentiment from StockData (requires API key).
     
@@ -470,13 +469,13 @@ def fetch_stockdata_news(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"stockdata:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"stockdata:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return StockDataNews(**cached, cached=True)
 
     try:
-        url = f"https://stockdata.org/api/v1/news"
+        url = "https://stockdata.org/api/v1/news"
         params = {"ticker": ticker, "api_token": api_key}
 
         resp = requests.get(url, params=params, timeout=10)
@@ -526,8 +525,8 @@ class StyvioData:
 
 def fetch_styvio_data(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[StyvioData]:
+    api_key: str | None = None,
+) -> StyvioData | None:
     """
     Fetch stock sentiment from Styvio (requires API key).
     
@@ -541,7 +540,7 @@ def fetch_styvio_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"styvio:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"styvio:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return StyvioData(**cached, cached=True)
@@ -584,14 +583,14 @@ class ShariahData:
     is_shariah_compliant: bool
     screening_method: str
     purification_required: bool
-    zakat_amount: Optional[float] = None
+    zakat_amount: float | None = None
     cached: bool = False
 
 
 def fetch_shariah_data(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[ShariahData]:
+    api_key: str | None = None,
+) -> ShariahData | None:
     """
     Fetch Shariah compliance data from Halal Terminal (requires API key).
     
@@ -605,7 +604,7 @@ def fetch_shariah_data(
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"shariah:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"shariah:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return ShariahData(**cached, cached=True)
@@ -645,7 +644,7 @@ def fetch_shariah_data(
 
 def fetch_premium_finance(
     ticker: str,
-    api_keys: Optional[dict] = None,
+    api_keys: dict | None = None,
 ) -> dict:
     """
     Fetch all premium finance data for a ticker.

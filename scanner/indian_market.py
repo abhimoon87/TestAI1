@@ -7,11 +7,8 @@ All data is fetched without API keys using nselib or direct NSE API calls.
 import hashlib
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
-import numpy as np
-import pandas as pd
 import requests
 
 logger = logging.getLogger(__name__)
@@ -22,7 +19,7 @@ _INDIA_CACHE: dict[str, tuple[dict, float]] = {}
 _INDIA_CACHE_TTL = 4 * 3600  # 4 hours
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _INDIA_CACHE:
         result, ts = _INDIA_CACHE[key]
         if time.time() - ts < _INDIA_CACHE_TTL:
@@ -48,7 +45,7 @@ class DeliveryData:
     cached: bool = False
 
 
-def fetch_delivery_data(ticker: str, days: int = 5) -> Optional[DeliveryData]:
+def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
     """
     Fetch delivery volume data from NSE (free, no API key).
     
@@ -61,16 +58,16 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> Optional[DeliveryData]:
     Returns:
         DeliveryData or None
     """
-    cache_k = hashlib.md5(f"delivery:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"delivery:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return DeliveryData(**cached, cached=True)
 
     try:
-        from nselib import capital_market
-        
         # Fetch price volume and deliverable position data
         from datetime import date, timedelta
+
+        from nselib import capital_market
         end = date.today()
         start = end - timedelta(days=days + 5)  # Extra days for buffer
         
@@ -164,7 +161,7 @@ class FIIDIIActivity:
     cached: bool = False
 
 
-def fetch_fii_dii_activity(days: int = 5) -> Optional[FIIDIIActivity]:
+def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
     """
     Fetch FII/DII activity from NSE (free, no API key).
     
@@ -174,7 +171,7 @@ def fetch_fii_dii_activity(days: int = 5) -> Optional[FIIDIIActivity]:
     Returns:
         FIIDIIActivity or None
     """
-    cache_k = hashlib.md5("fii_dii:activity".encode()).hexdigest()
+    cache_k = hashlib.md5(b"fii_dii:activity", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return FIIDIIActivity(**cached, cached=True)
@@ -257,7 +254,7 @@ class Week52Data:
     cached: bool = False
 
 
-def fetch_52week_data(ticker: str) -> Optional[Week52Data]:
+def fetch_52week_data(ticker: str) -> Week52Data | None:
     """
     Fetch 52-week high/low data from Yahoo Finance (free, no API key).
     
@@ -267,7 +264,7 @@ def fetch_52week_data(ticker: str) -> Optional[Week52Data]:
     Returns:
         Week52Data or None
     """
-    cache_k = hashlib.md5(f"52week:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"52week:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return Week52Data(**cached, cached=True)
@@ -354,7 +351,7 @@ class IndustryPEData:
     cached: bool = False
 
 
-def fetch_industry_pe(ticker: str) -> Optional[IndustryPEData]:
+def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
     """
     Fetch industry PE comparison from NSE (free, no API key).
     
@@ -364,7 +361,7 @@ def fetch_industry_pe(ticker: str) -> Optional[IndustryPEData]:
     Returns:
         IndustryPEData or None
     """
-    cache_k = hashlib.md5(f"industry_pe:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"industry_pe:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return IndustryPEData(**cached, cached=True)
@@ -437,9 +434,9 @@ class MandiPrice:
 
 
 def fetch_mandi_prices(
-    commodity: Optional[str] = None,
-    state: Optional[str] = None,
-) -> Optional[list[MandiPrice]]:
+    commodity: str | None = None,
+    state: str | None = None,
+) -> list[MandiPrice] | None:
     """
     Fetch commodity prices from Indian mandi (free, no key).
     Useful for agri-sector stocks (sugar, cotton, spices, etc.).
@@ -451,7 +448,7 @@ def fetch_mandi_prices(
     Returns:
         List of MandiPrice or None
     """
-    cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode(), usedforsecurity=False).hexdigest()
     cached = _INDIA_CACHE.get(cache_k)
     if cached:
         result, ts = cached
@@ -527,12 +524,12 @@ class PincodeData:
     office_name: str
     district: str
     state: str
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: float | None = None
+    longitude: float | None = None
     cached: bool = False
 
 
-def fetch_pincode_data(pincode: int) -> Optional[list[PincodeData]]:
+def fetch_pincode_data(pincode: int) -> list[PincodeData] | None:
     """
     Fetch Indian pincode data (free, no key).
     
@@ -542,7 +539,7 @@ def fetch_pincode_data(pincode: int) -> Optional[list[PincodeData]]:
     Returns:
         List of PincodeData or None
     """
-    cache_k = hashlib.md5(f"pincode:{pincode}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"pincode:{pincode}".encode(), usedforsecurity=False).hexdigest()
     cached = _INDIA_CACHE.get(cache_k)
     if cached:
         result, ts = cached

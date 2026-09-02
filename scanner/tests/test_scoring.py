@@ -11,17 +11,15 @@ Tests cover:
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from scanner.scoring import (
+    _get_combined_rating,
+    check_filter,
+    compute_scores,
+    get_direction,
     get_ma,
     to_weekly,
-    check_filter,
-    get_direction,
-    compute_scores,
-    _get_combined_rating,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # get_ma — MA type dispatch

@@ -11,27 +11,25 @@ import math
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from scanner.indicators import (
     _wma_vectorized,
-    hull_ma,
-    ema,
-    sma,
-    vwma,
-    kama,
-    rsi,
-    macd,
-    stochastic,
-    obv,
-    atr,
     adx,
-    price_change,
+    atr,
+    ema,
     highest,
+    hull_ma,
+    kama,
     lowest,
+    macd,
+    obv,
+    price_change,
+    rsi,
+    sma,
+    stochastic,
     volume_profile_poc,
+    vwma,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Moving Averages
@@ -366,7 +364,7 @@ class TestPriceChange:
     def test_known_values(self):
         s = pd.Series([100.0, 110.0, 121.0])
         result = price_change(s, 1)
-        assert result.iloc[0] is np.nan or np.isnan(result.iloc[0])
+        assert np.isnan(result.iloc[0])
         np.testing.assert_allclose(result.iloc[1], 10.0, atol=1e-10)
         np.testing.assert_allclose(result.iloc[2], 10.0, atol=1e-10)
 

@@ -8,7 +8,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 
@@ -20,7 +19,7 @@ _INSIDER_CACHE: dict[str, tuple[dict, float]] = {}
 _INSIDER_CACHE_TTL = 6 * 3600  # 6 hours
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _INSIDER_CACHE:
         result, ts = _INSIDER_CACHE[key]
         if time.time() - ts < _INSIDER_CACHE_TTL:
@@ -63,9 +62,9 @@ class AletheiaInsider:
 
 def fetch_aletheia_insider(
     ticker: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     days: int = 90,
-) -> Optional[AletheiaInsider]:
+) -> AletheiaInsider | None:
     """
     Fetch insider trading data from Aletheia.
     
@@ -82,7 +81,7 @@ def fetch_aletheia_insider(
         logger.debug("Aletheia: no API key, skipping")
         return None
 
-    cache_k = hashlib.md5(f"aletheia:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"aletheia:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return AletheiaInsider(**cached, cached=True)
@@ -210,8 +209,8 @@ class CongressInvestsData:
 
 def fetch_congress_invests(
     ticker: str,
-    api_key: Optional[str] = None,
-) -> Optional[CongressInvestsData]:
+    api_key: str | None = None,
+) -> CongressInvestsData | None:
     """
     Fetch congressional stock trade data from CongressInvests.
     
@@ -227,7 +226,7 @@ def fetch_congress_invests(
         logger.debug("CongressInvests: no API key, skipping")
         return None
 
-    cache_k = hashlib.md5(f"congress:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"congress:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return CongressInvestsData(**cached, cached=True)
@@ -337,8 +336,8 @@ class SECEdgData:
 
 def fetch_sec_edgar(
     ticker: str,
-    company_name: Optional[str] = None,
-) -> Optional[SECEdgData]:
+    company_name: str | None = None,
+) -> SECEdgData | None:
     """
     Fetch SEC EDGAR data (free, no API key).
     Only works for US-listed Indian companies (e.g., INFY, WIT, HDB).
@@ -350,7 +349,7 @@ def fetch_sec_edgar(
     Returns:
         SECEdgData or None
     """
-    cache_k = hashlib.md5(f"sec_edgar:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"sec_edgar:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return SECEdgData(**cached, cached=True)
@@ -362,9 +361,7 @@ def fetch_sec_edgar(
 
     try:
         # Step 1: Find CIK by ticker
-        url = f"https://efts.sec.gov/LATEST/search-index?q=%22{symbol}%22&dateRange=custom&startdt=2024-01-01&enddt=2026-12-31&forms=10-K,10-Q,8-K,4"
         # Use the full-text search API
-        search_url = "https://efts.sec.gov/LATEST/search-index"
         
         # Alternative: Use company tickers endpoint
         tickers_url = "https://www.sec.gov/files/company_tickers.json"
@@ -374,10 +371,9 @@ def fetch_sec_edgar(
 
         cik = None
         for item in tickers_data.values() if isinstance(tickers_data, dict) else tickers_data:
-            if isinstance(item, dict):
-                if item.get("ticker", "").upper() == symbol.upper():
-                    cik = str(item.get("cik_str", "")).zfill(10)
-                    break
+            if isinstance(item, dict) and item.get("ticker", "").upper() == symbol.upper():
+                cik = str(item.get("cik_str", "")).zfill(10)
+                break
 
         if not cik:
             logger.debug("SEC EDGAR: no CIK found for %s", symbol)
@@ -477,9 +473,9 @@ def fetch_sec_edgar(
 
 def fetch_insider_data(
     ticker: str,
-    aletheia_key: Optional[str] = None,
-    congress_key: Optional[str] = None,
-    company_name: Optional[str] = None,
+    aletheia_key: str | None = None,
+    congress_key: str | None = None,
+    company_name: str | None = None,
 ) -> dict:
     """
     Fetch insider + institutional data from multiple sources.

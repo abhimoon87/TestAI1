@@ -13,23 +13,36 @@ Refactored into composable helpers:
 
 from __future__ import annotations
 
-from typing import Optional
+import math
 
 import numpy as np
 import pandas as pd
-import math
-from .indicators import (
-    hull_ma, ema, sma, vwma, kama, rsi, macd, stochastic,
-    obv, atr, adx, price_change, highest, lowest, volume_profile_poc
-)
 
+from .indicators import (
+    adx,
+    atr,
+    ema,
+    highest,
+    hull_ma,
+    kama,
+    lowest,
+    macd,
+    obv,
+    price_change,
+    rsi,
+    sma,
+    stochastic,
+    volume_profile_poc,
+    vwma,
+)
+from .trace import trace
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MOVING AVERAGE SELECTOR
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_ma(ma_type: str, src: pd.Series, length: int,
-           volume: Optional[pd.Series] = None) -> pd.Series:
+           volume: pd.Series | None = None) -> pd.Series:
     """Universal MA selector matching the Pine Script get_ma function."""
     if ma_type == "HMA":
         return hull_ma(src, length)
@@ -50,7 +63,7 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
 # WEEKLY RESAMPLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def to_weekly(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
     """
     Resample an OHLCV DataFrame to weekly bars.
 
@@ -105,14 +118,13 @@ def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
         fc, fp = fast_ma.iloc[ic], fast_ma.iloc[ip]
         sc, sp = slow_ma.iloc[ic], slow_ma.iloc[ip]
         if (not np.isnan(fc) and not np.isnan(fp) and
-                not np.isnan(sc) and not np.isnan(sp)):
-            if fc > sc and fp <= sp:
-                result["count"] += 1
-                result["dates"].append(i)
-                if not result["crossed"]:
-                    result["crossed"] = True
-                    result["bars_ago"] = i
-                    result["level"] = float(sc)
+                not np.isnan(sc) and not np.isnan(sp)) and fc > sc and fp <= sp:
+            result["count"] += 1
+            result["dates"].append(i)
+            if not result["crossed"]:
+                result["crossed"] = True
+                result["bars_ago"] = i
+                result["level"] = float(sc)
 
     return result
 
@@ -124,7 +136,7 @@ def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
 def check_filter(df: pd.DataFrame,
                  fast_ma_type: str = "HMA", fast_ma_len: int = 40,
                  slow_ma_type: str = "EMA", slow_ma_len: int = 50,
-                 crossover_lookback: int = 20) -> Optional[dict]:
+                 crossover_lookback: int = 20) -> dict | None:
     """
     Model 1 — Stock Filter.
 
@@ -171,7 +183,7 @@ def check_filter(df: pd.DataFrame,
 # MODEL 2: BULLISH / BEARISH
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_direction(filter_result: Optional[dict]) -> Optional[str]:
+def get_direction(filter_result: dict | None) -> str | None:
     """
     Model 2 — Bullish / Bearish classification.
 
@@ -466,7 +478,7 @@ def _score_volume(curr: dict) -> float:
 
 
 def _score_relative_strength(curr: dict, close: pd.Series,
-                             index_df: Optional[pd.DataFrame],
+                             index_df: pd.DataFrame | None,
                              rs_length: int) -> float:
     """Category 8: RELATIVE STRENGTH (max 10 pts)."""
     s = 0.0
@@ -598,16 +610,7 @@ def _get_combined_rating(total_score: float, ma_bullish: bool,
             return "MODERATE"
         else:
             return "POOR"
-    elif ma_bullish:
-        if total_score >= 70:
-            return "EXCELLENT"
-        elif total_score >= 55:
-            return "GOOD"
-        elif total_score >= 40:
-            return "MODERATE"
-        else:
-            return "POOR"
-    elif above_poc:
+    elif ma_bullish or above_poc:
         if total_score >= 70:
             return "EXCELLENT"
         elif total_score >= 55:
@@ -631,9 +634,10 @@ def _get_combined_rating(total_score: float, ma_bullish: bool,
 # MODEL 3: SCORE ORCHESTRATOR
 # ══════════════════════════════════════════════════════════════════════════════
 
+@trace(level=5, log_args=False)
 def compute_scores(df: pd.DataFrame, timeframe: str = "D",
-                   index_df: Optional[pd.DataFrame] = None,
-                   settings: Optional[dict] = None) -> Optional[dict]:
+                   index_df: pd.DataFrame | None = None,
+                   settings: dict | None = None) -> dict | None:
     """
     Compute the 10-category score for a stock.
 
@@ -667,12 +671,16 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     high = ind["high"]
     low = ind["low"]
     volume = ind["volume"]
-    vp_lookback = settings.get("vp_lookback", 200)
-    vp_bars = max(int(vp_lookback), 10)
-    vp_bars = min(vp_bars, len(df))
-    vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
-    curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
-    curr["above_poc"] = curr["close"] >= curr["vp_poc"]
+    if settings.get("_skip_vp") or settings.get("skip_volume_profile"):
+        curr["vp_poc"] = close.iloc[-1]
+        curr["above_poc"] = True
+    else:
+        vp_lookback = settings.get("vp_lookback", 200)
+        vp_bars = max(int(vp_lookback), 10)
+        vp_bars = min(vp_bars, len(df))
+        vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
+        curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+        curr["above_poc"] = curr["close"] >= curr["vp_poc"]
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
     curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
 

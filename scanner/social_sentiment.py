@@ -9,7 +9,6 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 
@@ -37,7 +36,7 @@ _SOCIAL_CACHE: dict[str, tuple[dict, float]] = {}
 _SOCIAL_CACHE_TTL = 4 * 3600  # 4 hours
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _SOCIAL_CACHE:
         result, ts = _SOCIAL_CACHE[key]
         if time.time() - ts < _SOCIAL_CACHE_TTL:
@@ -81,9 +80,9 @@ class RedditSentiment:
 
 def fetch_reddit_sentiment(
     ticker: str,
-    subreddits: Optional[list[str]] = None,
+    subreddits: list[str] | None = None,
     limit: int = 25,
-) -> Optional[RedditSentiment]:
+) -> RedditSentiment | None:
     """
     Fetch Reddit sentiment for a ticker.
     Uses Reddit's public JSON API (no auth required for read).
@@ -99,16 +98,13 @@ def fetch_reddit_sentiment(
     if subreddits is None:
         subreddits = [
             "IndianStreetBets",
-            "IndianStockMarket",
             "stocks",
-            "wallstreetbets",
-            "investing",
         ]
 
     # Strip suffixes for Reddit search
     symbol = ticker.replace(".NS", "").replace(".BO", "")
 
-    cache_k = hashlib.md5(f"reddit:{symbol}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"reddit:{symbol}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return RedditSentiment(**cached, cached=True)
@@ -123,9 +119,13 @@ def fetch_reddit_sentiment(
         "Accept": "application/json",
     }
 
-    for sub in subreddits:
+    # Parallel fetch from all subreddits simultaneously
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _search_subreddit(sub):
+        """Search a single subreddit and return posts."""
+        posts = []
         try:
-            # Use Reddit's public API with oauth-free endpoint
             url = f"https://www.reddit.com/r/{sub}/search.json"
             params = {
                 "q": symbol,
@@ -135,41 +135,40 @@ def fetch_reddit_sentiment(
                 "limit": limit,
             }
             resp = requests.get(url, headers=headers, params=params, timeout=15)
-            if resp.status_code == 429:
-                logger.debug("Reddit rate limited for r/%s", sub)
-                time.sleep(3)
-                continue
-            if resp.status_code == 403:
-                logger.debug("Reddit blocked r/%s (403)", sub)
-                continue
+            if resp.status_code in (429, 403):
+                return posts
             resp.raise_for_status()
             data = resp.json()
-
-            posts = data.get("data", {}).get("children", [])
-            for post in posts:
+            for post in data.get("data", {}).get("children", []):
                 p_data = post.get("data", {})
                 title = p_data.get("title", "")
                 selftext = p_data.get("selftext", "")[:500]
                 text = f"{title} {selftext}"
                 score = _social_sentiment(text)
-
-                sentiments.append(score)
-                if score > 0.1:
-                    bullish += 1
-                elif score < -0.1:
-                    bearish += 1
-
-                all_posts.append({
+                posts.append({
                     "title": title[:120],
                     "score": p_data.get("score", 0),
                     "url": f"https://reddit.com{p_data.get('permalink', '')}",
                     "subreddit": sub,
                     "sentiment": round(score, 3),
+                    "raw_score": score,
                 })
-
         except (requests.RequestException, KeyError, ValueError) as e:
             logger.debug("Reddit search failed for r/%s: %s", sub, e)
-            continue
+        return posts
+
+    # Run all subreddit searches in parallel (2 workers for 2 subs)
+    with ThreadPoolExecutor(max_workers=min(2, len(subreddits))) as executor:
+        futures = {executor.submit(_search_subreddit, sub): sub for sub in subreddits}
+        for future in as_completed(futures):
+            for post in future.result():
+                score = post.pop("raw_score")
+                sentiments.append(score)
+                if score > 0.1:
+                    bullish += 1
+                elif score < -0.1:
+                    bearish += 1
+                all_posts.append(post)
 
     if not sentiments:
         return RedditSentiment(
@@ -194,7 +193,7 @@ def fetch_reddit_sentiment(
         bullish_pct=round(bull_pct, 3),
         bearish_pct=round(bear_pct, 3),
         top_posts=top,
-        subreddits=list(set(p["subreddit"] for p in all_posts)),
+        subreddits=list({p["subreddit"] for p in all_posts}),
         cached=False,
     )
 
@@ -227,9 +226,9 @@ class TwitterSentiment:
 
 def fetch_twitter_sentiment(
     ticker: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     max_results: int = 20,
-) -> Optional[TwitterSentiment]:
+) -> TwitterSentiment | None:
     """
     Fetch Twitter/X sentiment for a ticker.
     Uses GetXAPI or TweetAPI (third-party Twitter data providers).
@@ -249,7 +248,7 @@ def fetch_twitter_sentiment(
 
     symbol = ticker.replace(".NS", "").replace(".BO", "")
 
-    cache_k = hashlib.md5(f"twitter:{symbol}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"twitter:{symbol}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return TwitterSentiment(**cached, cached=True)
@@ -332,8 +331,8 @@ def fetch_twitter_sentiment(
 
 def fetch_social_sentiment(
     ticker: str,
-    twitter_api_key: Optional[str] = None,
-    subreddits: Optional[list[str]] = None,
+    twitter_api_key: str | None = None,
+    subreddits: list[str] | None = None,
 ) -> dict:
     """
     Fetch social sentiment from Reddit + Twitter with fallback.

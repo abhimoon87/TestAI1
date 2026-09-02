@@ -3,10 +3,10 @@ API Key Setup Script for HMAxEMA Scanner
 Helps you configure Finnhub and Alpha Vantage API keys for enhanced data.
 """
 
+import json
 import logging
 import os
 import sys
-import json
 from pathlib import Path
 
 logger = logging.getLogger(__name__)

@@ -8,19 +8,15 @@ Run with:  pytest scanner/tests/test_integration.py -v
 Skip with: pytest scanner/tests/ -v -m "not integration"
 """
 
-import numpy as np
-import pandas as pd
 import pytest
 
 from scanner.data_fetcher import (
     fetch_batch_yfinance,
-    fetch_index_data,
     fetch_fundamentals,
+    fetch_index_data,
     resample_ohlcv,
-    _extend_period_for_timeframe,
 )
-from scanner.scoring import compute_scores, check_filter, get_direction
-
+from scanner.scoring import check_filter, compute_scores, get_direction
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
@@ -48,7 +44,7 @@ class TestFetchRealData:
     def test_batch_download_columns(self):
         """Each DataFrame should have the expected columns."""
         result = fetch_batch_yfinance(SMOKE_STOCKS, period="1y")
-        for ticker, df in result.items():
+        for df in result.values():
             assert list(df.columns) == ["open", "high", "low", "close", "volume"]
 
     def test_batch_download_min_bars(self):
@@ -109,7 +105,7 @@ class TestResampleRealData:
     def test_weekly_resample(self):
         """Daily data should resample to weekly without errors."""
         result = fetch_batch_yfinance(SMOKE_STOCKS, period="1y")
-        for ticker, df in result.items():
+        for df in result.values():
             weekly = resample_ohlcv(df, "W")
             assert weekly is not None
             assert len(weekly) < len(df)
@@ -118,7 +114,7 @@ class TestResampleRealData:
     def test_monthly_resample(self):
         """Daily data should resample to monthly without errors."""
         result = fetch_batch_yfinance(SMOKE_STOCKS, period="5y")
-        for ticker, df in result.items():
+        for df in result.values():
             monthly = resample_ohlcv(df, "M")
             assert monthly is not None
             assert len(monthly) < len(df)
@@ -126,7 +122,7 @@ class TestResampleRealData:
     def test_weekly_ohlc_integrity(self):
         """Weekly OHLC should be consistent: high >= open, close; low <= open, close."""
         result = fetch_batch_yfinance(SMOKE_STOCKS, period="1y")
-        for ticker, df in result.items():
+        for df in result.values():
             weekly = resample_ohlcv(df, "W")
             assert (weekly["high"] >= weekly["open"]).all()
             assert (weekly["high"] >= weekly["close"]).all()
@@ -154,7 +150,7 @@ class TestScoringRealData:
 
     def test_compute_scores_returns_dict(self, real_stock_data, real_index_data):
         """compute_scores should return a result dict for real data."""
-        for ticker, df in real_stock_data.items():
+        for df in real_stock_data.values():
             result = compute_scores(df, timeframe="D", index_df=real_index_data)
             # May return None for some stocks (insufficient data), that's OK
             if result is not None:
@@ -203,7 +199,7 @@ class TestScoringRealData:
 
     def test_entry_signal_is_bool(self, real_stock_data, real_index_data):
         """entry_signal should be a boolean."""
-        for ticker, df in real_stock_data.items():
+        for df in real_stock_data.values():
             result = compute_scores(df, timeframe="D", index_df=real_index_data)
             if result is not None:
                 assert isinstance(result["entry_signal"], bool)
@@ -217,7 +213,7 @@ class TestScoringRealData:
             "crossover_lookback": 20,
         }
         passed = 0
-        for ticker, df in real_stock_data.items():
+        for df in real_stock_data.values():
             filter_result = check_filter(
                 df, fast_ma_type="HMA", fast_ma_len=44,
                 slow_ma_type="EMA", slow_ma_len=30,
@@ -241,7 +237,7 @@ class TestScoringRealData:
 
     def test_weekly_timeframe(self, real_stock_data, real_index_data):
         """Scoring should work with weekly timeframe."""
-        for ticker, df in real_stock_data.items():
+        for df in real_stock_data.values():
             result = compute_scores(df, timeframe="W", index_df=real_index_data)
             if result is not None:
                 assert 0 <= result["total"] <= 100

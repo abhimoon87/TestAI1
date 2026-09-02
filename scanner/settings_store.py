@@ -8,7 +8,6 @@ defaults that mirror the Pine Script indicator inputs.
 import json
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -251,17 +250,7 @@ def load_api_config() -> dict:
     return config
 
 
-def save_api_config(config: dict):
-    """Save API keys to config file."""
-    try:
-        with open(API_CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
-        logger.debug("API config saved to %s", API_CONFIG_FILE)
-    except Exception as e:
-        logger.debug("Failed to save API config: %s", e)
-
-
-def get_api_key(key_name: str, config: Optional[dict] = None) -> Optional[str]:
+def get_api_key(key_name: str, config: dict | None = None) -> str | None:
     """
     Get an API key by name. Checks config dict, then environment variable.
 
@@ -275,29 +264,6 @@ def get_api_key(key_name: str, config: Optional[dict] = None) -> Optional[str]:
     if config and key_name in config:
         return config[key_name]
     return os.environ.get(key_name)
-
-
-def get_all_api_keys_status(config: Optional[dict] = None) -> dict:
-    """
-    Get status of all API keys.
-
-    Returns:
-        Dict of {key_name: {"set": bool, "description": str, "free_tier": str, "category": str}}
-    """
-    if config is None:
-        config = load_api_config()
-
-    status = {}
-    for key_name, meta in API_KEY_REGISTRY.items():
-        val = config.get(key_name) or os.environ.get(key_name, "")
-        status[key_name] = {
-            "set": bool(val),
-            "description": meta["description"],
-            "free_tier": meta["free_tier"],
-            "url": meta["url"],
-            "category": meta["category"],
-        }
-    return status
 
 
 def load_settings() -> dict:

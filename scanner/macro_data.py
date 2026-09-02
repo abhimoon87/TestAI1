@@ -8,9 +8,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
-import numpy as np
 import requests
 
 logger = logging.getLogger(__name__)
@@ -21,7 +19,7 @@ _MACRO_CACHE: dict[str, tuple[dict, float]] = {}
 _MACRO_CACHE_TTL = 6 * 3600  # 6 hours (macro data changes slowly)
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _MACRO_CACHE:
         result, ts = _MACRO_CACHE[key]
         if time.time() - ts < _MACRO_CACHE_TTL:
@@ -38,20 +36,20 @@ def _cache_set(key: str, value: dict):
 @dataclass
 class FredData:
     """Economic data from Federal Reserve (FRED)."""
-    fed_funds_rate: Optional[float] = None
-    unemployment_rate: Optional[float] = None
-    cpi: Optional[float] = None
-    gdp_growth: Optional[float] = None
-    treasury_10y: Optional[float] = None
-    treasury_2y: Optional[float] = None
-    yield_curve_spread: Optional[float] = None  # 10Y - 2Y
+    fed_funds_rate: float | None = None
+    unemployment_rate: float | None = None
+    cpi: float | None = None
+    gdp_growth: float | None = None
+    treasury_10y: float | None = None
+    treasury_2y: float | None = None
+    yield_curve_spread: float | None = None  # 10Y - 2Y
     is_yield_curve_inverted: bool = False
-    pmi: Optional[float] = None
+    pmi: float | None = None
     last_updated: str = ""
     cached: bool = False
 
 
-def fetch_fred_data(api_key: Optional[str] = None) -> Optional[FredData]:
+def fetch_fred_data(api_key: str | None = None) -> FredData | None:
     """
     Fetch key economic indicators from FRED.
     
@@ -66,7 +64,7 @@ def fetch_fred_data(api_key: Optional[str] = None) -> Optional[FredData]:
         logger.debug("FRED: no API key, skipping")
         return None
 
-    cache_k = hashlib.md5("fred:indicators".encode()).hexdigest()
+    cache_k = hashlib.md5(b"fred:indicators", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return FredData(**cached, cached=True)
@@ -124,18 +122,18 @@ def fetch_fred_data(api_key: Optional[str] = None) -> Optional[FredData]:
 @dataclass
 class EconPulseData:
     """Live economic data from EconPulse."""
-    cpi_yoy: Optional[float] = None
-    ppi_yoy: Optional[float] = None
-    treasury_10y: Optional[float] = None
-    breakeven_inflation: Optional[float] = None
-    oil_wti: Optional[float] = None
-    gold_price: Optional[float] = None
-    inr_usd: Optional[float] = None
+    cpi_yoy: float | None = None
+    ppi_yoy: float | None = None
+    treasury_10y: float | None = None
+    breakeven_inflation: float | None = None
+    oil_wti: float | None = None
+    gold_price: float | None = None
+    inr_usd: float | None = None
     last_updated: str = ""
     cached: bool = False
 
 
-def fetch_econpulse_data(api_key: Optional[str] = None) -> Optional[EconPulseData]:
+def fetch_econpulse_data(api_key: str | None = None) -> EconPulseData | None:
     """
     Fetch live economic data from EconPulse.
     
@@ -150,7 +148,7 @@ def fetch_econpulse_data(api_key: Optional[str] = None) -> Optional[EconPulseDat
         logger.debug("EconPulse: no API key, skipping")
         return None
 
-    cache_k = hashlib.md5("econpulse:indicators".encode()).hexdigest()
+    cache_k = hashlib.md5(b"econpulse:indicators", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return EconPulseData(**cached, cached=True)
@@ -186,16 +184,16 @@ def fetch_econpulse_data(api_key: Optional[str] = None) -> Optional[EconPulseDat
 @dataclass
 class EcondbData:
     """Global macroeconomic data from Econdb."""
-    india_gdp_growth: Optional[float] = None
-    india_inflation: Optional[float] = None
-    india_policy_rate: Optional[float] = None
-    us_10y_yield: Optional[float] = None
-    crude_oil: Optional[float] = None
+    india_gdp_growth: float | None = None
+    india_inflation: float | None = None
+    india_policy_rate: float | None = None
+    us_10y_yield: float | None = None
+    crude_oil: float | None = None
     last_updated: str = ""
     cached: bool = False
 
 
-def fetch_econdb_data(api_key: Optional[str] = None) -> Optional[EcondbData]:
+def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
     """
     Fetch macro data from Econdb (free tier requires API key).
     
@@ -211,7 +209,7 @@ def fetch_econdb_data(api_key: Optional[str] = None) -> Optional[EcondbData]:
         logger.debug("Econdb: No API key provided, skipping")
         return None
 
-    cache_k = hashlib.md5("econdb:global".encode()).hexdigest()
+    cache_k = hashlib.md5(b"econdb:global", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return EcondbData(**cached, cached=True)
@@ -260,26 +258,26 @@ def fetch_econdb_data(api_key: Optional[str] = None) -> Optional[EcondbData]:
 @dataclass
 class YahooMacroData:
     """Free macro data from Yahoo Finance (no API key required)."""
-    us_10y_yield: Optional[float] = None
-    us_2y_yield: Optional[float] = None
-    vix: Optional[float] = None
-    crude_oil_wti: Optional[float] = None
-    gold_price: Optional[float] = None
-    inr_usd: Optional[float] = None
-    nifty_50: Optional[float] = None
-    sensex: Optional[float] = None
+    us_10y_yield: float | None = None
+    us_2y_yield: float | None = None
+    vix: float | None = None
+    crude_oil_wti: float | None = None
+    gold_price: float | None = None
+    inr_usd: float | None = None
+    nifty_50: float | None = None
+    sensex: float | None = None
     last_updated: str = ""
     cached: bool = False
 
 
-def fetch_yahoo_macro_data() -> Optional[YahooMacroData]:
+def fetch_yahoo_macro_data() -> YahooMacroData | None:
     """
     Fetch free macro data from Yahoo Finance (no API key required).
     
     Returns:
         YahooMacroData or None
     """
-    cache_k = hashlib.md5("yahoo:macro".encode()).hexdigest()
+    cache_k = hashlib.md5(b"yahoo:macro", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return YahooMacroData(**cached, cached=True)
@@ -336,10 +334,10 @@ class MarketRegime:
 
 
 def detect_market_regime(
-    fred: Optional[FredData] = None,
-    econpulse: Optional[EconPulseData] = None,
-    econdb: Optional[EcondbData] = None,
-    yahoo: Optional[YahooMacroData] = None,
+    fred: FredData | None = None,
+    econpulse: EconPulseData | None = None,
+    econdb: EcondbData | None = None,
+    yahoo: YahooMacroData | None = None,
 ) -> MarketRegime:
     """
     Detect market regime from macro economic data.
@@ -448,7 +446,7 @@ def detect_market_regime(
             risk_on_score += 1
 
     # Determine regime
-    max_score = max(risk_on_score, risk_off_score, recession_score)
+    max(risk_on_score, risk_off_score, recession_score)
     total = risk_on_score + risk_off_score + recession_score + 1  # avoid /0
 
     if recession_score >= 4:
@@ -499,7 +497,7 @@ def fetch_forex_data(
     base: str = "USD",
     target: str = "INR",
     days: int = 7,
-) -> Optional[ForexData]:
+) -> ForexData | None:
     """
     Fetch exchange rates from Frankfurter API (free, no key).
     
@@ -511,7 +509,7 @@ def fetch_forex_data(
     Returns:
         ForexData or None
     """
-    cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode(), usedforsecurity=False).hexdigest()
     cached = _MACRO_CACHE.get(cache_k)
     if cached:
         result, ts = cached
@@ -591,12 +589,12 @@ class CryptoSentiment:
     total_market_cap: float
     total_volume_24h: float
     btc_dominance: float
-    fear_greed_index: Optional[float] = None
-    fear_greed_label: Optional[str] = None
+    fear_greed_index: float | None = None
+    fear_greed_label: str | None = None
     cached: bool = False
 
 
-def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
+def fetch_crypto_sentiment() -> CryptoSentiment | None:
     """
     Fetch crypto market data from CoinGecko (free, no key).
     Used for BTC correlation and risk sentiment analysis.
@@ -604,7 +602,7 @@ def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
     Returns:
         CryptoSentiment or None
     """
-    cache_k = hashlib.md5("crypto:sentiment".encode()).hexdigest()
+    cache_k = hashlib.md5(b"crypto:sentiment", usedforsecurity=False).hexdigest()
     cached = _MACRO_CACHE.get(cache_k)
     if cached:
         result, ts = cached
@@ -688,9 +686,9 @@ def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
 # ── Unified Macro Fetcher ──────────────────────────────────────────────────
 
 def fetch_macro_data(
-    fred_key: Optional[str] = None,
-    econpulse_key: Optional[str] = None,
-    econdb_key: Optional[str] = None,
+    fred_key: str | None = None,
+    econpulse_key: str | None = None,
+    econdb_key: str | None = None,
 ) -> dict:
     """
     Fetch all macro data and detect market regime.

@@ -7,8 +7,7 @@ import hashlib
 import logging
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 import requests
 
@@ -20,7 +19,7 @@ _FUND_CACHE: dict[str, tuple[dict, float]] = {}
 _FUND_CACHE_TTL = 6 * 3600  # 6 hours
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _FUND_CACHE:
         result, ts = _FUND_CACHE[key]
         if time.time() - ts < _FUND_CACHE_TTL:
@@ -38,21 +37,21 @@ def _cache_set(key: str, value: dict):
 class TrendlyneFundamentals:
     """Fundamental data from Trendlyne (free, no API key)."""
     ticker: str
-    pe_ratio: Optional[float] = None
-    pb_ratio: Optional[float] = None
-    roe: Optional[float] = None
-    roce: Optional[float] = None
-    dividend_yield: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    promoter_holding: Optional[float] = None
-    promoter_change: Optional[float] = None  # Change in promoter holding
-    market_cap: Optional[float] = None
-    enterprise_value: Optional[float] = None
-    peg_ratio: Optional[float] = None
+    pe_ratio: float | None = None
+    pb_ratio: float | None = None
+    roe: float | None = None
+    roce: float | None = None
+    dividend_yield: float | None = None
+    debt_to_equity: float | None = None
+    promoter_holding: float | None = None
+    promoter_change: float | None = None  # Change in promoter holding
+    market_cap: float | None = None
+    enterprise_value: float | None = None
+    peg_ratio: float | None = None
     cached: bool = False
 
 
-def fetch_trendlyne_fundamentals(ticker: str) -> Optional[TrendlyneFundamentals]:
+def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
     """
     Fetch fundamental data using Yahoo Finance (reliable, free).
     Trendlyne blocks automated access, so we use Yahoo as primary.
@@ -63,7 +62,7 @@ def fetch_trendlyne_fundamentals(ticker: str) -> Optional[TrendlyneFundamentals]
     Returns:
         TrendlyneFundamentals or None
     """
-    cache_k = hashlib.md5(f"trendlyne:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"trendlyne:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return TrendlyneFundamentals(**cached, cached=True)
@@ -116,18 +115,18 @@ class PeerComparison:
     """Peer comparison data from Screener.in."""
     ticker: str
     industry: str
-    stock_pe: Optional[float] = None
-    industry_pe: Optional[float] = None
-    stock_roe: Optional[float] = None
-    industry_roe: Optional[float] = None
-    stock_roce: Optional[float] = None
-    industry_roce: Optional[float] = None
+    stock_pe: float | None = None
+    industry_pe: float | None = None
+    stock_roe: float | None = None
+    industry_roe: float | None = None
+    stock_roce: float | None = None
+    industry_roce: float | None = None
     is_cheap_vs_peers: bool = False  # PE below industry average
     is_quality: bool = False  # ROE above industry average
     cached: bool = False
 
 
-def fetch_peer_comparison(ticker: str) -> Optional[PeerComparison]:
+def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
     """
     Fetch peer comparison from Screener.in (free, no API key).
     
@@ -137,7 +136,7 @@ def fetch_peer_comparison(ticker: str) -> Optional[PeerComparison]:
     Returns:
         PeerComparison or None
     """
-    cache_k = hashlib.md5(f"screener:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"screener:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return PeerComparison(**cached, cached=True)
@@ -199,20 +198,20 @@ def fetch_peer_comparison(ticker: str) -> Optional[PeerComparison]:
 class YahooValuation:
     """Valuation data from Yahoo Finance (free, no API key)."""
     ticker: str
-    pe_trailing: Optional[float] = None
-    pe_forward: Optional[float] = None
-    pb_ratio: Optional[float] = None
-    ps_ratio: Optional[float] = None
-    peg_ratio: Optional[float] = None
-    dividend_yield: Optional[float] = None
-    profit_margin: Optional[float] = None
-    roe: Optional[float] = None
-    beta: Optional[float] = None
-    intrinsic_value: Optional[float] = None  # Graham number if calculable
+    pe_trailing: float | None = None
+    pe_forward: float | None = None
+    pb_ratio: float | None = None
+    ps_ratio: float | None = None
+    peg_ratio: float | None = None
+    dividend_yield: float | None = None
+    profit_margin: float | None = None
+    roe: float | None = None
+    beta: float | None = None
+    intrinsic_value: float | None = None  # Graham number if calculable
     cached: bool = False
 
 
-def fetch_yahoo_valuation(ticker: str) -> Optional[YahooValuation]:
+def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
     """
     Fetch valuation data from Yahoo Finance (free, no API key).
     
@@ -222,7 +221,7 @@ def fetch_yahoo_valuation(ticker: str) -> Optional[YahooValuation]:
     Returns:
         YahooValuation or None
     """
-    cache_k = hashlib.md5(f"yahoo_val:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"yahoo_val:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return YahooValuation(**cached, cached=True)

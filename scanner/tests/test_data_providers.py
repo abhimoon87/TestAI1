@@ -4,25 +4,22 @@ All external API calls (yfinance, jugaad, nselib, finnhub, alpha_vantage)
 are mocked so tests run fast and offline.
 """
 
-import os
 import json
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pandas as pd
-import pytest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta
 
 from scanner.data_providers import (
     DataProvider,
     _cache_key,
-    _get_cached,
-    _set_cached,
+    _fetch_fundamentals_yfinance,
     _fetch_yfinance,
     _fetch_yfinance_index,
-    _fetch_fundamentals_yfinance,
-    CACHE_DIR,
+    _get_cached,
+    _set_cached,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -284,7 +281,7 @@ class TestDataProvider:
     def test_fetch_stock_caches_result(self):
         """Successful fetch should write to cache."""
         provider = DataProvider(use_cache=True)
-        df = _make_ohlcv(200)
+        _make_ohlcv(200)
 
         mock_yf_history = _make_yf_history(200)
         mock_yf_ticker = MagicMock()

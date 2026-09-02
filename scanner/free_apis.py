@@ -17,10 +17,8 @@ Providers:
 
 import hashlib
 import logging
-import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 
@@ -32,7 +30,7 @@ _FREE_API_CACHE: dict[str, tuple[dict, float]] = {}
 _FREE_API_CACHE_TTL = 4 * 3600  # 4 hours
 
 
-def _cache_get(key: str) -> Optional[dict]:
+def _cache_get(key: str) -> dict | None:
     if key in _FREE_API_CACHE:
         result, ts = _FREE_API_CACHE[key]
         if time.time() - ts < _FREE_API_CACHE_TTL:
@@ -62,7 +60,7 @@ def fetch_forex_data(
     base: str = "USD",
     target: str = "INR",
     days: int = 7,
-) -> Optional[ForexData]:
+) -> ForexData | None:
     """
     Fetch exchange rates from Frankfurter API (free, no key).
     
@@ -74,7 +72,7 @@ def fetch_forex_data(
     Returns:
         ForexData or None
     """
-    cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return ForexData(**cached, cached=True)
@@ -152,12 +150,12 @@ class CryptoSentiment:
     total_market_cap: float
     total_volume_24h: float
     btc_dominance: float  # %
-    fear_greed_index: Optional[float] = None  # 0-100
-    fear_greed_label: Optional[str] = None  # "Extreme Fear", "Fear", "Neutral", "Greed", "Extreme Greed"
+    fear_greed_index: float | None = None  # 0-100
+    fear_greed_label: str | None = None  # "Extreme Fear", "Fear", "Neutral", "Greed", "Extreme Greed"
     cached: bool = False
 
 
-def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
+def fetch_crypto_sentiment() -> CryptoSentiment | None:
     """
     Fetch crypto market data from CoinGecko (free, no key).
     Used for BTC correlation and risk sentiment analysis.
@@ -165,7 +163,7 @@ def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
     Returns:
         CryptoSentiment or None
     """
-    cache_k = hashlib.md5("crypto:sentiment".encode()).hexdigest()
+    cache_k = hashlib.md5(b"crypto:sentiment", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return CryptoSentiment(**cached, cached=True)
@@ -249,25 +247,25 @@ def fetch_crypto_sentiment() -> Optional[CryptoSentiment]:
 @dataclass
 class WorldMacroData:
     """Global macro economic indicators."""
-    india_gdp_growth: Optional[float] = None
-    india_inflation: Optional[float] = None
-    india_population: Optional[float] = None
-    us_gdp_growth: Optional[float] = None
-    us_inflation: Optional[float] = None
-    global_gdp_growth: Optional[float] = None
-    oil_price: Optional[float] = None  # Brent crude
-    gold_price: Optional[float] = None
+    india_gdp_growth: float | None = None
+    india_inflation: float | None = None
+    india_population: float | None = None
+    us_gdp_growth: float | None = None
+    us_inflation: float | None = None
+    global_gdp_growth: float | None = None
+    oil_price: float | None = None  # Brent crude
+    gold_price: float | None = None
     cached: bool = False
 
 
-def fetch_world_macro_data() -> Optional[WorldMacroData]:
+def fetch_world_macro_data() -> WorldMacroData | None:
     """
     Fetch global macro indicators from Statistics of the World (free, no key).
     
     Returns:
         WorldMacroData or None
     """
-    cache_k = hashlib.md5("world:macro".encode()).hexdigest()
+    cache_k = hashlib.md5(b"world:macro", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return WorldMacroData(**cached, cached=True)
@@ -338,9 +336,9 @@ class MandiPrice:
 
 
 def fetch_mandi_prices(
-    commodity: Optional[str] = None,
-    state: Optional[str] = None,
-) -> Optional[list[MandiPrice]]:
+    commodity: str | None = None,
+    state: str | None = None,
+) -> list[MandiPrice] | None:
     """
     Fetch commodity prices from Indian mandi (free, no key).
     Useful for agri-sector stocks (sugar, cotton, spices, etc.).
@@ -352,7 +350,7 @@ def fetch_mandi_prices(
     Returns:
         List of MandiPrice or None
     """
-    cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return [MandiPrice(**item) for item in cached.get("prices", [])]
@@ -415,12 +413,12 @@ class PincodeData:
     office_name: str
     district: str
     state: str
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
+    latitude: float | None = None
+    longitude: float | None = None
     cached: bool = False
 
 
-def fetch_pincode_data(pincode: int) -> Optional[list[PincodeData]]:
+def fetch_pincode_data(pincode: int) -> list[PincodeData] | None:
     """
     Fetch Indian pincode data (free, no key).
     
@@ -430,7 +428,7 @@ def fetch_pincode_data(pincode: int) -> Optional[list[PincodeData]]:
     Returns:
         List of PincodeData or None
     """
-    cache_k = hashlib.md5(f"pincode:{pincode}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"pincode:{pincode}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return [PincodeData(**item) for item in cached.get("pincodes", [])]
@@ -484,14 +482,14 @@ class TopStockPick:
     cached: bool = False
 
 
-def fetch_top_stocks() -> Optional[list[TopStockPick]]:
+def fetch_top_stocks() -> list[TopStockPick] | None:
     """
     Fetch AI-ranked daily stock watchlists (free, no key).
     
     Returns:
         List of TopStockPick or None
     """
-    cache_k = hashlib.md5("top5:stocks".encode()).hexdigest()
+    cache_k = hashlib.md5(b"top5:stocks", usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return [TopStockPick(**item) for item in cached.get("picks", [])]
@@ -540,7 +538,7 @@ class WallstreetBetsSentiment:
     cached: bool = False
 
 
-def fetch_wallstreetbets_sentiment(ticker: str) -> Optional[WallstreetBetsSentiment]:
+def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | None:
     """
     Fetch WallstreetBets sentiment for a ticker (free, no key).
     Uses Reddit's public JSON API to search r/wallstreetbets.
@@ -551,7 +549,7 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> Optional[WallstreetBetsSentim
     Returns:
         WallstreetBetsSentiment or None
     """
-    cache_k = hashlib.md5(f"wsb:{ticker}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"wsb:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return WallstreetBetsSentiment(**cached, cached=True)
@@ -639,9 +637,9 @@ class NoozraNews:
 
 
 def fetch_noozra_news(
-    query: Optional[str] = None,
+    query: str | None = None,
     max_items: int = 10,
-) -> Optional[list[NoozraNews]]:
+) -> list[NoozraNews] | None:
     """
     Fetch free news headlines from Google News RSS (free, no key).
     Fallback for Noozra API (domain may be unavailable).
@@ -653,7 +651,7 @@ def fetch_noozra_news(
     Returns:
         List of NoozraNews or None
     """
-    cache_k = hashlib.md5(f"news:{query}:{max_items}".encode()).hexdigest()
+    cache_k = hashlib.md5(f"news:{query}:{max_items}".encode(), usedforsecurity=False).hexdigest()
     cached = _cache_get(cache_k)
     if cached:
         return [NoozraNews(**item) for item in cached.get("news", [])]
@@ -701,7 +699,7 @@ def fetch_noozra_news(
 
 # ── Unified Free API Fetcher ────────────────────────────────────────────────
 
-def fetch_all_free_apis(ticker: Optional[str] = None) -> dict:
+def fetch_all_free_apis(ticker: str | None = None) -> dict:
     """
     Fetch all free API data (no keys required).
     

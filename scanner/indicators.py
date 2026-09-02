@@ -6,7 +6,6 @@ Mirrors the indicators used in the Pine Script scoring engine.
 import numpy as np
 import pandas as pd
 
-
 # ── Moving Averages ─────────────────────────────────────────────────────────
 
 def _wma_vectorized(series: pd.Series, length: int) -> pd.Series:

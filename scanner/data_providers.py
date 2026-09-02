@@ -16,17 +16,14 @@ All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
 """
 
+import hashlib
+import json
 import logging
 import os
-import json
-import time
-import hashlib
 from datetime import date, datetime, timedelta
-from typing import Optional
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +52,10 @@ def _cache_key(ticker: str, period: str, provider: str) -> str:
     """Generate a cache file key."""
     today = date.today().isoformat()
     raw = f"{ticker}_{period}_{provider}_{today}"
-    return hashlib.md5(raw.encode()).hexdigest()
+    return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
 
-def _get_cached(ticker: str, period: str, provider: str) -> Optional[pd.DataFrame]:
+def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
     """Retrieve cached data if fresh enough."""
     _ensure_cache_dir()
     key = _cache_key(ticker, period, provider)
@@ -102,11 +99,12 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
 # PROVIDER: jugaad-data (NSE Official API)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_jugaad(ticker: str, period: str) -> Optional[pd.DataFrame]:
+def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from NSE via jugaad-data. No auth needed."""
     try:
-        from jugaad_data.nse import stock_df
         from datetime import date, timedelta
+
+        from jugaad_data.nse import stock_df
 
         period_days = {"6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
         days = period_days.get(period, 365)
@@ -149,11 +147,12 @@ def _fetch_jugaad(ticker: str, period: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def _fetch_jugaad_index(ticker: str, period: str) -> Optional[pd.DataFrame]:
+def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch index data from NSE via jugaad-data."""
     try:
-        from jugaad_data.nse import index_df
         from datetime import date, timedelta
+
+        from jugaad_data.nse import index_df
 
         period_days = {"6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
         days = period_days.get(period, 365)
@@ -211,7 +210,7 @@ def _fetch_jugaad_index(ticker: str, period: str) -> Optional[pd.DataFrame]:
 # PROVIDER: yfinance (Yahoo Finance)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_yfinance(ticker: str, period: str) -> Optional[pd.DataFrame]:
+def _fetch_yfinance(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from Yahoo Finance."""
     try:
         import yfinance as yf
@@ -236,7 +235,7 @@ def _fetch_yfinance(ticker: str, period: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def _fetch_yfinance_index(ticker: str, period: str) -> Optional[pd.DataFrame]:
+def _fetch_yfinance_index(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch index data from Yahoo Finance."""
     try:
         import yfinance as yf
@@ -262,7 +261,7 @@ def _fetch_yfinance_index(ticker: str, period: str) -> Optional[pd.DataFrame]:
 # PROVIDER: nselib (NSE Library)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_nselib(ticker: str, period: str) -> Optional[pd.DataFrame]:
+def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from NSE via nselib."""
     try:
         from nselib import capital_market
@@ -320,7 +319,7 @@ def _fetch_nselib(ticker: str, period: str) -> Optional[pd.DataFrame]:
 # FUNDAMENTAL DATA PROVIDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
+def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
     """Fetch fundamentals from Finnhub (free tier, institutional-grade)."""
     try:
         import requests
@@ -379,7 +378,7 @@ def _fetch_fundamentals_finnhub(ticker: str) -> Optional[dict]:
         return None
 
 
-def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
+def _fetch_fundamentals_alpha_vantage(ticker: str) -> dict | None:
     """Fetch fundamentals from Alpha Vantage (free API key)."""
     try:
         import requests
@@ -413,7 +412,7 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> Optional[dict]:
         return None
 
 
-def _fetch_fundamentals_yfinance(ticker: str) -> Optional[dict]:
+def _fetch_fundamentals_yfinance(ticker: str) -> dict | None:
     """Fetch fundamentals from yfinance .info."""
     try:
         import yfinance as yf
@@ -454,7 +453,7 @@ def _fetch_fundamentals_yfinance(ticker: str) -> Optional[dict]:
         return None
 
 
-def _fetch_fundamentals_nselib(ticker: str) -> Optional[dict]:
+def _fetch_fundamentals_nselib(ticker: str) -> dict | None:
     """Fetch P/E ratio from nselib (bulk data, single call for all stocks)."""
     try:
         from nselib import capital_market
@@ -467,7 +466,7 @@ def _fetch_fundamentals_nselib(ticker: str) -> Optional[dict]:
         if df is None or df.empty:
             return None
 
-        sym_col = [c for c in df.columns if "symbol" in c.lower()][0]
+        sym_col = next(c for c in df.columns if "symbol" in c.lower())
         r = df[df[sym_col].str.strip() == ticker]
 
         if r.empty:
@@ -514,7 +513,7 @@ class DataProvider:
         self.last_provider = None
         self.last_error = None
 
-    def fetch_stock(self, ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
+    def fetch_stock(self, ticker: str, period: str = "1y") -> pd.DataFrame | None:
         """
         Fetch OHLCV data with provider fallback chain.
 
@@ -550,13 +549,13 @@ class DataProvider:
                         _set_cached(ticker, period, "cache", df)
                     return df
             except Exception as e:
-                self.last_error = f"{name}: {str(e)}"
+                self.last_error = f"{name}: {e!s}"
                 continue
 
         self.last_error = "All providers failed"
         return None
 
-    def fetch_index(self, ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
+    def fetch_index(self, ticker: str, period: str = "1y") -> pd.DataFrame | None:
         """Fetch index data with provider fallback."""
         self.last_provider = None
 
@@ -585,7 +584,7 @@ class DataProvider:
 
         return None
 
-    def fetch_fundamentals(self, ticker: str) -> Optional[dict]:
+    def fetch_fundamentals(self, ticker: str) -> dict | None:
         """
         Fetch fundamental data with provider fallback.
 

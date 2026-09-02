@@ -10,23 +10,19 @@ Tests cover:
 """
 
 import os
-import numpy as np
-import pandas as pd
-import pytest
-from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 from scanner.report import (
-    _sentiment,
+    SENTIMENT_BAD,
+    SENTIMENT_GOOD,
     _parse_date,
     _score_class,
+    _sentiment,
+    fetch_stock_news,
     generate_html_report,
     save_report,
-    fetch_stock_news,
-    SENTIMENT_GOOD,
-    SENTIMENT_BAD,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
