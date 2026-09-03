@@ -14,7 +14,9 @@ import pytest
 
 import scanner.data_fetcher as data_fetcher
 from scanner.data_fetcher import (
+    CHUNK,
     FALLBACK_PROVIDER_TIMEOUT,
+    MAX_PARALLEL_CHUNKS,
     _extend_period_for_timeframe,
     fetch_batch_yfinance,
     fetch_fundamentals,
@@ -757,3 +759,36 @@ class TestAbortableBatchDownload:
         elapsed = time.time() - t0
         assert elapsed < 5  # returned while the 8s download was still running
         assert result == {}
+
+    def test_cancel_between_batches_stops_scheduling(self):
+        """Cancel fired between outer batches must not schedule further ones."""
+        # 9 chunks of 200 -> two outer batches (8 + 1)
+        tickers = [f"T{i}" for i in range((MAX_PARALLEL_CHUNKS + 1) * CHUNK)]
+        calls = {"n": 0}
+        cancel_event = threading.Event()
+
+        def counting_download(*a, **kw):
+            calls["n"] += 1
+            return _make_yf_download_result(["T0.NS"], n=200, force_multi=True)
+
+        mock_yf = MagicMock()
+        mock_yf.download.side_effect = counting_download
+
+        real_sleep = time.sleep
+        fired = {"done": False}
+
+        def sleep_then_cancel(secs):
+            real_sleep(secs)
+            if not fired["done"]:
+                fired["done"] = True
+                cancel_event.set()  # cancel lands between batch 1 and batch 2
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=MagicMock()):
+                with patch("scanner.data_fetcher.time.sleep", side_effect=sleep_then_cancel):
+                    result = fetch_batch_yfinance(
+                        tickers, period="1y", cancel_event=cancel_event
+                    )
+
+        assert calls["n"] == MAX_PARALLEL_CHUNKS  # batch 1 only — batch 2 never scheduled
+        assert "T0" in result

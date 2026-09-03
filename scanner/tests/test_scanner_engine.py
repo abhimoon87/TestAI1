@@ -1,6 +1,9 @@
 """Unit tests for scanner.scanner_engine — trend-filter / rating interplay."""
 
-from scanner.scanner_engine import rating_ok_for_trend_filter
+import threading
+import time
+
+from scanner.scanner_engine import _enrich_rows_in_place, rating_ok_for_trend_filter
 
 
 class TestTrendFilterRating:
@@ -33,3 +36,48 @@ class TestTrendFilterRating:
         """Any unrecognised filter value behaves like 'All' (no rating drop)."""
         assert rating_ok_for_trend_filter("Bull", "POOR")
         assert rating_ok_for_trend_filter("", "POOR")
+
+
+class TestEnrichRowsInPlaceCancel:
+    def test_cancel_returns_promptly_without_waiting_for_workers(self):
+        """Cancel mid-enrichment returns while slow provider calls still run."""
+        rows = [{"ticker": f"T{i}", "total": 50.0} for i in range(20)]
+        cancel = threading.Event()
+
+        def slow_enrich(ticker, settings, gd):
+            time.sleep(5)
+            return {}
+
+        def fire():
+            time.sleep(0.5)
+            cancel.set()
+
+        threading.Thread(target=fire, daemon=True).start()
+        t0 = time.time()
+        out = _enrich_rows_in_place(
+            rows, {},
+            settings={}, global_data=None,
+            timeframe="D", index_df=None,
+            enrich=slow_enrich, cancel_event=cancel,
+        )
+        elapsed = time.time() - t0
+        assert elapsed < 4  # returned while the 5s enrich calls still ran
+        assert out is rows  # same list, mutated in place
+
+    def test_without_cancel_waits_for_all_rows(self):
+        """No cancel event -> behaves like before: every row is enriched."""
+        rows = [{"ticker": f"T{i}", "total": 50.0} for i in range(4)]
+        seen = []
+
+        def fast_enrich(ticker, settings, gd):
+            seen.append(ticker)
+            return {}
+
+        out = _enrich_rows_in_place(
+            rows, {},
+            settings={}, global_data=None,
+            timeframe="D", index_df=None,
+            enrich=fast_enrich,
+        )
+        assert sorted(seen) == [f"T{i}" for i in range(4)]
+        assert out is rows

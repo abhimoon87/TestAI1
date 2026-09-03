@@ -126,6 +126,7 @@ def _enrich_rows_in_place(
     timeframe: str,
     index_df: Any,
     enrich: Callable,
+    cancel_event: threading.Event | None = None,
 ) -> list[dict]:
     """Phase-2 body shared by scan()/scan_stream(): enrich rows, then re-score.
 
@@ -133,9 +134,11 @@ def _enrich_rows_in_place(
     to the source DataFrame if missing, and recomputes the score so totals /
     ratings reflect the fundamentals that phase-1 fast mode skipped. Mutates
     each row dict in place ("_"-prefixed provider keys are added) and returns
-    the enriched rows in the same order.
+    the enriched rows in the same order. When `cancel_event` is set, returns
+    promptly with whatever rows finished so far — unfinished rows keep their
+    phase-1 scores (daemon workers finish in the background).
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     def _enrich_one(r):
         ticker = r["ticker"]
@@ -165,8 +168,31 @@ def _enrich_rows_in_place(
             logger.debug("Top enrichment failed for %s: %s", ticker, e)
         return r
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        return list(executor.map(_enrich_one, rows))
+    executor = ThreadPoolExecutor(max_workers=8)
+    future_to_row = {executor.submit(_enrich_one, r): r for r in rows}
+    try:
+        # Daemon threads: on cancel we don't join in-flight provider calls.
+        for t in executor._threads:
+            t.daemon = True
+    except Exception:
+        pass
+    cancelled = False
+    pending = set(future_to_row)
+    while pending:
+        if cancel_event is not None and cancel_event.is_set():
+            executor.shutdown(wait=False, cancel_futures=True)
+            cancelled = True
+            break
+        # Poll every 0.5s instead of blocking on executor.map — lets Stop
+        # interrupt even this phase.
+        completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+        if not completed:
+            continue
+        for fut in completed:
+            fut.result()  # _enrich_one already caught its own exceptions
+    if not cancelled:
+        executor.shutdown(wait=True)
+    return rows  # mutated in place; unfinished rows keep phase-1 scores
 
 
 class ScanProgress:
@@ -520,19 +546,31 @@ class ScannerEngine:
                 )
 
             if is_large and total > 200:
-                # Parallel scoring for large universes
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+                # Parallel scoring for large universes — poll cancel every 0.5s
+                from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
                 max_workers = min(8, (total // 50) + 2)
                 self._log(f"Parallel scoring {total} stocks with {max_workers} workers...")
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    future_to_ticker = {executor.submit(_score_one, item): item[0] for item in batch_data.items()}
-                    done = 0
-                    for future in as_completed(future_to_ticker):
-                        if self._cancel_event.is_set():
-                            executor.shutdown(wait=False, cancel_futures=True)
-                            result.cancelled = True
-                            break
+                executor = ThreadPoolExecutor(max_workers=max_workers)
+                future_to_ticker = {executor.submit(_score_one, item): item[0] for item in batch_data.items()}
+                try:
+                    for t in executor._threads:
+                        t.daemon = True
+                except Exception:
+                    pass
+                cancelled_loop = False
+                pending = set(future_to_ticker)
+                done = 0
+                while pending:
+                    if self._cancel_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        cancelled_loop = True
+                        result.cancelled = True
+                        break
+                    completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                    if not completed:
+                        continue
+                    for future in completed:
                         done += 1
                         if done % 50 == 0 or done <= 5:
                             self._progress(0.1 + (done / total * 0.7), f"Scoring {done}/{total}")
@@ -548,6 +586,8 @@ class ScannerEngine:
                         if len(results) % 20 == 0 or len(results) <= 5:
                             tag = "\u2713" if scores["total"] >= settings.get("min_score", 50) else "\u2717"
                             self._log(f"  {tag} {scores['ticker']}: {scores['total']:.1f}/100 ({direction})")
+                if not cancelled_loop:
+                    executor.shutdown(wait=True)
             else:
                 for i, (ticker, df) in enumerate(batch_data.items(), 1):
                     if self._cancel_event.is_set():
@@ -585,6 +625,7 @@ class ScannerEngine:
                     settings=settings, global_data=global_data,
                     timeframe=timeframe, index_df=index_df,
                     enrich=self._enrich_with_providers,
+                    cancel_event=self._cancel_event,
                 )
                 results = enriched_top + rest
 
@@ -719,15 +760,29 @@ class ScannerEngine:
                 self._log(f"Batch {batch_idx} received: {len(chunk_data)} tickers (cumulative {fetched_so_far}) — scoring...")
 
                 chunk_results: list[dict] = []
-                # For large universes use parallel scoring per chunk (smaller pool)
+                # For large universes use parallel scoring per chunk (smaller
+                # pool) — poll cancel every 0.5s so Stop isn't held by scoring.
                 if is_large and len(chunk_data) > 20:
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
                     max_w = min(4, (len(chunk_data) // 25) + 1)
-                    with ThreadPoolExecutor(max_workers=max_w) as ex:
-                        futs = {ex.submit(_score_one, item): item[0] for item in chunk_data.items()}
-                        for fut in as_completed(futs):
-                            if self._cancel_event.is_set():
-                                break
+                    ex = ThreadPoolExecutor(max_workers=max_w)
+                    futs = {ex.submit(_score_one, item): item[0] for item in chunk_data.items()}
+                    try:
+                        for t in ex._threads:
+                            t.daemon = True
+                    except Exception:
+                        pass
+                    cancelled_loop = False
+                    pending = set(futs)
+                    while pending:
+                        if self._cancel_event.is_set():
+                            ex.shutdown(wait=False, cancel_futures=True)
+                            cancelled_loop = True
+                            break
+                        completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                        if not completed:
+                            continue
+                        for fut in completed:
                             scores, direction = fut.result()
                             if scores is None:
                                 if direction == "filtered":
@@ -737,6 +792,8 @@ class ScannerEngine:
                                 continue
                             direction_counts[direction] = direction_counts.get(direction, 0) + 1
                             chunk_results.append(scores)
+                    if not cancelled_loop:
+                        ex.shutdown(wait=True)
                 else:
                     for ticker, df in chunk_data.items():
                         if self._cancel_event.is_set():
@@ -780,6 +837,7 @@ class ScannerEngine:
                     settings=settings, global_data=global_data,
                     timeframe=timeframe, index_df=index_df,
                     enrich=self._enrich_with_providers,
+                    cancel_event=self._cancel_event,
                 )
                 # Merge: enriched top + rest, will trigger UI update
                 results = enriched_top + rest
