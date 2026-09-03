@@ -41,6 +41,7 @@ THEMES = {
         "lime": "#c8ff00",
         "orange": "#ff9f1c",
         "red": "#ff4d4d",
+        "red_hover": "#d62b2b",
         "blue": "#3b9eff",
         "yellow": "#ffd23f",
         # Controls
@@ -92,6 +93,7 @@ THEMES = {
         "lime": "#65a30d",
         "orange": "#d97706",
         "red": "#dc2626",
+        "red_hover": "#b91c1c",
         "blue": "#0284c7",
         "yellow": "#ca8a04",
         # Controls

@@ -102,7 +102,10 @@ def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int 
     volatility = s.diff().abs().rolling(length, min_periods=length).sum().values
 
     # ── Efficiency Ratio: mom / volatility ──
-    er = np.where(volatility > 0, mom / volatility, 0.0)
+    # np.where still evaluates the division eagerly, so silence the
+    # 0/0 -> nan divide warnings; those positions are discarded anyway.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        er = np.where(volatility > 0, mom / volatility, 0.0)
 
     # ── Smoothing Constant: (er × (fast − slow) + slow)² ──
     sc = (er * (fast_alpha - slow_alpha) + slow_alpha) ** 2

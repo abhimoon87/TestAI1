@@ -9,7 +9,9 @@ Provider chain:
 All data is cached to disk to avoid repeated API calls.
 """
 
+import json
 import logging
+import os
 import threading
 import time
 
@@ -183,6 +185,81 @@ FALLBACK_WORKERS = 8  # per-ticker fallback threads for tickers yfinance missed
 FALLBACK_PROVIDER_TIMEOUT = 10.0  # per-provider cap (s) in the fallback pass — dead symbols fail fast
 FALLBACK_FILTER_MIN_MISSING = 25  # only consult the NSE list above this many misses (filter pays off at scale)
 
+# ── Negative cache: symbols with no data on any provider ────────────────────
+# A symbol that fails the whole NSE fallback chain once is very likely dead
+# (delisted / suspended / permanently renamed) — re-attempting it on every
+# scan costs up to the full provider timeout per attempt. Remember failures
+# on disk (.cache/dead_symbols.json) and skip re-attempts for a day.
+NEGATIVE_CACHE_TTL_HOURS = 24
+_NEGATIVE_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".cache", "dead_symbols.json"
+)
+_negative_cache: dict[str, float] | None = None  # ticker -> epoch (lazy-loaded)
+_negative_lock = threading.Lock()
+
+
+def _negative_cache_load() -> dict[str, float]:
+    """Load unexpired entries from disk once per process."""
+    global _negative_cache
+    with _negative_lock:
+        if _negative_cache is None:
+            cache: dict[str, float] = {}
+            try:
+                with open(_NEGATIVE_CACHE_PATH, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                now = time.time()
+                cache = {
+                    k: ts for k, ts in raw.items()
+                    if isinstance(ts, (int, float)) and now - ts < NEGATIVE_CACHE_TTL_HOURS * 3600
+                }
+            except Exception:
+                pass  # missing / corrupt file -> empty cache
+            _negative_cache = cache
+        return _negative_cache
+
+
+def _negative_cache_save() -> None:
+    """Persist the in-memory cache (caller must hold the lock)."""
+    try:
+        os.makedirs(os.path.dirname(_NEGATIVE_CACHE_PATH), exist_ok=True)
+        tmp = _NEGATIVE_CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_negative_cache, f)
+        os.replace(tmp, _NEGATIVE_CACHE_PATH)
+    except Exception:
+        logger.debug("Negative-cache write failed", exc_info=True)
+
+
+def _negative_cache_contains(ticker: str) -> bool:
+    """True when the ticker was marked dead within the TTL window."""
+    cache = _negative_cache_load()
+    with _negative_lock:
+        ts = cache.get(ticker)
+        if ts is None:
+            return False
+        if time.time() - ts < NEGATIVE_CACHE_TTL_HOURS * 3600:
+            return True
+        cache.pop(ticker, None)
+        return False
+
+
+def _negative_cache_update(marks: list | None = None, clears: list | None = None) -> None:
+    """Mark symbols as dead (no data on any provider) and/or clear others."""
+    if not marks and not clears:
+        return
+    cache = _negative_cache_load()
+    now = time.time()
+    with _negative_lock:
+        changed = False
+        for t in marks or []:
+            cache[t] = now
+            changed = True
+        for t in clears or []:
+            if cache.pop(t, None) is not None:
+                changed = True
+        if changed:
+            _negative_cache_save()
+
 
 def _nse_membership_set() -> set | None:
     """Current NSE mainboard symbols (upper-cased), or None when unknown.
@@ -241,6 +318,7 @@ def _fetch_fallback_batch(
     total = len(tickers)
     workers = min(FALLBACK_WORKERS, total)
     recovered: dict = {}
+    no_data: list = []  # tickers with NO data on any fallback provider -> dead
     done = 0
 
     def _fetch_one(t: str):
@@ -250,13 +328,17 @@ def _fetch_fallback_batch(
                 skip=("yfinance",),
                 provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
             )
+            if df is None or df.empty:
+                return "dead", t, None
+            df = resample_ohlcv(df, timeframe)
             if df is not None and not df.empty and len(df) >= 50:
-                df = resample_ohlcv(df, timeframe)
-                if df is not None and not df.empty and len(df) >= 50:
-                    return t, df
+                return "ok", t, df
+            # Data exists but too few bars — a miss, but NOT a dead symbol
+            # (e.g. recent IPO), so don't negative-cache it.
+            return "short", t, None
         except Exception as e:
             logger.debug("Fallback fetch failed for %s: %s", t, e)
-        return None
+            return "dead", t, None
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_ticker = {executor.submit(_fetch_one, t): t for t in tickers}
@@ -269,15 +351,21 @@ def _fetch_fallback_batch(
                 )
                 break
             done += 1
-            result = future.result()
-            if result is not None:
-                t, df = result
+            status, t, df = future.result()
+            if status == "ok":
                 recovered[t] = df
+            elif status == "dead":
+                no_data.append(t)
             if on_progress is not None:
                 try:
                     on_progress(done, total)
                 except Exception:
                     pass
+
+    # Remember what really has no data (skip future scans) and forget any
+    # symbol that just came back (e.g. suspension lifted since TTL expiry).
+    if no_data or recovered:
+        _negative_cache_update(marks=no_data, clears=list(recovered))
     return recovered
 
 
@@ -410,7 +498,15 @@ def fetch_batch_yfinance_stream(
         # ── Fallback: recover tickers the yfinance pass missed ───────────
         missing = [t for t in tickers if t not in seen_tickers]
         if missing and not (cancel_event is not None and cancel_event.is_set()):
-            candidates = missing
+            # Negative cache first: symbols that failed the whole NSE chain on
+            # a recent scan are almost certainly dead — skip them cheaply.
+            known_dead = [t for t in missing if _negative_cache_contains(t)]
+            candidates = [t for t in missing if t not in known_dead]
+            if known_dead:
+                logger.info(
+                    "Skipping %d known-dead symbols via negative cache (marked within the last %dh)",
+                    len(known_dead), NEGATIVE_CACHE_TTL_HOURS,
+                )
             skipped: list = []
             # jugaad-data and nselib only serve NSE mainboard equities, so
             # BSE-only symbols (present in FULL MARKET) would each burn two
@@ -420,8 +516,8 @@ def fetch_batch_yfinance_stream(
             if len(missing) >= FALLBACK_FILTER_MIN_MISSING:
                 nse_members = _nse_membership_set()
                 if nse_members is not None:
-                    candidates = [t for t in missing if t in nse_members]
-                    skipped = [t for t in missing if t not in nse_members]
+                    skipped = [t for t in candidates if t not in nse_members]
+                    candidates = [t for t in candidates if t in nse_members]
             if skipped:
                 logger.info(
                     "Skipping %d non-NSE (BSE-only / delisted) symbols in fallback",
@@ -429,7 +525,7 @@ def fetch_batch_yfinance_stream(
                 )
             if not candidates:
                 logger.warning(
-                    "yfinance missed %d/%d tickers but none are NSE mainboard — nothing to recover",
+                    "yfinance missed %d/%d tickers but none are recoverable (BSE-only or known-dead) — nothing to recover",
                     len(missing), total,
                 )
             else:

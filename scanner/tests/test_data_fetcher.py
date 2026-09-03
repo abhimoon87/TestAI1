@@ -5,11 +5,14 @@ run fast and offline.
 """
 
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
+import scanner.data_fetcher as data_fetcher
 from scanner.data_fetcher import (
     FALLBACK_PROVIDER_TIMEOUT,
     _extend_period_for_timeframe,
@@ -19,6 +22,19 @@ from scanner.data_fetcher import (
     fetch_stock_data,
     resample_ohlcv,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_negative_cache(tmp_path, monkeypatch):
+    """Point the on-disk negative cache at a temp file and reset it per test."""
+    monkeypatch.setattr(
+        data_fetcher, "_NEGATIVE_CACHE_PATH",
+        str(tmp_path / "dead_symbols.json"),
+    )
+    monkeypatch.setattr(data_fetcher, "_negative_cache", None)
+    yield
+    monkeypatch.setattr(data_fetcher, "_negative_cache", None)
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -569,3 +585,96 @@ class TestFetchBatchFallback:
 
         assert "TCS" in result
         mock_membership.assert_not_called()
+
+
+class TestNegativeCache:
+    """Dead symbols are remembered on disk so later scans skip re-attempts."""
+
+    def test_dead_symbol_skipped_on_next_scan(self):
+        """A symbol that failed the whole fallback chain once is not re-attempted."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        # Run 1: TCS + ZZZ miss yfinance AND the fallback providers -> dead
+        dead_provider = MagicMock()
+        dead_provider.fetch_stock.return_value = None
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=dead_provider):
+                result1 = fetch_batch_yfinance(["RELIANCE", "TCS", "ZZZ"], period="1y")
+
+        assert "TCS" not in result1
+        assert "ZZZ" not in result1
+        assert data_fetcher._negative_cache_contains("TCS")
+        assert data_fetcher._negative_cache_contains("ZZZ")
+
+        # Run 2: providers would succeed now, but the negative cache must
+        # prevent TCS/ZZZ from being attempted at all.
+        alive_provider = MagicMock()
+        alive_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=alive_provider):
+                result2 = fetch_batch_yfinance(["RELIANCE", "TCS", "ZZZ"], period="1y")
+
+        assert "RELIANCE" in result2
+        assert "TCS" not in result2
+        assert "ZZZ" not in result2
+        alive_provider.fetch_stock.assert_not_called()
+
+    def test_expired_entry_is_reattempted_and_cleared_on_success(self):
+        """After the TTL window, a marked symbol is tried again; success clears it."""
+        data_fetcher._negative_cache_update(marks=["STALE"])
+        # Age the entry past the 24h TTL
+        data_fetcher._negative_cache["STALE"] = time.time() - 25 * 3600
+
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "STALE"], period="1y")
+
+        assert "STALE" in result  # re-attempted after TTL expiry
+        # Recovered symbol is no longer considered dead
+        assert not data_fetcher._negative_cache_contains("STALE")
+
+    def test_symbol_with_data_but_few_bars_is_not_marked_dead(self):
+        """Short-history names (recent IPOs) are misses, not dead symbols."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(30)  # < 50 bars
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "NEWIPO"], period="1y")
+
+        assert "NEWIPO" not in result  # still a miss for this scan...
+        # ...but NOT cached as dead — next scan attempts it again
+        assert not data_fetcher._negative_cache_contains("NEWIPO")
+
+    def test_mark_survives_new_process_load_from_disk(self):
+        """Marks persist to disk and are read back on a fresh (re)load."""
+        data_fetcher._negative_cache_update(marks=["GONER"])
+        # Simulate a new process: drop the in-memory state, force a disk load
+        data_fetcher._negative_cache = None
+
+        assert data_fetcher._negative_cache_contains("GONER")
+
+        # An expired entry on disk is dropped on load
+        import json
+        with open(data_fetcher._NEGATIVE_CACHE_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        raw["ANCIENT"] = time.time() - 48 * 3600
+        with open(data_fetcher._NEGATIVE_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(raw, f)
+        data_fetcher._negative_cache = None
+
+        assert data_fetcher._negative_cache_contains("GONER")
+        assert not data_fetcher._negative_cache_contains("ANCIENT")

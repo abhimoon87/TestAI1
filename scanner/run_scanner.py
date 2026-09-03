@@ -18,11 +18,10 @@ from datetime import datetime
 
 from .data_fetcher import (
     fetch_batch_yfinance,
-    fetch_fundamentals,
     fetch_index_data,
 )
 from .report import generate_html_report, save_report
-from .scoring import check_filter, compute_scores, get_direction
+from .scanner_engine import _score_ticker
 from .universes import UNIVERSES
 
 logger = logging.getLogger(__name__)
@@ -188,6 +187,8 @@ def run_scan():
         return
 
     # ── 3-Model Pipeline ──────────────────────────────────────────────────
+    # Uses the same shared per-ticker scorer as ScannerEngine.scan / scan_stream
+    # (scanner_engine._score_ticker) so the CLI can't drift from the GUI/engine.
     logger.info("━━━ 3-Model Pipeline ━━━")
     results = []
     filtered_out = 0
@@ -197,43 +198,29 @@ def run_scan():
     for i, (ticker, df) in enumerate(stock_data.items(), 1):
         logger.info("  [%d/%d] %s...", i, len(stock_data), ticker)
 
-        # Attach fundamentals if not already present
-        if getattr(df, '_fundamentals', None) is None:
-            fund = fetch_fundamentals(ticker)
-            if fund is not None:
-                object.__setattr__(df, '_fundamentals', fund)
-
-        # ── MODEL 1: Stock Filter ──────────────────────────────────────────
-        filter_result = check_filter(
-            df,
-            fast_ma_type=settings.get("fast_ma_type", "HMA"),
-            fast_ma_len=settings.get("fast_ma_len", 40),
-            slow_ma_type=settings.get("slow_ma_type", "EMA"),
-            slow_ma_len=settings.get("slow_ma_len", 50),
-            crossover_lookback=settings.get("crossover_lookback", 20),
+        # Crossover filter -> direction -> fundamentals -> score -> rating gate
+        scores, reason = _score_ticker(
+            ticker, df,
+            settings=settings, timeframe=timeframe, index_df=index_df,
+            trend_filter="All",  # CLI has no directional filter
+            is_large=False,      # CLI always attaches fundamentals (no phase-2 pass)
+            global_data=None,
+            enrich=lambda _t, s, _g: dict(s),  # no 5-provider enrichment in CLI
         )
-        if filter_result is None:
-            filtered_out += 1
-            logger.info("    ✖ filtered")
-            continue
-
-        # ── MODEL 2: Bullish / Bearish ────────────────────────────────────
-        direction = get_direction(filter_result)
-        direction_counts[direction] = direction_counts.get(direction, 0) + 1
-        dir_icon = "▲" if direction == "Bull" else "▼"
-
-        # ── MODEL 3: Techno-Fundamental Scoring ───────────────────────────
-        scores = compute_scores(df, timeframe=timeframe, index_df=index_df, settings=settings)
         if scores is None:
-            logger.info("    ⚠ insufficient data")
+            if reason == "filtered":
+                filtered_out += 1
+                logger.info("    ✖ filtered")
+            else:
+                logger.info("    ⚠ %s", reason)
             continue
 
-        scores["ticker"] = ticker
-        scores["trend_dir"] = direction  # Override with pipeline direction
-        scores["trend_color"] = direction.lower()
+        direction = scores["trend_dir"]
+        direction_counts[direction] = direction_counts.get(direction, 0) + 1
         results.append(scores)
 
         total = scores["total"]
+        dir_icon = "▲" if direction == "Bull" else "▼"
         icon = "🟢" if total >= 70 else ("🟡" if total >= 50 else ("🟠" if total >= 30 else "🔴"))
         tag = "✓" if total >= min_score_threshold else "✗"
         sideways = " [CHOP]" if scores.get("is_sideways") else ""

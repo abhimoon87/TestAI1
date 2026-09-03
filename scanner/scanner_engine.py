@@ -24,6 +24,148 @@ from .universes import UNIVERSES, get_universe
 
 logger = logging.getLogger(__name__)
 
+# Directional trend filters ("Bullish Only" / "Bearish Only") hide stocks
+# with a POOR/WEAK combined rating — a directional view is meant to surface
+# quality candidates. Excluded at the source so the grid, exports and
+# summary counts all agree.
+_DIRECTIONAL_TREND_FILTERS = ("Bullish Only", "Bearish Only")
+_POOR_RATINGS = ("POOR", "WEAK")
+
+
+def rating_ok_for_trend_filter(trend_filter: str, combined_rating: str | None) -> bool:
+    """Whether a stock with `combined_rating` may be shown under `trend_filter`.
+
+    Non-directional filters ("All") show every rating; directional filters
+    drop POOR/WEAK-rated stocks. Missing/unknown ratings are kept — never
+    hide data on a defensive default.
+    """
+    if trend_filter not in _DIRECTIONAL_TREND_FILTERS:
+        return True
+    return (combined_rating or "") not in _POOR_RATINGS
+
+
+def _score_ticker(
+    ticker: str,
+    df: Any,
+    *,
+    settings: dict,
+    timeframe: str,
+    index_df: Any,
+    trend_filter: str,
+    is_large: bool,
+    global_data: dict | None,
+    enrich: Callable,
+) -> tuple[dict | None, str]:
+    """Score one ticker — shared by scan() and scan_stream().
+
+    Runs the crossover filter, applies the trend-direction filter, attaches
+    fundamentals for small universes, computes the 10-factor score and applies
+    the rating gate. Returns ``(scores, direction)`` on success, or
+    ``(None, reason)`` where reason is one of: empty / filtered / no_score /
+    poor_rating / error.
+    """
+    try:
+        if df is None or df.empty:
+            return None, "empty"
+        filter_result = check_filter(
+            df,
+            fast_ma_type=settings.get("fast_ma_type", "HMA"),
+            fast_ma_len=settings.get("fast_ma_len", 40),
+            slow_ma_type=settings.get("slow_ma_type", "EMA"),
+            slow_ma_len=settings.get("slow_ma_len", 50),
+            crossover_lookback=settings.get("crossover_lookback", 20),
+        )
+        if filter_result is None:
+            return None, "filtered"
+        direction = get_direction(filter_result)
+        if trend_filter == "Bullish Only" and direction != "Bull":
+            return None, "filtered"
+        if trend_filter == "Bearish Only" and direction != "Bear":
+            return None, "filtered"
+        # Skip fundamentals/enrichment in fast mode phase 1 (large universes
+        # attach them later in the top-200 pass and re-score there).
+        if not is_large and getattr(df, '_fundamentals', None) is None:
+            try:
+                fund = fetch_fundamentals(ticker)
+                if fund is not None:
+                    object.__setattr__(df, '_fundamentals', fund)
+            except (RequestException, ValueError, KeyError) as e:
+                logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
+        if is_large:
+            enriched = {**settings, **(global_data or {}), "_skip_vp": True}
+        else:
+            enriched = enrich(ticker, settings, global_data)
+            enriched["_skip_vp"] = False
+        scores = compute_scores(df, timeframe=timeframe, index_df=index_df, settings=enriched)
+        if scores is None:
+            return None, "no_score"
+        if not rating_ok_for_trend_filter(trend_filter, scores.get("combined_rating")):
+            return None, "poor_rating"
+        scores["ticker"] = ticker
+        scores["trend_dir"] = direction
+        scores["trend_color"] = direction.lower()
+        # Keep enrichment keys for later if not large
+        if not is_large:
+            for k, v in enriched.items():
+                if k.startswith("_") and k not in scores:
+                    scores[k] = v
+        return scores, direction
+    except (RequestException, ValueError, KeyError, TypeError) as e:
+        logger.debug("Scoring failed for %s: %s", ticker, e)
+        return None, "error"
+
+
+def _enrich_rows_in_place(
+    rows: list[dict],
+    batch_data: dict,
+    *,
+    settings: dict,
+    global_data: dict | None,
+    timeframe: str,
+    index_df: Any,
+    enrich: Callable,
+) -> list[dict]:
+    """Phase-2 body shared by scan()/scan_stream(): enrich rows, then re-score.
+
+    Runs the per-ticker provider enrichment on each row, attaches fundamentals
+    to the source DataFrame if missing, and recomputes the score so totals /
+    ratings reflect the fundamentals that phase-1 fast mode skipped. Mutates
+    each row dict in place ("_"-prefixed provider keys are added) and returns
+    the enriched rows in the same order.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _enrich_one(r):
+        ticker = r["ticker"]
+        try:
+            enriched = enrich(ticker, settings, global_data)
+            for k, v in enriched.items():
+                if k.startswith("_") and k not in r:
+                    r[k] = v
+            # Phase-1 fast mode scored WITHOUT fundamentals — attach
+            # them now and recompute so totals/ratings reflect real data.
+            df = batch_data.get(ticker)
+            if df is not None and not df.empty:
+                if getattr(df, '_fundamentals', None) is None:
+                    try:
+                        fund = fetch_fundamentals(ticker)
+                        if fund is not None:
+                            object.__setattr__(df, '_fundamentals', fund)
+                    except (RequestException, ValueError, KeyError):
+                        pass
+                recomputed = compute_scores(
+                    df, timeframe=timeframe, index_df=index_df,
+                    settings={**settings, **(global_data or {}), "_skip_vp": True},
+                )
+                if recomputed is not None:
+                    r.update(recomputed)
+        except (RequestException, ValueError, KeyError, AttributeError) as e:
+            logger.debug("Top enrichment failed for %s: %s", ticker, e)
+        return r
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        return list(executor.map(_enrich_one, rows))
+
 
 class ScanProgress:
     """Progress tracking for scan operations."""
@@ -79,11 +221,20 @@ class ScannerEngine:
     
     def _progress(self, value: float, text: str = ""):
         if self._progress_callback:
-            self._progress_callback(value, text)
+            try:
+                self._progress_callback(value, text)
+            except Exception as e:
+                # A failing progress sink must never kill the scan.
+                logger.debug("Progress callback failed: %s", e)
     
     def _log(self, msg: str):
         if self._log_callback:
-            self._log_callback(msg)
+            try:
+                self._log_callback(msg)
+            except Exception as e:
+                # A failing log sink (e.g. a console that can't encode ✓) must
+                # never abort the scan and discard already-scored results.
+                logger.debug("Log callback failed: %s", e)
 
     def _fetch_global_enrichment(self, settings: dict) -> dict:
         """
@@ -273,7 +424,8 @@ class ScannerEngine:
             settings: Scanner settings dict
             period: Data period (e.g., "1y", "3y")
             timeframe: "D" (daily), "W" (weekly), "M" (monthly)
-            trend_filter: "All", "Bullish Only", "Bearish Only"
+            trend_filter: "All", "Bullish Only", "Bearish Only" (directional
+                  views also hide POOR/WEAK-rated stocks)
             index_symbol: Index symbol for relative strength (e.g., "NSEI")
         
         Returns:
@@ -350,58 +502,19 @@ class ScannerEngine:
             results = []
             total = len(batch_data)
             filtered_out = 0
+            poor_rating_hidden = 0
             direction_counts = {"Bull": 0, "Bear": 0}
 
             # ── Phase 1: Fast technical scoring (no enrichment) ────────────
             # Use ThreadPool for CPU-bound scoring on large universes
             def _score_one(item):
                 ticker, df = item
-                try:
-                    if df is None or df.empty:
-                        return None, "empty"
-                    filter_result = check_filter(
-                        df,
-                        fast_ma_type=settings.get("fast_ma_type", "HMA"),
-                        fast_ma_len=settings.get("fast_ma_len", 40),
-                        slow_ma_type=settings.get("slow_ma_type", "EMA"),
-                        slow_ma_len=settings.get("slow_ma_len", 50),
-                        crossover_lookback=settings.get("crossover_lookback", 20),
-                    )
-                    if filter_result is None:
-                        return None, "filtered"
-                    direction = get_direction(filter_result)
-                    if trend_filter == "Bullish Only" and direction != "Bull":
-                        return None, "filtered"
-                    if trend_filter == "Bearish Only" and direction != "Bear":
-                        return None, "filtered"
-                    # Skip fundamentals/enrichment in fast mode phase 1
-                    if not is_large and getattr(df, '_fundamentals', None) is None:
-                        try:
-                            fund = fetch_fundamentals(ticker)
-                            if fund is not None:
-                                object.__setattr__(df, '_fundamentals', fund)
-                        except (RequestException, ValueError, KeyError) as e:
-                            logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
-                    if is_large:
-                        enriched = {**settings, **global_data, "_skip_vp": True}
-                    else:
-                        enriched = self._enrich_with_providers(ticker, settings, global_data)
-                        enriched["_skip_vp"] = False
-                    scores = compute_scores(df, timeframe=timeframe, index_df=index_df, settings=enriched)
-                    if scores is None:
-                        return None, "no_score"
-                    scores["ticker"] = ticker
-                    scores["trend_dir"] = direction
-                    scores["trend_color"] = direction.lower()
-                    # Keep enrichment keys for later if not large
-                    if not is_large:
-                        for k, v in enriched.items():
-                            if k.startswith("_") and k not in scores:
-                                scores[k] = v
-                    return scores, direction
-                except (RequestException, ValueError, KeyError, TypeError) as e:
-                    logger.debug("Scoring failed for %s: %s", ticker, e)
-                    return None, "error"
+                return _score_ticker(
+                    ticker, df,
+                    settings=settings, timeframe=timeframe, index_df=index_df,
+                    trend_filter=trend_filter, is_large=is_large,
+                    global_data=global_data, enrich=self._enrich_with_providers,
+                )
 
             if is_large and total > 200:
                 # Parallel scoring for large universes
@@ -424,6 +537,8 @@ class ScannerEngine:
                         if scores is None:
                             if direction == "filtered":
                                 filtered_out += 1
+                            elif direction == "poor_rating":
+                                poor_rating_hidden += 1
                             continue
                         direction_counts[direction] = direction_counts.get(direction, 0) + 1
                         results.append(scores)
@@ -444,6 +559,8 @@ class ScannerEngine:
                     if scores is None:
                         if direction == "filtered":
                             filtered_out += 1
+                        elif direction == "poor_rating":
+                            poor_rating_hidden += 1
                         continue
                     direction_counts[direction] = direction_counts.get(direction, 0) + 1
                     results.append(scores)
@@ -454,36 +571,18 @@ class ScannerEngine:
                         self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
 
             # ── Phase 2: Enrich top 200 for large universes ───────────────
-            if is_large and results:
+            if is_large and results and not self._cancel_event.is_set():
                 results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
                 top_n = min(200, len(results))
                 top = results[:top_n]
                 rest = results[top_n:]
                 self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
-                from concurrent.futures import ThreadPoolExecutor
-
-                def _enrich_one(r):
-                    ticker = r["ticker"]
-                    try:
-                        enriched = self._enrich_with_providers(ticker, settings, global_data)
-                        for k, v in enriched.items():
-                            if k.startswith("_") and k not in r:
-                                r[k] = v
-                        # Also attach fundamentals if missing
-                        df = batch_data.get(ticker)
-                        if df is not None and getattr(df, '_fundamentals', None) is None:
-                            try:
-                                fund = fetch_fundamentals(ticker)
-                                if fund is not None:
-                                    object.__setattr__(df, '_fundamentals', fund)
-                            except (RequestException, ValueError, KeyError):
-                                pass
-                    except (RequestException, ValueError, KeyError, AttributeError) as e:
-                        logger.debug("Top enrichment failed for %s: %s", ticker, e)
-                    return r
-
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    enriched_top = list(executor.map(_enrich_one, top))
+                enriched_top = _enrich_rows_in_place(
+                    top, batch_data,
+                    settings=settings, global_data=global_data,
+                    timeframe=timeframe, index_df=index_df,
+                    enrich=self._enrich_with_providers,
+                )
                 results = enriched_top + rest
 
             # Sort and store
@@ -494,6 +593,8 @@ class ScannerEngine:
             self._log("\n\u2501" * 25 + " Scan Complete ")
             self._log(f"  Total stocks:  {len(tickers)}")
             self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
+            if poor_rating_hidden:
+                self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
             self._log(f"  Scored {settings.get('min_score', 50)}+: {passed}")
             
@@ -571,6 +672,7 @@ class ScannerEngine:
             results: list[dict] = []
             batch_data_all: dict = {}
             filtered_out = 0
+            poor_rating_hidden = 0
             direction_counts = {"Bull": 0, "Bear": 0}
             total_tickers = len(tickers)
             fetched_so_far = 0
@@ -578,50 +680,12 @@ class ScannerEngine:
 
             def _score_one(item):
                 ticker, df = item
-                try:
-                    if df is None or df.empty:
-                        return None, "empty"
-                    filter_result = check_filter(
-                        df,
-                        fast_ma_type=settings.get("fast_ma_type", "HMA"),
-                        fast_ma_len=settings.get("fast_ma_len", 40),
-                        slow_ma_type=settings.get("slow_ma_type", "EMA"),
-                        slow_ma_len=settings.get("slow_ma_len", 50),
-                        crossover_lookback=settings.get("crossover_lookback", 20),
-                    )
-                    if filter_result is None:
-                        return None, "filtered"
-                    direction = get_direction(filter_result)
-                    if trend_filter == "Bullish Only" and direction != "Bull":
-                        return None, "filtered"
-                    if trend_filter == "Bearish Only" and direction != "Bear":
-                        return None, "filtered"
-                    if not is_large and getattr(df, '_fundamentals', None) is None:
-                        try:
-                            fund = fetch_fundamentals(ticker)
-                            if fund is not None:
-                                object.__setattr__(df, '_fundamentals', fund)
-                        except (RequestException, ValueError, KeyError) as e:
-                            logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
-                    if is_large:
-                        enriched = {**settings, **global_data, "_skip_vp": True}
-                    else:
-                        enriched = self._enrich_with_providers(ticker, settings, global_data)
-                        enriched["_skip_vp"] = False
-                    scores = compute_scores(df, timeframe=timeframe, index_df=index_df, settings=enriched)
-                    if scores is None:
-                        return None, "no_score"
-                    scores["ticker"] = ticker
-                    scores["trend_dir"] = direction
-                    scores["trend_color"] = direction.lower()
-                    if not is_large:
-                        for k, v in enriched.items():
-                            if k.startswith("_") and k not in scores:
-                                scores[k] = v
-                    return scores, direction
-                except (RequestException, ValueError, KeyError, TypeError) as e:
-                    logger.debug("Scoring failed for %s: %s", ticker, e)
-                    return None, "error"
+                return _score_ticker(
+                    ticker, df,
+                    settings=settings, timeframe=timeframe, index_df=index_df,
+                    trend_filter=trend_filter, is_large=is_large,
+                    global_data=global_data, enrich=self._enrich_with_providers,
+                )
 
             # ── Stream per parallel batch ─────────────────────────────────
             for chunk_data in fetch_batch_yfinance_stream(
@@ -661,6 +725,8 @@ class ScannerEngine:
                             if scores is None:
                                 if direction == "filtered":
                                     filtered_out += 1
+                                elif direction == "poor_rating":
+                                    poor_rating_hidden += 1
                                 continue
                             direction_counts[direction] = direction_counts.get(direction, 0) + 1
                             chunk_results.append(scores)
@@ -672,6 +738,8 @@ class ScannerEngine:
                         if scores is None:
                             if direction == "filtered":
                                 filtered_out += 1
+                            elif direction == "poor_rating":
+                                poor_rating_hidden += 1
                             continue
                         direction_counts[direction] = direction_counts.get(direction, 0) + 1
                         chunk_results.append(scores)
@@ -694,35 +762,18 @@ class ScannerEngine:
                             logger.debug("on_batch callback failed: %s", e)
 
             # ── Phase 2: Enrich top 200 for large universes (update in place) ─
-            if is_large and results:
+            if is_large and results and not self._cancel_event.is_set():
                 results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
                 top_n = min(200, len(results))
                 top = results[:top_n]
                 rest = results[top_n:]
                 self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
-                from concurrent.futures import ThreadPoolExecutor
-
-                def _enrich_one(r):
-                    ticker = r["ticker"]
-                    try:
-                        enriched = self._enrich_with_providers(ticker, settings, global_data)
-                        for k, v in enriched.items():
-                            if k.startswith("_") and k not in r:
-                                r[k] = v
-                        df = batch_data_all.get(ticker)
-                        if df is not None and getattr(df, '_fundamentals', None) is None:
-                            try:
-                                fund = fetch_fundamentals(ticker)
-                                if fund is not None:
-                                    object.__setattr__(df, '_fundamentals', fund)
-                            except (RequestException, ValueError, KeyError):
-                                pass
-                    except (RequestException, ValueError, KeyError, AttributeError) as e:
-                        logger.debug("Top enrichment failed for %s: %s", ticker, e)
-                    return r
-
-                with ThreadPoolExecutor(max_workers=8) as executor:
-                    enriched_top = list(executor.map(_enrich_one, top))
+                enriched_top = _enrich_rows_in_place(
+                    top, batch_data_all,
+                    settings=settings, global_data=global_data,
+                    timeframe=timeframe, index_df=index_df,
+                    enrich=self._enrich_with_providers,
+                )
                 # Merge: enriched top + rest, will trigger UI update
                 results = enriched_top + rest
                 if batch_cb and enriched_top:
@@ -744,6 +795,8 @@ class ScannerEngine:
                     "(yfinance, jugaad-data, nselib)"
                 )
             self._log(f"  Filtered out: {filtered_out}")
+            if poor_rating_hidden:
+                self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull',0)} Bull, {direction_counts.get('Bear',0)} Bear)")
             self._log(f"  Scored {settings.get('min_score',50)}+: {passed}")
             result.results = results

@@ -568,6 +568,19 @@ class ScannerApp(ctk.CTk):
             button_hover_color=c["purple"], dropdown_fg_color=c["option_drop"],
             dropdown_hover_color=c["nav_active"]).pack(padx=14, fill="x")
 
+        # Rating Filter
+        section_label("Rating Filter")
+        self.rating_filter_var = ctk.StringVar(value="All")
+        ctk.CTkOptionMenu(
+            ctrl, variable=self.rating_filter_var,
+            values=["All", "Excellent", "Good", "Moderate", "Poor"],
+            command=self._on_rating_change,
+            width=180, height=32, corner_radius=10,
+            fg_color=c["option_bg"], button_color=c["option_btn"],
+            text_color=c["text"],
+            button_hover_color=c["purple"], dropdown_fg_color=c["option_drop"],
+            dropdown_hover_color=c["nav_active"]).pack(padx=14, fill="x")
+
         # Score Threshold
         section_label("Min Score Threshold")
         tf_frame = ctk.CTkFrame(ctrl, fg_color="transparent")
@@ -596,7 +609,18 @@ class ScannerApp(ctk.CTk):
             text_color="#052e16", height=42, corner_radius=12,
             border_width=1, border_color=c["border"],
             command=self._start_scan)
-        self.run_btn.pack(fill="x", pady=(0, 8))
+        self.run_btn.pack(fill="x", pady=(0, 6))
+
+        # Stop — enabled only while a scan is running; calls engine.cancel()
+        self.stop_btn = ctk.CTkButton(
+            bottom, text="\u23f9   STOP",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color=c["red"], hover_color=c.get("red_hover", c["pink"]),
+            text_color="#2a0505", height=36, corner_radius=12,
+            border_width=1, border_color=c["border"],
+            state="disabled",
+            command=self._stop_scan)
+        self.stop_btn.pack(fill="x", pady=(0, 8))
 
         self.progress = ctk.CTkProgressBar(
             bottom, height=6, corner_radius=3,
@@ -608,6 +632,21 @@ class ScannerApp(ctk.CTk):
             bottom, text="Ready", font=ctk.CTkFont(size=10),
             text_color=c["text_dim"], anchor="w")
         self.progress_label.pack(fill="x", pady=(2, 0))
+
+        # Dead-symbol (negative) cache — status + manual clear
+        self.cache_row = ctk.CTkFrame(bottom, fg_color="transparent")
+        self.cache_status_lbl = ctk.CTkLabel(
+            self.cache_row, text="", font=ctk.CTkFont(size=10),
+            text_color=c["text_dim"], anchor="w")
+        self.cache_status_lbl.pack(side="left", fill="x", expand=True)
+        self.cache_clear_btn = ctk.CTkButton(
+            self.cache_row, text="Clear", width=48, height=22,
+            font=ctk.CTkFont(size=10),
+            fg_color=c["option_btn"], hover_color=c["red_hover"],
+            text_color=c["text"], corner_radius=8,
+            command=self._clear_negative_cache)
+        self.cache_row.pack(fill="x", pady=(4, 0))
+        self._refresh_neg_cache_ui()
 
     # ── Column 2: Main area (topbar + views) ─────────────────────────────
 
@@ -1156,6 +1195,28 @@ class ScannerApp(ctk.CTk):
         else:
             self._display_results(self.results)
 
+    def _rating_filter(self) -> str:
+        """Current rating dropdown selection, uppercased ('ALL' = no filter)."""
+        if hasattr(self, "rating_filter_var"):
+            return str(self.rating_filter_var.get()).upper()
+        return "ALL"
+
+    def _row_matches_filters(self, r: dict) -> bool:
+        """Whether a result row passes the search-text AND rating filters."""
+        if self.filter_text and self.filter_text not in r.get("ticker", "").upper():
+            return False
+        rating = self._rating_filter()
+        if rating != "ALL":
+            combined = (r.get("combined_rating") or "POOR").upper()
+            if combined != rating:
+                return False
+        return True
+
+    def _on_rating_change(self, choice: str = ""):
+        """Rating dropdown changed — re-filter the grid in place (no re-scan)."""
+        if hasattr(self, "all_results"):
+            self._display_results(self.all_results)
+
     # ── Settings Management ──────────────────────────────────────────────
 
     def _load_settings_to_ui(self):
@@ -1268,9 +1329,11 @@ class ScannerApp(ctk.CTk):
         save_settings(self.settings)
 
         self.scanning = True
+        self._scan_cancelled = False
         c = self.theme_colors
         self.run_btn.configure(state="disabled", text="\u23f3   SCANNING\u2026",
                                fg_color=c["card2"])
+        self.stop_btn.configure(state="normal", text="\u23f9   STOP")
         self.html_btn.configure(state="disabled")
         self.csv_btn.configure(state="disabled")
         self.clear_btn.configure(state="disabled")
@@ -1296,6 +1359,50 @@ class ScannerApp(ctk.CTk):
 
         thread = threading.Thread(target=self._run_scan, daemon=True)
         thread.start()
+
+    def _stop_scan(self):
+        """Cancel the running scan — the engine stops at the next safe point
+        (chunk boundary / batch end) and partial results stay on the grid."""
+        if not self.scanning:
+            return
+        engine = getattr(self, "_scan_engine", None)
+        self.stop_btn.configure(state="disabled", text="\u23f9   STOPPING\u2026")
+        if engine is not None:
+            engine.cancel()
+            self._log("Stop requested — finishing the current batch, then stopping...")
+        else:
+            self._log("Stop requested...")
+
+    # ── Negative (dead-symbol) cache ──────────────────────────────────────
+
+    def _refresh_neg_cache_ui(self):
+        """Update the dead-symbol cache status label to match the on-disk cache."""
+        try:
+            from . import data_fetcher
+            n = len(data_fetcher._negative_cache_load())
+            ttl_h = data_fetcher.NEGATIVE_CACHE_TTL_HOURS
+        except Exception:
+            n, ttl_h = 0, 24
+        if n:
+            self.cache_status_lbl.configure(
+                text=f"Dead-symbol cache: {n} (auto-resets ~{ttl_h}h)"
+            )
+            self.cache_clear_btn.pack(side="right", padx=(6, 0))
+        else:
+            self.cache_status_lbl.configure(text="Dead-symbol cache: empty")
+            self.cache_clear_btn.pack_forget()
+
+    def _clear_negative_cache(self):
+        """Forget every marked-dead symbol — fallback will re-attempt them all."""
+        try:
+            from . import data_fetcher
+            data_fetcher._negative_cache_update(
+                clears=list(data_fetcher._negative_cache_load().keys())
+            )
+            self._log("Cleared dead-symbol cache — fallback will re-attempt all symbols")
+        except Exception as e:
+            self._log(f"Could not clear dead-symbol cache: {e}")
+        self._refresh_neg_cache_ui()
 
     def _on_stream_batch(self, batch: list):
         """Incremental grid update — debounced + dict-indexed (O(n))."""
@@ -1325,27 +1432,18 @@ class ScannerApp(ctk.CTk):
                     self.all_results.append(r)
                     existing[t] = len(self.all_results) - 1
                     added += 1
-                # Filtered mirror
-                if self.filter_text:
-                    if self.filter_text in t.upper():
-                        if t in filtered_idx:
-                            self.filtered_results[filtered_idx[t]] = r
-                        else:
-                            self.filtered_results.append(r)
-                            filtered_idx[t] = len(self.filtered_results) - 1
-                    else:
-                        if t in filtered_idx:
-                            idx = filtered_idx[t]
-                            # remove and rebuild index for subsequent items in same batch
-                            self.filtered_results.pop(idx)
-                            # rebuild once after batch for correctness
-                            filtered_idx = {fr.get("ticker"): i for i, fr in enumerate(self.filtered_results)}
-                else:
+                # Filtered mirror (search text AND rating dropdown)
+                if self._row_matches_filters(r):
                     if t in filtered_idx:
                         self.filtered_results[filtered_idx[t]] = r
                     else:
                         self.filtered_results.append(r)
                         filtered_idx[t] = len(self.filtered_results) - 1
+                else:
+                    if t in filtered_idx:
+                        self.filtered_results.pop(filtered_idx[t])
+                        # Rebuild index for subsequent items in the same batch
+                        filtered_idx = {fr.get("ticker"): i for i, fr in enumerate(self.filtered_results)}
             self.results = list(self.all_results)
             try:
                 self._render_current_page()
@@ -1392,15 +1490,16 @@ class ScannerApp(ctk.CTk):
                 on_batch=_on_batch,
             )
 
+            self._scan_cancelled = result.cancelled
+
             # Final sync — ensure sorted/filtered state matches full result (main-thread safe)
             def _final_sync():
                 self.results = result.results
                 self.all_results = list(result.results)
-                if self.filter_text:
-                    self.filtered_results = [r for r in result.results if self.filter_text in r.get("ticker", "").upper()]
-                else:
-                    self.filtered_results = list(result.results)
+                self.filtered_results = [r for r in result.results if self._row_matches_filters(r)]
                 self._render_current_page()
+                if result.cancelled:
+                    self._log(f"Scan stopped — showing {len(result.results)} partial results.")
                 if result.error:
                     self._log(f"Scan finished with error: {result.error}")
 
@@ -1415,10 +1514,7 @@ class ScannerApp(ctk.CTk):
         """Display filtered results with pagination (100/page) for 5,900 rows."""
         # Store full results for pagination / filtering
         self.all_results = list(results)
-        if self.filter_text:
-            self.filtered_results = [r for r in results if self.filter_text in r["ticker"].upper()]
-        else:
-            self.filtered_results = list(results)
+        self.filtered_results = [r for r in results if self._row_matches_filters(r)]
         self.current_page = 0
         self._render_current_page()
 
@@ -1467,7 +1563,8 @@ class ScannerApp(ctk.CTk):
                              font=ctk.CTkFont(size=11),
                              text_color=tc["text_dim"]).pack(anchor="center")
             else:
-                msg = ("No results match your filter." if results and self.filter_text
+                has_active_filter = bool(self.filter_text) or self._rating_filter() != "ALL"
+                msg = ("No results match your filter." if results and has_active_filter
                        else "No results found.")
                 ctk.CTkLabel(self.table_frame, text=msg,
                              text_color=tc["red"] if not results else tc["text_dim"],
@@ -1553,7 +1650,13 @@ class ScannerApp(ctk.CTk):
         # Header meta — use filtered count but indicate pagination
         if results:
             threshold = self.settings.get("min_score", 50)
-            suffix = f"  |  filter: '{self.filter_text}' ({len(shown)})" if self.filter_text else ""
+            filter_parts = []
+            if self.filter_text:
+                filter_parts.append(f"'{self.filter_text}'")
+            rating = self._rating_filter()
+            if rating != "ALL":
+                filter_parts.append(f"rating {rating.title()}")
+            suffix = f"  |  filter: {', '.join(filter_parts)} ({len(shown)})" if filter_parts else ""
             if len(shown) > page_size:
                 suffix += f"  |  showing {len(page_shown)} of {len(shown)} (page {self.current_page+1}/{total_pages})"
             self.result_count_label.configure(
@@ -1765,8 +1868,11 @@ class ScannerApp(ctk.CTk):
         c = self.theme_colors
         self.run_btn.configure(state="normal", text="\u25b6   RUN SCAN",
                                fg_color=c["purple"])
-        self.progress_label.configure(text="Done")
-        self.status_label.configure(text="Status: Done")
+        cancelled = getattr(self, "_scan_cancelled", False)
+        self.stop_btn.configure(state="disabled", text="\u23f9   STOP")
+        self.progress_label.configure(text="Stopped" if cancelled else "Done")
+        self.status_label.configure(text="Status: Stopped" if cancelled else "Status: Done")
+        self._refresh_neg_cache_ui()  # scans may have marked new symbols dead
         if self.results:
             self.html_btn.configure(state="normal")
             self.csv_btn.configure(state="normal")
