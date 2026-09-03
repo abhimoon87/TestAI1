@@ -1,8 +1,26 @@
 """Shared test fixtures for the HMAxEMA scanner test suite."""
 
+import logging
+
 import numpy as np
 import pandas as pd
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def silence_daemon_thread_logging():
+    """Keep daemon threads from logging into pytest's closed capture stream.
+
+    The abortable-download tests spawn executor threads that may emit log
+    records (e.g. "Chunk %d/%d done") after the test that created them has
+    finished and pytest closed its handler — producing cosmetic
+    "Logging error: I/O operation on closed file" noise at the end of a run.
+    Routing scanner.data_fetcher records to a NullHandler keeps the suite
+    output clean without affecting any assertions (no test uses caplog).
+    """
+    lg = logging.getLogger("scanner.data_fetcher")
+    lg.addHandler(logging.NullHandler())
+    lg.propagate = False
 
 
 @pytest.fixture

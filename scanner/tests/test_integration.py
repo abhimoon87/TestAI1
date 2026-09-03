@@ -301,3 +301,48 @@ class TestEndToEndConsistency:
                 cat_sum = sum(result[c] for c in categories)
                 assert abs(cat_sum - result["total"]) < 0.2, \
                     f"{ticker}: category sum {cat_sum:.1f} != total {result['total']:.1f}"
+
+
+class TestLiveCancel:
+    """Live cancel: engine.cancel() mid-scan must return promptly."""
+
+    def test_cancel_mid_scan_returns_promptly(self):
+        """Cancelling a live streaming scan returns quickly without errors."""
+        import threading
+        import time
+
+        from scanner.scanner_engine import ScannerEngine
+        from scanner.settings_store import DEFAULT_SETTINGS
+        from scanner.universes import UNIVERSES
+
+        tickers = UNIVERSES.get("FnO STOCKS", [])[:50]
+        assert tickers, "FnO STOCKS universe is empty"
+
+        settings = dict(DEFAULT_SETTINGS)
+        settings["data_period"] = "1y"
+        engine = ScannerEngine()
+        holder = {}
+
+        def worker():
+            holder["result"] = engine.scan_stream(
+                "FnO STOCKS", settings=settings, period="1y",
+                timeframe="D", index_symbol="NSEI",
+            )
+
+        th = threading.Thread(target=worker, daemon=True)
+        t0 = time.time()
+        th.start()
+        # Cancel while the live download is still in flight
+        time.sleep(5)
+        engine.cancel()
+        t_cancel = time.time()
+        th.join(timeout=90)
+        latency = time.time() - t_cancel
+
+        assert not th.is_alive(), "scan_stream did not return after cancel"
+        assert latency < 30, f"cancel latency too high: {latency:.1f}s"
+        result = holder.get("result")
+        assert result is not None
+        assert result.error is None
+        # Either the cancel was honored or the small scan completed with data
+        assert result.cancelled or len(result.results) > 0
