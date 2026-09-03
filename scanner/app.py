@@ -95,6 +95,8 @@ DEFAULT_SETTINGS = {
     "data_period": "1y",
     "timeframe": "D",
     "trend_filter": "All",
+    # Dead-symbol cache
+    "negative_cache_ttl_hours": 24,
     # UI
     "theme": "dark",
 }
@@ -300,6 +302,7 @@ class ScannerApp(ctk.CTk):
             pass
 
         self.settings = load_settings()
+        self._apply_cache_settings()
         self.results = []
         self.scanning = False
         self.filter_text = ""
@@ -980,6 +983,9 @@ class ScannerApp(ctk.CTk):
                 ("Pivot Length", "sc_pivot_len", "int", (1, 20)),
                 ("Bands Multiplier", "sc_bands_mult", "float", (0.1, 3.0)),
             ]),
+            ("Data / Cache", [
+                ("Dead-Symbol Cache TTL (hours)", "negative_cache_ttl_hours", "int", (1, 168)),
+            ]),
         ]
 
         c = self.theme_colors
@@ -1219,6 +1225,17 @@ class ScannerApp(ctk.CTk):
 
     # ── Settings Management ──────────────────────────────────────────────
 
+    def _apply_cache_settings(self):
+        """Push the persisted dead-symbol cache TTL into data_fetcher."""
+        try:
+            from . import data_fetcher
+            data_fetcher.set_negative_cache_ttl_hours(
+                self.settings.get("negative_cache_ttl_hours", 24)
+            )
+        except Exception as e:
+            logger.debug("Could not apply cache TTL setting: %s", e)
+        self._refresh_neg_cache_ui()
+
     def _load_settings_to_ui(self):
         """Load saved settings into UI widgets."""
         self.threshold_slider.set(self.settings.get("min_score", 50))
@@ -1327,6 +1344,7 @@ class ScannerApp(ctk.CTk):
 
         self.settings = self._collect_settings()
         save_settings(self.settings)
+        self._apply_cache_settings()
 
         self.scanning = True
         self._scan_cancelled = False
@@ -1377,10 +1395,12 @@ class ScannerApp(ctk.CTk):
 
     def _refresh_neg_cache_ui(self):
         """Update the dead-symbol cache status label to match the on-disk cache."""
+        if not hasattr(self, "cache_status_lbl"):
+            return  # sidebar not built yet (early startup call)
         try:
             from . import data_fetcher
             n = len(data_fetcher._negative_cache_load())
-            ttl_h = data_fetcher.NEGATIVE_CACHE_TTL_HOURS
+            ttl_h = data_fetcher.negative_cache_ttl_hours()
         except Exception:
             n, ttl_h = 0, 24
         if n:

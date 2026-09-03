@@ -208,9 +208,12 @@ def _negative_cache_load() -> dict[str, float]:
                 with open(_NEGATIVE_CACHE_PATH, "r", encoding="utf-8") as f:
                     raw = json.load(f)
                 now = time.time()
+                # Read the override directly — negative_cache_ttl_hours() takes
+                # the same (non-reentrant) lock and would deadlock here.
                 cache = {
                     k: ts for k, ts in raw.items()
-                    if isinstance(ts, (int, float)) and now - ts < NEGATIVE_CACHE_TTL_HOURS * 3600
+                    if isinstance(ts, (int, float))
+                    and now - ts < _negative_cache_ttl_hours * 3600
                 }
             except Exception:
                 pass  # missing / corrupt file -> empty cache
@@ -237,7 +240,8 @@ def _negative_cache_contains(ticker: str) -> bool:
         ts = cache.get(ticker)
         if ts is None:
             return False
-        if time.time() - ts < NEGATIVE_CACHE_TTL_HOURS * 3600:
+        # Direct read: negative_cache_ttl_hours() re-locks -> deadlock.
+        if time.time() - ts < _negative_cache_ttl_hours * 3600:
             return True
         cache.pop(ticker, None)
         return False
@@ -259,6 +263,51 @@ def _negative_cache_update(marks: list | None = None, clears: list | None = None
                 changed = True
         if changed:
             _negative_cache_save()
+
+
+# ── Runtime TTL override + per-scan skip counter ────────────────────────────
+# The TTL is configurable from the GUI settings; the skip counter lets the
+# engine report how many dead symbols were skipped in the scan summary.
+_negative_cache_ttl_hours: float = NEGATIVE_CACHE_TTL_HOURS
+_neg_cache_skips = 0
+_neg_cache_skips_lock = threading.Lock()
+
+
+def set_negative_cache_ttl_hours(hours: float | None) -> None:
+    """Override the expiry window (hours); None restores the default."""
+    global _negative_cache_ttl_hours
+    with _negative_lock:
+        _negative_cache_ttl_hours = (
+            max(0.5, float(hours)) if hours else NEGATIVE_CACHE_TTL_HOURS
+        )
+
+
+def negative_cache_ttl_hours() -> float:
+    """Current expiry window in hours (default or runtime override)."""
+    with _negative_lock:
+        return _negative_cache_ttl_hours
+
+
+def reset_negative_cache_skip_count() -> None:
+    """Zero the per-scan skip counter (call before a scan's fetch pass)."""
+    global _neg_cache_skips
+    with _neg_cache_skips_lock:
+        _neg_cache_skips = 0
+
+
+def negative_cache_skip_count() -> int:
+    """How many symbols the current scan skipped via the negative cache."""
+    with _neg_cache_skips_lock:
+        return _neg_cache_skips
+
+
+def _record_negative_cache_skips(n: int) -> None:
+    """Accumulate skipped symbols for the scan summary."""
+    global _neg_cache_skips
+    if n <= 0:
+        return
+    with _neg_cache_skips_lock:
+        _neg_cache_skips += n
 
 
 def _nse_membership_set() -> set | None:
@@ -503,9 +552,10 @@ def fetch_batch_yfinance_stream(
             known_dead = [t for t in missing if _negative_cache_contains(t)]
             candidates = [t for t in missing if t not in known_dead]
             if known_dead:
+                _record_negative_cache_skips(len(known_dead))
                 logger.info(
                     "Skipping %d known-dead symbols via negative cache (marked within the last %dh)",
-                    len(known_dead), NEGATIVE_CACHE_TTL_HOURS,
+                    len(known_dead), negative_cache_ttl_hours(),
                 )
             skipped: list = []
             # jugaad-data and nselib only serve NSE mainboard equities, so

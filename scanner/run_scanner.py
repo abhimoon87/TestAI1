@@ -21,7 +21,7 @@ from .data_fetcher import (
     fetch_index_data,
 )
 from .report import generate_html_report, save_report
-from .scanner_engine import _score_ticker
+from .scanner_engine import ScannerEngine, _enrich_rows_in_place, _score_ticker
 from .universes import UNIVERSES
 
 logger = logging.getLogger(__name__)
@@ -195,6 +195,20 @@ def run_scan():
     direction_counts = {"Bull": 0, "Bear": 0}
     min_score_threshold = 50.0  # Swing trading threshold
 
+    # Large custom universes (>500) behave like the engine: fast technical
+    # pass first, then the top-200 are provider-enriched and re-scored so
+    # totals/ratings include fundamentals.
+    is_large = len(tickers) > 500
+    if is_large:
+        logger.info("  Large universe (%d stocks) — fast technical pass, enrich top 200 at end",
+                    len(tickers))
+        _engine = ScannerEngine()
+        global_data = _engine._fetch_global_enrichment(settings)
+        enrich = _engine._enrich_with_providers
+    else:
+        global_data = None
+        enrich = lambda _t, s, _g: dict(s)  # no 5-provider enrichment on small lists
+
     for i, (ticker, df) in enumerate(stock_data.items(), 1):
         logger.info("  [%d/%d] %s...", i, len(stock_data), ticker)
 
@@ -203,9 +217,9 @@ def run_scan():
             ticker, df,
             settings=settings, timeframe=timeframe, index_df=index_df,
             trend_filter="All",  # CLI has no directional filter
-            is_large=False,      # CLI always attaches fundamentals (no phase-2 pass)
-            global_data=None,
-            enrich=lambda _t, s, _g: dict(s),  # no 5-provider enrichment in CLI
+            is_large=is_large,
+            global_data=global_data,
+            enrich=enrich,
         )
         if scores is None:
             if reason == "filtered":
@@ -225,6 +239,25 @@ def run_scan():
         tag = "✓" if total >= min_score_threshold else "✗"
         sideways = " [CHOP]" if scores.get("is_sideways") else ""
         logger.info("    %s %s %s %.1f%s", dir_icon, tag, icon, total, sideways)
+
+    # ── Phase 2 (large universes): enrich top 200 + re-score like the engine ─
+    if is_large and results:
+        results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
+        top_n = min(200, len(results))
+        top = results[:top_n]
+        rest = results[top_n:]
+        logger.info("Enriching top %d of %d with fundamentals/sentiment...",
+                    top_n, len(results))
+        enriched_top = _enrich_rows_in_place(
+            top, stock_data,
+            settings=settings, global_data=global_data,
+            timeframe=timeframe, index_df=index_df,
+            enrich=enrich,
+        )
+        results = enriched_top + rest
+        results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
+        logger.info("Top %d enrichment complete — scores re-computed with fundamentals",
+                    top_n)
 
     if not results:
         logger.warning("\n  ✗ No stocks passed the filter.")

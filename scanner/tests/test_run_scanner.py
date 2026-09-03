@@ -6,6 +6,7 @@ run run_scan() with every external call (fetch, report, prompts) mocked.
 """
 
 import builtins
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -118,3 +119,42 @@ class TestCliScoringLoop:
         assert captured["results"] == [expected]
         # The flat series did not produce a recent crossover
         assert len(captured["results"]) == 1
+
+    def test_large_universe_gets_phase2_enrichment(self, cli_mocks, monkeypatch):
+        """Custom universes >500 trigger fast scoring + top-200 enrich/re-score."""
+        stock_data, _ = cli_mocks
+        # 501 tickers -> large mode; only 2 real frames come back from fetch
+        names = [f"T{i}" for i in range(501)]
+        monkeypatch.setattr(run_scanner, "select_universe", lambda: ("BIG", names))
+        data = {"AAA": stock_data["AAA"], "BBB": stock_data["BBB"]}
+        monkeypatch.setattr(run_scanner, "fetch_batch_yfinance", lambda *a, **kw: data)
+
+        fake_engine = MagicMock()
+        fake_engine._fetch_global_enrichment.return_value = {"macro": 1}
+        fake_engine._enrich_with_providers.return_value = {}
+        monkeypatch.setattr(run_scanner, "ScannerEngine", lambda: fake_engine)
+
+        enrich_calls = {}
+
+        def fake_enrich_top(rows, batch_data, **kw):
+            enrich_calls["n"] = len(rows)
+            enrich_calls["kw"] = kw
+            return rows
+
+        monkeypatch.setattr(run_scanner, "_enrich_rows_in_place", fake_enrich_top)
+
+        run_scanner.run_scan()
+
+        # Phase-2 ran with the engine's provider-enrichment callable and the
+        # fetched global data; only the one scored row was enriched
+        assert enrich_calls["n"] == 1
+        assert enrich_calls["kw"]["global_data"] == {"macro": 1}
+        assert enrich_calls["kw"]["timeframe"] == "D"
+        assert enrich_calls["kw"]["enrich"] is fake_engine._enrich_with_providers
+        # And phase-1 used the engine semantics too
+        assert fake_engine._fetch_global_enrichment.called_once
+
+    def test_small_universe_skips_engine_setup(self, cli_mocks, monkeypatch):
+        """Small lists must not instantiate the engine or fetch global data."""
+        monkeypatch.setattr(run_scanner, "ScannerEngine", lambda: pytest.fail("no engine needed"))
+        run_scanner.run_scan()  # 2-ticker TEST universe -> small path

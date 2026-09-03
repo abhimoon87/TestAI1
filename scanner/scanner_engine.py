@@ -16,6 +16,8 @@ from .data_fetcher import (
     fetch_batch_yfinance_stream,
     fetch_fundamentals,
     fetch_index_data,
+    negative_cache_skip_count,
+    reset_negative_cache_skip_count,
 )
 from .scoring import check_filter, compute_scores, get_direction
 from .settings_store import get_api_key, load_api_config
@@ -464,6 +466,7 @@ class ScannerEngine:
             # fallback pass (jugaad-data/nselib) for anything yfinance missed.
             self._progress(0.05, f"Batch downloading {len(tickers)} stocks...")
             self._log(f"Batch downloading {len(tickers)} stocks via yfinance (fallback: jugaad-data/nselib)...")
+            reset_negative_cache_skip_count()
             batch_data = fetch_batch_yfinance(
                 tickers,
                 period=period,
@@ -595,6 +598,9 @@ class ScannerEngine:
             self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
             if poor_rating_hidden:
                 self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
+            neg_skips = negative_cache_skip_count()
+            if neg_skips:
+                self._log(f"  Dead-symbols skipped (negative cache): {neg_skips}")
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
             self._log(f"  Scored {settings.get('min_score', 50)}+: {passed}")
             
@@ -688,6 +694,7 @@ class ScannerEngine:
                 )
 
             # ── Stream per parallel batch ─────────────────────────────────
+            reset_negative_cache_skip_count()
             for chunk_data in fetch_batch_yfinance_stream(
                 tickers,
                 period=period,
@@ -797,6 +804,9 @@ class ScannerEngine:
             self._log(f"  Filtered out: {filtered_out}")
             if poor_rating_hidden:
                 self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
+            neg_skips = negative_cache_skip_count()
+            if neg_skips:
+                self._log(f"  Dead-symbols skipped (negative cache): {neg_skips}")
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull',0)} Bull, {direction_counts.get('Bear',0)} Bear)")
             self._log(f"  Scored {settings.get('min_score',50)}+: {passed}")
             result.results = results

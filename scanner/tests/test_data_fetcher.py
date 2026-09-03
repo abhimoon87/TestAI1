@@ -32,6 +32,10 @@ def _isolate_negative_cache(tmp_path, monkeypatch):
         str(tmp_path / "dead_symbols.json"),
     )
     monkeypatch.setattr(data_fetcher, "_negative_cache", None)
+    monkeypatch.setattr(
+        data_fetcher, "_negative_cache_ttl_hours",
+        float(data_fetcher.NEGATIVE_CACHE_TTL_HOURS),
+    )
     yield
     monkeypatch.setattr(data_fetcher, "_negative_cache", None)
 
@@ -678,3 +682,26 @@ class TestNegativeCache:
 
         assert data_fetcher._negative_cache_contains("GONER")
         assert not data_fetcher._negative_cache_contains("ANCIENT")
+
+    def test_ttl_override_changes_expiry(self):
+        """set_negative_cache_ttl_hours() shrinks/extends the expiry window."""
+        data_fetcher._negative_cache_update(marks=["S1"])
+        data_fetcher._negative_cache["S1"] = time.time() - 2 * 3600  # 2h old
+        assert data_fetcher._negative_cache_contains("S1")  # default 24h TTL
+
+        data_fetcher.set_negative_cache_ttl_hours(1)  # shrink to 1h
+        assert not data_fetcher._negative_cache_contains("S1")  # now expired
+        assert data_fetcher.negative_cache_ttl_hours() == 1.0
+
+        data_fetcher.set_negative_cache_ttl_hours(None)  # back to default
+        assert data_fetcher.negative_cache_ttl_hours() == data_fetcher.NEGATIVE_CACHE_TTL_HOURS
+
+    def test_skip_count_reset_and_accumulate(self):
+        """The per-scan skip counter resets and only accumulates positive skips."""
+        data_fetcher.reset_negative_cache_skip_count()
+        data_fetcher._record_negative_cache_skips(0)  # no-op
+        assert data_fetcher.negative_cache_skip_count() == 0
+        data_fetcher._record_negative_cache_skips(12)
+        assert data_fetcher.negative_cache_skip_count() == 12
+        data_fetcher.reset_negative_cache_skip_count()
+        assert data_fetcher.negative_cache_skip_count() == 0

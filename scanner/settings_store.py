@@ -52,6 +52,8 @@ DEFAULT_SETTINGS = {
     "data_period": "1y",
     "timeframe": "D",
     "trend_filter": "All",
+    # Dead-symbol cache
+    "negative_cache_ttl_hours": 24,
     # UI
     "theme": "dark",
     # Provider toggles
