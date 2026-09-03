@@ -42,6 +42,22 @@ def _isolate_negative_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(data_fetcher, "_negative_cache", None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_enrichment_cache(tmp_path, monkeypatch):
+    """Point the on-disk enrichment cache at a temp file and reset per test."""
+    monkeypatch.setattr(
+        data_fetcher, "_ENRICHMENT_CACHE_PATH",
+        str(tmp_path / "enrichment_cache.json"),
+    )
+    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+    monkeypatch.setattr(
+        data_fetcher, "ENRICHMENT_CACHE_TTL_HOURS",
+        float(data_fetcher.ENRICHMENT_CACHE_TTL_HOURS),
+    )
+    yield
+    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
@@ -717,6 +733,84 @@ class TestNegativeCache:
         assert data_fetcher.negative_cache_skip_count() == 12
         data_fetcher.reset_negative_cache_skip_count()
         assert data_fetcher.negative_cache_skip_count() == 0
+
+
+class TestEnrichmentCache:
+    """Phase-2 provider results are cached so repeat scans skip the 5-provider fetch."""
+
+    def test_put_then_get_round_trip(self):
+        """A cached entry returns provider keys and fundamentals as stored."""
+        providers = {"_sentiment_score": 0.9, "_insider_score": 5}
+        data_fetcher._enrichment_cache_put("TCS", providers, {"pe_ratio": 20.0})
+
+        entry = data_fetcher._enrichment_cache_get("TCS")
+        assert entry is not None
+        assert entry["providers"] == providers
+        assert entry["fundamentals"] == {"pe_ratio": 20.0}
+
+    def test_known_none_fundamentals_round_trip(self):
+        """A ticker with no fundamentals is cached as None, not re-fetched."""
+        data_fetcher._enrichment_cache_put("SMALL", {"_social_score": 0.2}, None)
+        entry = data_fetcher._enrichment_cache_get("SMALL")
+        assert entry is not None
+        assert entry["fundamentals"] is None
+
+    def test_empty_providers_are_not_cached(self):
+        """All-providers-failed (transient outage) must not freeze into the cache."""
+        data_fetcher._enrichment_cache_put("TCS", {}, {"pe_ratio": 20.0})
+        assert data_fetcher._enrichment_cache_get("TCS") is None
+        assert data_fetcher.enrichment_cache_size() == 0
+
+    def test_expired_entry_is_evicted(self):
+        """Past the TTL window the cache is re-populated from the providers."""
+        data_fetcher._enrichment_cache_put("STALE", {"_social_score": 0.5}, None)
+        data_fetcher._enrichment_cache["STALE"]["ts"] = time.time() - 25 * 3600
+
+        assert data_fetcher._enrichment_cache_get("STALE") is None
+        assert "STALE" not in data_fetcher._enrichment_cache
+
+    def test_entry_survives_new_process_load_from_disk(self):
+        """Entries persist to disk and reload on a fresh process."""
+        data_fetcher._enrichment_cache_put("RELIANCE", {"_fii_is_buying": True}, None)
+        data_fetcher._enrichment_cache = None  # simulate a new process
+
+        entry = data_fetcher._enrichment_cache_get("RELIANCE")
+        assert entry is not None
+        assert entry["providers"] == {"_fii_is_buying": True}
+
+        # An expired entry on disk is dropped on load
+        import json
+        with open(data_fetcher._ENRICHMENT_CACHE_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        raw["ANCIENT"] = {"ts": time.time() - 48 * 3600, "providers": {}, "fundamentals": None}
+        with open(data_fetcher._ENRICHMENT_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(raw, f)
+        data_fetcher._enrichment_cache = None
+
+        assert data_fetcher._enrichment_cache_get("RELIANCE") is not None
+        assert data_fetcher._enrichment_cache_get("ANCIENT") is None
+
+    def test_clear_wipes_memory_and_disk(self):
+        """enrichment_cache_clear() empties both the in-memory map and the file."""
+        data_fetcher._enrichment_cache_put("TCS", {"_social_score": 0.5}, None)
+        assert data_fetcher.enrichment_cache_size() == 1
+
+        data_fetcher.enrichment_cache_clear()
+        assert data_fetcher.enrichment_cache_size() == 0
+        assert data_fetcher._enrichment_cache_get("TCS") is None
+
+    def test_hit_miss_counts_reset_and_accumulate(self):
+        """Per-scan hit/miss counters reset and accumulate from worker threads."""
+        data_fetcher.reset_enrichment_cache_counts()
+        assert data_fetcher.enrichment_cache_hits() == 0
+        assert data_fetcher.enrichment_cache_misses() == 0
+        data_fetcher._record_enrichment_cache_hit()
+        data_fetcher._record_enrichment_cache_miss()
+        data_fetcher._record_enrichment_cache_hit()
+        assert data_fetcher.enrichment_cache_hits() == 2
+        assert data_fetcher.enrichment_cache_misses() == 1
+        data_fetcher.reset_enrichment_cache_counts()
+        assert data_fetcher.enrichment_cache_hits() == 0
 
 
 class TestAbortableBatchDownload:

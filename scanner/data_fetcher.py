@@ -310,6 +310,143 @@ def _record_negative_cache_skips(n: int) -> None:
         _neg_cache_skips += n
 
 
+# ── Enrichment cache: phase-2 provider results ──────────────────────────────
+# The top-200 phase-2 pass runs 5 parallel provider fetches (sentiment,
+# social, delivery/FII-DII, screener, insider) plus fundamentals per ticker
+# — the dominant cost on full-market scans (~6 min of the ~9 min total).
+# Those values barely change intraday, so remember them on disk
+# (.cache/enrichment_cache.json) and replay them on repeat scans within the
+# TTL window (default 24h) instead of re-hitting the providers.
+ENRICHMENT_CACHE_TTL_HOURS = 24
+_ENRICHMENT_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".cache", "enrichment_cache.json"
+)
+_enrichment_cache: dict | None = None  # ticker -> {ts, providers, fundamentals}
+_enrichment_lock = threading.Lock()
+_enrichment_hits = 0
+_enrichment_misses = 0
+_enrichment_counts_lock = threading.Lock()
+
+
+def _enrichment_cache_load() -> dict:
+    """Load unexpired entries from disk once per process."""
+    global _enrichment_cache
+    with _enrichment_lock:
+        if _enrichment_cache is None:
+            cache: dict = {}
+            try:
+                with open(_ENRICHMENT_CACHE_PATH, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                now = time.time()
+                for k, entry in raw.items():
+                    if (
+                        isinstance(entry, dict)
+                        and isinstance(entry.get("ts"), (int, float))
+                        and now - entry["ts"] < ENRICHMENT_CACHE_TTL_HOURS * 3600
+                    ):
+                        cache[k] = entry
+            except Exception:
+                pass  # missing / corrupt file -> empty cache
+            _enrichment_cache = cache
+        return _enrichment_cache
+
+
+def _enrichment_cache_save() -> None:
+    """Persist the in-memory cache (caller must hold the lock)."""
+    try:
+        os.makedirs(os.path.dirname(_ENRICHMENT_CACHE_PATH), exist_ok=True)
+        tmp = _ENRICHMENT_CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_enrichment_cache, f)
+        os.replace(tmp, _ENRICHMENT_CACHE_PATH)
+    except Exception:
+        logger.debug("Enrichment-cache write failed", exc_info=True)
+
+
+def _enrichment_cache_get(ticker: str) -> dict | None:
+    """Fresh cached entry for a ticker (providers + fundamentals), else None."""
+    cache = _enrichment_cache_load()
+    with _enrichment_lock:
+        entry = cache.get(ticker)
+        if entry is None:
+            return None
+        if time.time() - entry.get("ts", 0) < ENRICHMENT_CACHE_TTL_HOURS * 3600:
+            return entry
+        cache.pop(ticker, None)  # expired — evict
+        return None
+
+
+def _enrichment_cache_put(
+    ticker: str, providers: dict, fundamentals: dict | None
+) -> None:
+    """Store provider keys + fundamentals for a ticker (atomic write).
+
+    Entries without any provider data are not cached — a transient provider
+    outage must not freeze scores into the cache.
+    """
+    if not providers:
+        return
+    cache = _enrichment_cache_load()
+    with _enrichment_lock:
+        cache[ticker] = {
+            "ts": time.time(),
+            "providers": providers,
+            "fundamentals": fundamentals,
+        }
+        _enrichment_cache_save()
+
+
+def enrichment_cache_clear() -> None:
+    """Wipe the enrichment cache (memory + disk)."""
+    global _enrichment_cache
+    with _enrichment_lock:
+        _enrichment_cache = {}
+        _enrichment_cache_save()
+
+
+def enrichment_cache_size() -> int:
+    """Number of tickers currently held in the enrichment cache."""
+    # Load first: _enrichment_cache_load() takes the same (non-reentrant)
+    # lock, so calling it while holding it would deadlock.
+    cache = _enrichment_cache_load()
+    with _enrichment_lock:
+        return len(cache)
+
+
+def reset_enrichment_cache_counts() -> None:
+    """Zero the per-scan hit/miss counters (call before an enrichment pass)."""
+    global _enrichment_hits, _enrichment_misses
+    with _enrichment_counts_lock:
+        _enrichment_hits = 0
+        _enrichment_misses = 0
+
+
+def enrichment_cache_hits() -> int:
+    """Rows this scan served from the enrichment cache."""
+    with _enrichment_counts_lock:
+        return _enrichment_hits
+
+
+def enrichment_cache_misses() -> int:
+    """Rows this scan fetched from the providers (and cached)."""
+    with _enrichment_counts_lock:
+        return _enrichment_misses
+
+
+def _record_enrichment_cache_hit() -> None:
+    """Increment the per-scan cache-hit counter (worker threads)."""
+    global _enrichment_hits
+    with _enrichment_counts_lock:
+        _enrichment_hits += 1
+
+
+def _record_enrichment_cache_miss() -> None:
+    """Increment the per-scan cache-miss counter (worker threads)."""
+    global _enrichment_misses
+    with _enrichment_counts_lock:
+        _enrichment_misses += 1
+
+
 def _nse_membership_set() -> set | None:
     """Current NSE mainboard symbols (upper-cased), or None when unknown.
 

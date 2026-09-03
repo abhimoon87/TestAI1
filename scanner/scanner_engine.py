@@ -12,11 +12,18 @@ from typing import Any
 from requests.exceptions import RequestException
 
 from .data_fetcher import (
+    _enrichment_cache_get,
+    _enrichment_cache_put,
+    _record_enrichment_cache_hit,
+    _record_enrichment_cache_miss,
+    enrichment_cache_hits,
+    enrichment_cache_misses,
     fetch_batch_yfinance,
     fetch_batch_yfinance_stream,
     fetch_fundamentals,
     fetch_index_data,
     negative_cache_skip_count,
+    reset_enrichment_cache_counts,
     reset_negative_cache_skip_count,
 )
 from .scoring import check_filter, compute_scores, get_direction
@@ -143,7 +150,23 @@ def _enrich_rows_in_place(
     def _enrich_one(r):
         ticker = r["ticker"]
         try:
-            enriched = enrich(ticker, settings, global_data)
+            # Provider results barely change intraday — replay the disk
+            # cache on repeat scans instead of re-running the 5 parallel
+            # provider fetches per ticker (the dominant full-market cost).
+            cached = _enrichment_cache_get(ticker)
+            if cached is not None:
+                _record_enrichment_cache_hit()
+                enriched = dict(settings)
+                enriched.update(global_data or {})
+                enriched.update(cached.get("providers") or {})
+            else:
+                _record_enrichment_cache_miss()
+                enriched = enrich(ticker, settings, global_data)
+                provider_keys = {
+                    k: v for k, v in enriched.items()
+                    if k.startswith("_") and k not in settings
+                    and k not in (global_data or {})
+                }
             for k, v in enriched.items():
                 if k.startswith("_") and k not in r:
                     r[k] = v
@@ -153,7 +176,12 @@ def _enrich_rows_in_place(
             if df is not None and not df.empty:
                 if getattr(df, '_fundamentals', None) is None:
                     try:
-                        fund = fetch_fundamentals(ticker)
+                        if cached is not None:
+                            fund = cached.get("fundamentals")  # may be None = known-none
+                        else:
+                            fund = fetch_fundamentals(ticker)
+                            if provider_keys:
+                                _enrichment_cache_put(ticker, provider_keys, fund)
                         if fund is not None:
                             object.__setattr__(df, '_fundamentals', fund)
                     except (RequestException, ValueError, KeyError):
@@ -168,6 +196,7 @@ def _enrich_rows_in_place(
             logger.debug("Top enrichment failed for %s: %s", ticker, e)
         return r
 
+    reset_enrichment_cache_counts()
     executor = ThreadPoolExecutor(max_workers=8)
     future_to_row = {executor.submit(_enrich_one, r): r for r in rows}
     try:
@@ -192,6 +221,12 @@ def _enrich_rows_in_place(
             fut.result()  # _enrich_one already caught its own exceptions
     if not cancelled:
         executor.shutdown(wait=True)
+    hits, misses = enrichment_cache_hits(), enrichment_cache_misses()
+    if hits or misses:
+        logger.info(
+            "Enrichment cache: %d/%d rows served from cache",
+            hits, hits + misses,
+        )
     return rows  # mutated in place; unfinished rows keep phase-1 scores
 
 
