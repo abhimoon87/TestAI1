@@ -1,43 +1,44 @@
 """Unit tests for the GUI enrichment-cache status/clear handlers in scanner.app.
 
 The handlers are exercised without a display by creating an un-initialized
-ScannerApp (``__new__``) and attaching recorder stand-ins for the CTk label
-and button, so no window or event loop is required.
+ScannerApp (``__new__``) and attaching recorder stand-ins for the Flet label,
+button and page, so no window or event loop is required.
 """
 
-import scanner.app as app_mod
 import scanner.data_fetcher as data_fetcher
 from scanner.app import ScannerApp
 
 
-class _FakeWidget:
-    """Recorder stand-in for a CTkLabel / CTkButton."""
+class _FakeLabel:
+    """Recorder stand-in for a Flet Text control (uses ``.value``)."""
 
     def __init__(self):
-        self.text = None
-        self.configure_kwargs = {}
-        self.pack_kwargs = None
-        self.pack_calls = 0
-        self.forget_calls = 0
+        self.value = None
 
-    def configure(self, **kwargs):
-        self.configure_kwargs.update(kwargs)
-        if "text" in kwargs:
-            self.text = kwargs["text"]
 
-    def pack(self, **kwargs):
-        self.pack_kwargs = kwargs
-        self.pack_calls += 1
+class _FakeButton:
+    """Recorder stand-in for a Flet button (uses ``.visible``)."""
 
-    def pack_forget(self):
-        self.forget_calls += 1
+    def __init__(self):
+        self.visible = True
+
+
+class _FakePage:
+    """Recorder stand-in for a Flet Page (tracks ``update()`` calls)."""
+
+    def __init__(self):
+        self.update_calls = 0
+
+    def update(self):
+        self.update_calls += 1
 
 
 def _make_app():
     """Un-initialized ScannerApp with recorder widgets + a _log hook."""
     app = ScannerApp.__new__(ScannerApp)
-    app.enrich_cache_status_lbl = _FakeWidget()
-    app.enrich_cache_clear_btn = _FakeWidget()
+    app.enrich_cache_status_lbl = _FakeLabel()
+    app.enrich_cache_clear_btn = _FakeButton()
+    app.page = _FakePage()
     app.logged = []
     app._log = app.logged.append
     return app
@@ -56,10 +57,8 @@ def test_refresh_populated_shows_count_and_reveals_clear(monkeypatch):
 
     app._refresh_enrich_cache_ui()
 
-    assert app.enrich_cache_status_lbl.text == _populated_text(3)
-    assert app.enrich_cache_clear_btn.pack_calls == 1
-    assert app.enrich_cache_clear_btn.pack_kwargs == {"side": "right", "padx": (6, 0)}
-    assert app.enrich_cache_clear_btn.forget_calls == 0
+    assert app.enrich_cache_status_lbl.value == _populated_text(3)
+    assert app.enrich_cache_clear_btn.visible is True
 
 
 def test_refresh_empty_hides_clear_button(monkeypatch):
@@ -68,18 +67,18 @@ def test_refresh_empty_hides_clear_button(monkeypatch):
 
     app._refresh_enrich_cache_ui()
 
-    assert app.enrich_cache_status_lbl.text == "Enrichment cache: empty"
-    assert app.enrich_cache_clear_btn.forget_calls == 1
-    assert app.enrich_cache_clear_btn.pack_calls == 0
+    assert app.enrich_cache_status_lbl.value == "Enrichment cache: empty"
+    assert app.enrich_cache_clear_btn.visible is False
 
 
-def test_refresh_before_sidebar_built_is_noop():
-    """Early-startup call (no widgets yet) must not raise or touch data_fetcher.
+def test_refresh_before_sidebar_built_is_noop(monkeypatch):
+    """Early-startup call (no widgets yet) must not raise or touch data_fetcher."""
 
-    Uses a plain object instead of a __new__-only ScannerApp: without CTk's
-    __init__, attribute lookup on a missing name recurses through CTk's
-    __getattr__, which would mask what the guard itself does.
-    """
+    def boom():
+        raise AssertionError("data_fetcher must not be touched before sidebar exists")
+
+    monkeypatch.setattr(data_fetcher, "enrichment_cache_size", boom)
+
     class _NoSidebarYet:
         pass
 
@@ -95,8 +94,8 @@ def test_refresh_falls_back_to_empty_when_cache_unreadable(monkeypatch):
 
     app._refresh_enrich_cache_ui()
 
-    assert app.enrich_cache_status_lbl.text == "Enrichment cache: empty"
-    assert app.enrich_cache_clear_btn.forget_calls == 1
+    assert app.enrich_cache_status_lbl.value == "Enrichment cache: empty"
+    assert app.enrich_cache_clear_btn.visible is False
 
 
 def test_clear_wipes_real_cache_and_refreshes(tmp_path, monkeypatch):
@@ -112,16 +111,17 @@ def test_clear_wipes_real_cache_and_refreshes(tmp_path, monkeypatch):
 
     app = _make_app()
     app._refresh_enrich_cache_ui()
-    assert app.enrich_cache_status_lbl.text == _populated_text(2)
-    assert app.enrich_cache_clear_btn.pack_calls == 1
+    assert app.enrich_cache_status_lbl.value == _populated_text(2)
+    assert app.enrich_cache_clear_btn.visible is True
 
     app._clear_enrichment_cache()
 
     assert data_fetcher.enrichment_cache_size() == 0
     assert app.logged == ["Cleared enrichment cache — next scan will re-fetch phase-2 data"]
-    # UI refreshed to the empty state
-    assert app.enrich_cache_status_lbl.text == "Enrichment cache: empty"
-    assert app.enrich_cache_clear_btn.forget_calls == 1
+    # UI refreshed to the empty state and flushed to the page
+    assert app.enrich_cache_status_lbl.value == "Enrichment cache: empty"
+    assert app.enrich_cache_clear_btn.visible is False
+    assert app.page.update_calls >= 1
 
 
 def test_clear_error_is_logged_and_ui_still_refreshes(monkeypatch):
@@ -137,5 +137,5 @@ def test_clear_error_is_logged_and_ui_still_refreshes(monkeypatch):
     assert len(app.logged) == 1
     assert app.logged[0].startswith("Could not clear enrichment cache: disk full")
     # Refresh still ran with the (patched) populated cache
-    assert app.enrich_cache_status_lbl.text == _populated_text(5)
-    assert app.enrich_cache_clear_btn.pack_calls == 1
+    assert app.enrich_cache_status_lbl.value == _populated_text(5)
+    assert app.enrich_cache_clear_btn.visible is True

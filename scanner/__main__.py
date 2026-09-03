@@ -10,13 +10,11 @@ import sys
 
 
 def main():
-    # Initialize trace log first — captures everything from here on
     try:
         from .trace import setup_trace
-
         setup_trace()
     except Exception:
-        pass  # never block startup on trace init
+        pass
 
     args = sys.argv[1:]
 
@@ -24,10 +22,9 @@ def main():
         from .run_scanner import run_scan
         run_scan()
     else:
-        # Default: launch the GUI
-        from .app import ScannerApp
-        app = ScannerApp()
-        app.mainloop()
+        import flet as ft
+        from .app import main as app_main
+        ft.run(app_main)
 
 
 if __name__ == "__main__":

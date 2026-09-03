@@ -21,7 +21,7 @@ from .trace import trace
 
 logger = logging.getLogger(__name__)
 
-from .data_providers import DataProvider
+from .data_providers import DataProvider, _get_cached, _set_cached
 
 # ── OHLCV Resampling ───────────────────────────────────────────────────────
 
@@ -626,8 +626,40 @@ def fetch_batch_yfinance_stream(
         )
 
         def _fetch_chunk(chunk: list, ci: int) -> dict:
-            yf_tickers = [f"{t}.NS" for t in chunk]
-            ticker_map = {f"{t}.NS": t for t in chunk}
+            # Cache-first: replay fresh daily bars from the per-ticker disk
+            # cache and download only what's missing/expired — repeat scans
+            # (within the price-cache TTL) skip re-downloading unchanged
+            # symbols. Frames are cached as DAILY bars keyed by download_period
+            # so every timeframe shares one download; resampling happens here.
+            chunk_results: dict = {}
+            to_download: list = []
+            for t in chunk:
+                try:
+                    daily = _get_cached(t, download_period, "cache")
+                except Exception as e:
+                    logger.debug("Batch cache read failed for %s: %s", t, e)
+                    daily = None
+                if daily is not None and not daily.empty:
+                    df = daily if timeframe == "D" else resample_ohlcv(daily, timeframe)
+                    if df is not None and len(df) >= 50:
+                        chunk_results[t] = df
+                        continue
+                to_download.append(t)
+            cached_hits = len(chunk_results)
+            if not to_download:
+                logger.info(
+                    "Chunk %d/%d done: %d tickers (all served from disk cache)",
+                    ci, len(chunks), len(chunk_results),
+                )
+                return chunk_results
+            if cached_hits:
+                logger.info(
+                    "Chunk %d/%d: %d served from disk cache, downloading %d via yfinance",
+                    ci, len(chunks), cached_hits, len(to_download),
+                )
+
+            yf_tickers = [f"{t}.NS" for t in to_download]
+            ticker_map = {f"{t}.NS": t for t in to_download}
             try:
                 data = yf.download(
                     yf_tickers,
@@ -640,15 +672,15 @@ def fetch_batch_yfinance_stream(
                 )
             except Exception as e:
                 logger.warning("Chunk %d/%d download failed: %s", ci, len(chunks), e)
-                return {}
+                return chunk_results
             if data is None or data.empty:
                 logger.debug("Chunk %d/%d returned empty", ci, len(chunks))
-                return {}
-            chunk_results: dict = {}
+                return chunk_results
             multi_idx = isinstance(data.columns, pd.MultiIndex)
+            single = len(to_download) == 1
             for yf_ticker, orig_ticker in ticker_map.items():
                 try:
-                    if len(chunk) == 1 and not multi_idx:
+                    if single and not multi_idx:
                         df = data.copy()
                     elif multi_idx:
                         if yf_ticker not in data.columns.get_level_values(0):
@@ -661,10 +693,17 @@ def fetch_batch_yfinance_stream(
                     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
                     df.columns = ["open", "high", "low", "close", "volume"]
                     df = df.dropna()
+                    daily = df  # normalized daily bars — the on-disk cache unit
                     if timeframe != "D":
                         df = resample_ohlcv(df, timeframe)
                     if df is not None and len(df) >= 50:
                         chunk_results[orig_ticker] = df
+                        try:
+                            _set_cached(orig_ticker, download_period, "cache", daily)
+                        except Exception as e:
+                            logger.debug(
+                                "Batch cache write failed for %s: %s", orig_ticker, e
+                            )
                 except Exception as e:
                     logger.debug("Skipping %s in chunk %d: %s", orig_ticker, ci, e)
                     continue

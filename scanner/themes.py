@@ -1,76 +1,75 @@
 """
-Theme definitions for the HMAxEMA Scanner GUI — Aurora v3.
+Theme definitions for the HMAxEMA Scanner GUI — Aurora v3 (Flet edition).
 
 Palette inspired by premium trading terminals (linear.app / vercel dark).
 Matches scanner_report HTML CSS variables in both variants.
-"""
 
-import customtkinter as ctk
+Flet uses ft.Theme and ft.ColorScheme for theming. This module provides
+color dicts consumed by the Flet UI code.
+"""
 
 from .settings_store import save_settings
 
 THEMES = {
     "dark": {
-        "ctk_mode": "dark",
-        # Base surfaces — deep forest with subtle blue undertone for depth
-        "root_bg": "#080f0c",
-        "rail_bg": "#060d09",
-        "side_bg": "#0b1a13",
-        "main_bg": "#080f0c",
-        "panel_bg": "#0e241b",
-        # Cards / rows — layered with 1px border for glass effect
-        "card": "#0f271c",
-        "card2": "#143323",
-        "card_hover": "#173a28",
-        "border": "#1e4a2f",
-        "border_light": "#244a32",
-        "row_alt": "#0c2016",
-        "row_hover": "#143323",
-        # Text — warm off-white for readability, muted sage for secondary
-        "text": "#dff0e2",
-        "text_dim": "#6b9a7a",
-        "text_faint": "#4a6b54",
-        # Accents — neon mint primary, amber secondary
-        "purple": "#00e67a",
-        "purple_hover": "#00ffa0",
-        "purple_muted": "#0a3d24",
-        "pink": "#c8ff00",
-        "cyan": "#22d3c4",
-        "cyan_dim": "#0e8f86",
-        "green": "#00e67a",
-        "lime": "#c8ff00",
-        "orange": "#ff9f1c",
-        "red": "#ff4d4d",
-        "red_hover": "#d62b2b",
-        "blue": "#3b9eff",
-        "yellow": "#ffd23f",
+        # Base surfaces — deep slate / charcoal
+        "root_bg": "#121212",
+        "rail_bg": "#0b0b0d",
+        "side_bg": "#161618",
+        "main_bg": "#121212",
+        "panel_bg": "#1a1a20",
+        # Cards / rows
+        "card": "#1c1c22",
+        "card2": "#24242c",
+        "card_hover": "#26262e",
+        "border": "#2b2b34",
+        "border_light": "#3a3a46",
+        "row_alt": "#151518",
+        "row_hover": "#1c1c22",
+        # Text
+        "text": "#e9eaf0",
+        "text_dim": "#8e93a8",
+        "text_faint": "#5c6178",
+        # Accents — neon blue family + supporting hues
+        "purple": "#38bdf8",
+        "purple_hover": "#7dd3fc",
+        "purple_muted": "#0c2b3d",
+        "pink": "#a78bfa",
+        "cyan": "#22d3ee",
+        "cyan_dim": "#0e7490",
+        "green": "#34d399",
+        "lime": "#a3e635",
+        "orange": "#fb923c",
+        "red": "#f87171",
+        "red_hover": "#ef4444",
+        "blue": "#60a5fa",
+        "yellow": "#facc15",
+        "neon": "#38bdf8",
         # Controls
-        "option_bg": "#143323",
-        "option_btn": "#1e4a2f",
-        "option_drop": "#0f271c",
-        "entry_bg": "#0f271c",
-        "entry_border": "#1e4a2f",
-        "entry_focus": "#00e67a",
-        "progress_bg": "#143323",
-        "progress_fg": "#00e67a",
-        "nav_active": "#143323",
-        "chip_good": "#0d3320",
-        "chip_bad": "#3d1a1a",
-        "chip_neutral": "#1a2e1f",
-        # Hero gradient — mint → teal → deep forest
-        "hero_grad": ["#00e67a", "#14c9b0", "#0a8a7a", "#062419"],
-        # Shadows
+        "option_bg": "#202027",
+        "option_btn": "#2b2b34",
+        "option_drop": "#1c1c22",
+        "entry_bg": "#1c1c22",
+        "entry_border": "#2b2b34",
+        "entry_focus": "#38bdf8",
+        "progress_bg": "#26262e",
+        "progress_fg": "#38bdf8",
+        "nav_active": "#202027",
+        "chip_good": "#0b2f2e",
+        "chip_bad": "#3a1519",
+        "chip_neutral": "#23232b",
+        # Hero gradient — neon blue into violet, dissolving to charcoal
+        "hero_grad": ["#0ea5e9", "#6366f1", "#3b2d8f", "#17171c"],
         "shadow": "#00000066",
+        # Flet theme mode
+        "flet_mode": "dark",
     },
     "light": {
-        "ctk_mode": "light",
-        # Base surfaces — warm paper with sage tint
         "root_bg": "#f0f5f1",
         "rail_bg": "#e6efe8",
         "side_bg": "#f7fbf8",
         "main_bg": "#f0f5f1",
         "panel_bg": "#ffffff",
-        # Cards / rows
         "card": "#ffffff",
         "card2": "#eef5f0",
         "card_hover": "#e6efe8",
@@ -78,11 +77,9 @@ THEMES = {
         "border_light": "#e6efe8",
         "row_alt": "#f7fbf8",
         "row_hover": "#eef5f0",
-        # Text
         "text": "#0f2318",
         "text_dim": "#5a7a65",
         "text_faint": "#8aa89a",
-        # Accents — deeper for light contrast
         "purple": "#047857",
         "purple_hover": "#065f46",
         "purple_muted": "#d1fae5",
@@ -96,7 +93,7 @@ THEMES = {
         "red_hover": "#b91c1c",
         "blue": "#0284c7",
         "yellow": "#ca8a04",
-        # Controls
+        "neon": "#0284c7",
         "option_bg": "#ffffff",
         "option_btn": "#d1e3d6",
         "option_drop": "#ffffff",
@@ -111,14 +108,14 @@ THEMES = {
         "chip_neutral": "#eef5f0",
         "hero_grad": ["#10b981", "#0ea5a5", "#0284c7", "#075985"],
         "shadow": "#00000014",
+        "flet_mode": "light",
     },
 }
 
 
-def apply_theme(app, theme_name: str):
-    """Apply a theme to the entire application."""
-    ctk.set_appearance_mode(THEMES[theme_name]["ctk_mode"])
-    app.current_theme = theme_name
-    app.theme_colors = THEMES[theme_name]
-    app.settings["theme"] = theme_name
-    save_settings(app.settings)
+def apply_theme(page, theme_name: str):
+    """Apply a Flet theme to the page."""
+    c = THEMES[theme_name]
+    page.theme_mode = "dark" if theme_name == "dark" else "light"
+    page.bgcolor = c["main_bg"]
+    page.theme = page.theme

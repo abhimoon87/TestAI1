@@ -1,6 +1,6 @@
 # Core dependencies
-customtkinter>=5.2.0
-Pillow>=9.0.0  # required by the GUI (CTkImage / PIL.Image)
+flet>=0.85.0
+Pillow>=9.0.0
 pandas>=2.0.0
 numpy>=1.24.0
 yfinance>=0.2.30

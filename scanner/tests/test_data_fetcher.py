@@ -58,6 +58,20 @@ def _isolate_enrichment_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_price_cache(tmp_path, monkeypatch):
+    """Point the per-ticker price pkl cache at a temp dir (no shared .cache).
+
+    The batch download path now consults the same disk cache as the
+    per-ticker providers; without isolation tests could read real pkl files
+    left by live scans.
+    """
+    from scanner import data_providers
+
+    monkeypatch.setattr(data_providers, "CACHE_DIR", str(tmp_path / "price_cache"))
+    yield
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
@@ -338,6 +352,116 @@ class TestFetchBatchYfinance:
         # Verify .NS suffix was added
         call_args = mock_yf.download.call_args
         assert call_args[0][0] == ["INFY.NS"]
+
+
+class TestBatchDownloadCache:
+    """Batch downloads must serve fresh disk-cached bars and skip re-downloading."""
+
+    def test_all_cached_skips_yfinance_entirely(self):
+        """Every ticker fresh on disk -> no yfinance call, results still returned."""
+        cached = {
+            "RELIANCE": _make_daily_ohlcv(200),
+            "TCS": _make_daily_ohlcv(200),
+        }
+
+        def fake_get(ticker, period, provider):
+            return cached.get(ticker)
+
+        mock_yf = MagicMock()
+        mock_yf.download.side_effect = AssertionError("yfinance must not be called")
+
+        with patch("scanner.data_fetcher._get_cached", side_effect=fake_get):
+            with patch("scanner.data_fetcher._set_cached") as mock_set:
+                with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                    result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert set(result) == {"RELIANCE", "TCS"}
+        assert mock_set.call_count == 0  # nothing freshly downloaded to store
+
+    def test_mixed_cached_and_fresh_downloads_only_missing(self):
+        """Cached tickers skip the network; only the uncached one hits yfinance."""
+        cached = {"RELIANCE": _make_daily_ohlcv(200)}
+        mock_data = _make_yf_download_result(["TCS.NS"], n=200)
+
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+        written = {}
+
+        def fake_set(ticker, period, provider, df):
+            written[ticker] = (period, df)
+
+        with patch("scanner.data_fetcher._get_cached", side_effect=lambda t, p, pr: cached.get(t)):
+            with patch("scanner.data_fetcher._set_cached", side_effect=fake_set):
+                with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                    result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert set(result) == {"RELIANCE", "TCS"}
+        # Only the uncached ticker was requested from yfinance
+        call_args = mock_yf.download.call_args
+        assert call_args[0][0] == ["TCS.NS"]
+        # The fresh result was cached as daily bars under the download period
+        assert written["TCS"][0] == "1y"
+        assert list(written["TCS"][1].columns) == ["open", "high", "low", "close", "volume"]
+        assert len(written["TCS"][1]) == 200
+
+    def test_short_cached_frame_is_redownloaded(self):
+        """A cached frame too short for scoring must not be trusted as fresh."""
+        cached = {"RELIANCE": _make_daily_ohlcv(30)}  # < 50 bars
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200)
+
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        with patch("scanner.data_fetcher._get_cached", side_effect=lambda t, p, pr: cached.get(t)):
+            with patch("scanner.data_fetcher._set_cached"):
+                with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                    result = fetch_batch_yfinance(["RELIANCE"], period="1y")
+
+        assert "RELIANCE" in result
+        assert len(result["RELIANCE"]) == 200  # from the fresh download, not the stale cache
+
+    def test_weekly_scan_replays_cached_daily_bars(self):
+        """Cached daily bars are resampled for non-daily timeframes."""
+        daily = _make_daily_ohlcv(500)
+
+        def fake_get(ticker, period, provider):
+            assert period == "5y"  # download period extended for weekly resampling
+            return daily
+
+        mock_yf = MagicMock()
+        mock_yf.download.side_effect = AssertionError("yfinance must not be called")
+
+        with patch("scanner.data_fetcher._get_cached", side_effect=fake_get):
+            with patch("scanner.data_fetcher._set_cached"):
+                with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                    result = fetch_batch_yfinance(["RELIANCE"], period="2y", timeframe="W")
+
+        assert "RELIANCE" in result
+        df = result["RELIANCE"]
+        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+        assert 50 <= len(df) < 500  # weekly resample of the cached daily bars
+
+    def test_fresh_download_is_cached_for_the_next_scan(self):
+        """A cold chunk writes every accepted frame to the disk cache."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS", "TCS.NS"], n=200)
+
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+        written = {}
+
+        def fake_set(ticker, period, provider, df):
+            written[ticker] = df
+
+        with patch("scanner.data_fetcher._get_cached", return_value=None):
+            with patch("scanner.data_fetcher._set_cached", side_effect=fake_set):
+                with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                    result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert set(result) == {"RELIANCE", "TCS"}
+        assert set(written) == {"RELIANCE", "TCS"}
+        for t, df in written.items():
+            assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+            assert len(df) == 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════
