@@ -4,12 +4,14 @@ All external API calls (yfinance, jugaad, nselib) are mocked so tests
 run fast and offline.
 """
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
 
 from scanner.data_fetcher import (
+    FALLBACK_PROVIDER_TIMEOUT,
     _extend_period_for_timeframe,
     fetch_batch_yfinance,
     fetch_fundamentals,
@@ -35,13 +37,18 @@ def _make_daily_ohlcv(n=200, start="2024-01-01"):
     }, index=dates)
 
 
-def _make_yf_download_result(tickers, n=200):
-    """Simulate yfinance.download() return value with MultiIndex columns."""
+def _make_yf_download_result(tickers, n=200, force_multi=False):
+    """Simulate yfinance.download() return value with MultiIndex columns.
+
+    By default a single ticker yields the flat DataFrame shape yfinance uses;
+    pass force_multi=True to force the MultiIndex shape (e.g. to simulate a
+    partial result where one requested ticker is missing).
+    """
     dates = pd.bdate_range("2024-01-01", periods=n)
     rng = np.random.RandomState(42)
     close = 500 + np.cumsum(rng.randn(n) * 2)
 
-    if len(tickers) == 1:
+    if len(tickers) == 1 and not force_multi:
         # Single ticker → flat DataFrame
         return pd.DataFrame({
             "Open": close + rng.randn(n),
@@ -208,9 +215,12 @@ class TestFetchBatchYfinance:
         """Empty download result → empty dict."""
         mock_yf = MagicMock()
         mock_yf.download.return_value = pd.DataFrame()
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = None
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            result = fetch_batch_yfinance(["RELIANCE"], period="1y")
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE"], period="1y")
 
         assert result == {}
 
@@ -244,11 +254,15 @@ class TestFetchBatchYfinance:
         mock_yf = MagicMock()
         mock_yf.download.return_value = mock_data
 
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = None
+
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
 
         assert "RELIANCE" in result
-        assert "TCS" not in result  # too short after dropna
+        assert "TCS" not in result  # too short after dropna, and fallback returns None
 
     def test_import_error_returns_empty(self):
         """If yfinance is not importable, return empty dict."""
@@ -384,3 +398,174 @@ class TestFetchFundamentals:
             result = fetch_fundamentals("INVALID")
 
         assert result is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Batch fallback (jugaad-data/nselib) for tickers yfinance missed
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFetchBatchFallback:
+    def test_recovers_missing_ticker(self):
+        """Ticker missed by yfinance should be recovered via provider fallback."""
+        # yfinance MultiIndex result that only contains RELIANCE -> TCS missing
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert "RELIANCE" in result  # from the yfinance chunk
+        assert "TCS" in result       # recovered via fallback
+        assert list(result["TCS"].columns) == ["open", "high", "low", "close", "volume"]
+        # Fallback must skip yfinance — it just failed at batch level
+        mock_provider.fetch_stock.assert_called_once_with(
+            "TCS", "1y", skip=("yfinance",),
+            provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
+        )
+
+    def test_no_fallback_when_batch_complete(self):
+        """When yfinance returns every ticker, the fallback should not run."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS", "TCS.NS"], n=200)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert len(result) == 2
+        mock_provider.fetch_stock.assert_not_called()
+
+    def test_missing_ticker_stays_missing_when_fallback_fails(self):
+        """Ticker remains absent if the fallback providers also return nothing."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = None
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert "RELIANCE" in result
+        assert "TCS" not in result
+
+    def test_cancel_event_stops_fallback(self):
+        """A pre-set cancel event should abort the fallback pass early."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(
+                    ["RELIANCE", "TCS"], period="1y", cancel_event=cancel_event
+                )
+
+        assert "RELIANCE" in result
+        assert "TCS" not in result  # fallback aborted by cancel
+
+    def test_weekly_fallback_resamples(self):
+        """Fallback frames should be resampled like batch frames (W timeframe)."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=500, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(500)
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y", timeframe="W")
+
+        assert "RELIANCE" in result
+        assert "TCS" in result
+        # Weekly period 1y extends to 2y for the per-ticker fallback
+        mock_provider.fetch_stock.assert_called_once_with(
+            "TCS", "2y", skip=("yfinance",),
+            provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
+        )
+        assert len(result["TCS"]) < 500  # resampled to weekly bars
+        assert len(result["TCS"]) >= 50
+
+    def test_fallback_skips_non_nse_symbols(self):
+        """BSE-only symbols should not be sent to the NSE-only fallback."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+
+        tickers = ["RELIANCE", "TCS", "BSEONLYXYZ"]
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                with patch("scanner.data_fetcher.FALLBACK_FILTER_MIN_MISSING", 1):
+                    with patch(
+                        "scanner.data_fetcher._nse_membership_set",
+                        return_value={"RELIANCE", "TCS"},
+                    ):
+                        result = fetch_batch_yfinance(tickers, period="1y")
+
+        assert "RELIANCE" in result       # from the yfinance chunk
+        assert "TCS" in result            # NSE member → attempted & recovered
+        assert "BSEONLYXYZ" not in result  # non-NSE → never attempted
+        # Only the NSE-member miss reached the fallback providers
+        mock_provider.fetch_stock.assert_called_once_with(
+            "TCS", "1y", skip=("yfinance",),
+            provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
+        )
+
+    def test_fallback_attempts_all_when_nse_list_unavailable(self):
+        """If the NSE membership list can't be resolved, attempt every miss."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+
+        tickers = ["RELIANCE", "TCS", "BSEONLYXYZ"]
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                with patch("scanner.data_fetcher.FALLBACK_FILTER_MIN_MISSING", 1):
+                    with patch("scanner.data_fetcher._nse_membership_set", return_value=None):
+                        result = fetch_batch_yfinance(tickers, period="1y")
+
+        assert "RELIANCE" in result
+        assert "TCS" in result          # unfiltered → both misses attempted
+        assert "BSEONLYXYZ" in result
+        assert mock_provider.fetch_stock.call_count == 2
+
+    def test_small_missing_sets_skip_nse_list_consult(self):
+        """Below the threshold, no NSE list fetch should happen."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        mock_provider = MagicMock()
+        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+
+        # 1 missing ticker < FALLBACK_FILTER_MIN_MISSING (default 25)
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
+                with patch("scanner.data_fetcher._nse_membership_set") as mock_membership:
+                    result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
+
+        assert "TCS" in result
+        mock_membership.assert_not_called()

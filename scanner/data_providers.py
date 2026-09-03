@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -492,6 +493,37 @@ def _fetch_fundamentals_nselib(ticker: str) -> dict | None:
 # MAIN PROVIDER CLASS
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Sentinel + runner used to bound individual provider calls (e.g. in the
+# batch fallback pass) so one hung request cannot stall a worker forever.
+_TIMEOUT = object()
+
+
+def _call_with_timeout(fn, timeout: float):
+    """Run fn on a daemon thread; return _TIMEOUT if it exceeds timeout.
+
+    The worker thread keeps running in the background when it times out (it
+    is a daemon, so it can never block interpreter shutdown). Callers treat
+    a _TIMEOUT return exactly like a provider that returned nothing and move
+    on to the next provider in the chain.
+    """
+    box: dict = {}
+
+    def _run():
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # noqa: BLE001 - surfaced to caller below
+            box["error"] = e
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        return _TIMEOUT
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
+
 class DataProvider:
     """
     Multi-source data provider with automatic fallback.
@@ -513,7 +545,9 @@ class DataProvider:
         self.last_provider = None
         self.last_error = None
 
-    def fetch_stock(self, ticker: str, period: str = "1y") -> pd.DataFrame | None:
+    def fetch_stock(self, ticker: str, period: str = "1y",
+                    skip: tuple[str, ...] = (),
+                    provider_timeout: float | None = None) -> pd.DataFrame | None:
         """
         Fetch OHLCV data with provider fallback chain.
 
@@ -522,6 +556,17 @@ class DataProvider:
           2. jugaad-data
           3. yfinance
           4. nselib
+
+        Args:
+            skip: Provider names to exclude from the chain. Used by the
+                  batch-download fallback path, where yfinance just failed
+                  at scale (rate limit / outage) and should not be retried
+                  per ticker.
+            provider_timeout: When set, each provider call is capped at this
+                  many seconds. A provider that exceeds the cap is treated
+                  like one that returned no data (its thread keeps running
+                  in the background as a daemon). Used by the batch fallback
+                  so dead symbols fail fast instead of stalling a worker.
         """
         self.last_provider = None
         self.last_error = None
@@ -541,8 +586,16 @@ class DataProvider:
         ]
 
         for name, fetch_fn in providers:
+            if name in skip:
+                continue
             try:
-                df = fetch_fn()
+                if provider_timeout:
+                    df = _call_with_timeout(fetch_fn, provider_timeout)
+                    if df is _TIMEOUT:
+                        self.last_error = f"{name}: timed out after {provider_timeout}s"
+                        continue
+                else:
+                    df = fetch_fn()
                 if df is not None and not df.empty and len(df) >= 50:
                     self.last_provider = name
                     if self.use_cache:

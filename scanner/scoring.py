@@ -1,6 +1,42 @@
 """
-10-category scoring engine.
-Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic exactly.
+10-category scoring engine, derived from the HMAxEMA Swing Trading
+System Pine Script (reference file: HMA_EMA_Swing_Strategy_v2.pine).
+
+Category caps are kept identical to the Pine v2 indicator, total = 100:
+
+    Trend 15 | Momentum 15 | RSI 8 | MACD 7 | Stochastic 5 | OBV 5 |
+    Volume 10 | Rel. strength 10 | Volatility 5 | Fundamentals 20
+
+Pine-vs-Python parity, per category:
+
+  Exact match (same formulas / points):
+    - Momentum (1M/3M gradient with negative clamp)
+    - RSI (peak at 55, band 40-70)
+    - MACD (positive histogram + rising histogram)
+    - Stochastic (healthy 20-80 band)
+    - OBV (above OBV-MA + rising OBV)
+    - Volume (above volume-MA, above 1.2x, above 50-bar average)
+    - Volatility (ATR% bands -> Medium/Low scores)
+    - Fundamentals thresholds (P/E < 15 / < 25; EPS > 20 % / > 0 %;
+      revenue > 15 % / > 0 %; ROE > 20 % / > 10 %) — same points,
+      different data source (provider chain instead of TradingView
+      financials; category scores 0 when fundamentals are unavailable)
+
+  Intentional extensions (weights still capped at the Pine max):
+    - Trend: Pine v2 sums close-vs-slow (10), fast-vs-slow (5) and
+      ADX > 25 (2). The Python scorer re-weights the MA stack and adds
+      volume-profile POC participation + crossover-recentness points,
+      all under the same 15-point cap.
+    - Relative strength: Pine v2 compares the stock against an index
+      AND NIFTY (two request.security legs). Python fetches a single
+      index (settings['index_symbol']) and approximates the second
+      leg with absolute positive momentum; without index data both
+      legs are proxied from 1M/3M price change.
+
+  Metadata only (never changes the total):
+    - weekly HMA(44) x EMA(50) higher-timeframe state
+    - sideways (ADX / Choppiness / slope) flags
+    - combined-rating labels and entry-signal flags
 
 Refactored into composable helpers:
   - detect_crossover() — shared MA crossover detection (used by filter & scorer)
@@ -288,10 +324,12 @@ def _last_values(ind: dict, df: pd.DataFrame, settings: dict) -> dict:
 
 def _compute_weekly_hma(df: pd.DataFrame) -> dict:
     """
-    Evaluate the weekly HMA(44) x EMA(50) higher-timeframe crossover.
+    Evaluate the weekly higher-timeframe crossover, HMA(44) x EMA(50).
 
-    Matches the TradingView condition:
-      hull_ma(close, 44) crossed_above ema(close, 50) on weekly bars.
+    Python-only extension: the Pine v2 file resamples its configurable
+    fast/slow MAs to the analysis timeframe (defaults HMA(40)/EMA(50))
+    but defines no separate weekly check. This helper hard-codes the
+    44/50 weekly swing-regime check on top of the daily scan.
 
     Returns:
         {"bull": bool, "cross": bool, "cross_bars_ago": int}
@@ -645,11 +683,12 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         df: OHLCV DataFrame with columns [open, high, low, close, volume]
         timeframe: Analysis timeframe ('D' daily, 'W' weekly, 'M' monthly).
         index_df: Index DataFrame for relative strength comparison.
-        settings: Dict with scoring parameters (see DEFAULT_SETTINGS in app.py).
-                  Falls back to defaults if not provided.
+        settings: Dict with scoring parameters (see DEFAULT_SETTINGS in
+                  settings_store.py). Falls back to defaults if not provided.
 
-    Mirrors the Pine Script HMAxEMA Swing Trading System scoring logic.
-    Max total = 100 pts, with Trend weighted at 15 pts (matches Pine Script).
+    Category caps mirror the Pine v2 indicator (Trend 15, Momentum 15, ...
+    Fundamentals 20; total 100), with documented per-category extensions —
+    see the module docstring for the exact Pine-vs-Python mapping.
 
     Returns:
         Dictionary with all scores and metadata, or None if insufficient data.

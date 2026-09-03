@@ -10,6 +10,7 @@ All data is cached to disk to avoid repeated API calls.
 """
 
 import logging
+import threading
 import time
 
 import pandas as pd
@@ -178,15 +179,124 @@ def fetch_fundamentals(ticker: str) -> dict | None:
 CHUNK = 200  # ~200 * 8 chars avg + commas ≈ 1.6k URL < 8k limit; safe for Yahoo
 MAX_PARALLEL_CHUNKS = 8  # parallel chunk downloads — 8×200 = 1600 tickers in flight
 SLEEP_BETWEEN_BATCH = 0.3  # throttle between parallel batches to avoid 429
+FALLBACK_WORKERS = 8  # per-ticker fallback threads for tickers yfinance missed
+FALLBACK_PROVIDER_TIMEOUT = 10.0  # per-provider cap (s) in the fallback pass — dead symbols fail fast
+FALLBACK_FILTER_MIN_MISSING = 25  # only consult the NSE list above this many misses (filter pays off at scale)
 
 
-def fetch_batch_yfinance_stream(tickers: list, period: str = "1y", timeframe: str = "D"):
+def _nse_membership_set() -> set | None:
+    """Current NSE mainboard symbols (upper-cased), or None when unknown.
+
+    Uses symbol_fetcher's 4h-cached nselib list — the same NSE list that
+    builds the FULL MARKET universe. Returns None when the list cannot be
+    resolved confidently; callers then attempt every missed ticker (the
+    unfiltered behavior) instead of dropping symbols wrongly.
+    """
+    try:
+        from .symbol_fetcher import fetch_nse_mainboard
+
+        symbols = fetch_nse_mainboard()
+        if symbols and len(symbols) > 500:
+            return {str(s).strip().upper() for s in symbols}
+    except Exception as e:
+        logger.debug("NSE mainboard list unavailable: %s", e)
+    return None
+
+
+def _fetch_fallback_batch(
+    tickers: list,
+    period: str = "1y",
+    timeframe: str = "D",
+    cancel_event: threading.Event | None = None,
+    on_progress=None,
+) -> dict:
+    """
+    Fetch OHLCV for tickers the yfinance batch pass missed, using the
+    DataProvider fallback chain restricted to NSE-native sources:
+    jugaad-data -> nselib. yfinance is deliberately skipped — it just
+    failed at batch level (rate limit / outage), so retrying it per
+    ticker would only slow recovery down.
+
+    Results are normalized and validated exactly like the batch path
+    (>= 50 bars after optional resample), so callers can treat recovered
+    frames identically to regular chunk results.
+
+    Args:
+        tickers: Tickers to recover.
+        period: Data period (e.g. "1y").
+        timeframe: Bar interval 'D' (daily), 'W' (weekly), 'M' (monthly).
+        cancel_event: When set, stops the pass early and returns partial results.
+        on_progress: Optional callback on_progress(done, total).
+
+    Returns:
+        Dict mapping recovered ticker -> normalized OHLCV DataFrame.
+    """
+    if not tickers:
+        return {}
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    provider = _get_provider()
+    download_period = _extend_period_for_timeframe(period, timeframe)
+    total = len(tickers)
+    workers = min(FALLBACK_WORKERS, total)
+    recovered: dict = {}
+    done = 0
+
+    def _fetch_one(t: str):
+        try:
+            df = provider.fetch_stock(
+                t, download_period,
+                skip=("yfinance",),
+                provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
+            )
+            if df is not None and not df.empty and len(df) >= 50:
+                df = resample_ohlcv(df, timeframe)
+                if df is not None and not df.empty and len(df) >= 50:
+                    return t, df
+        except Exception as e:
+            logger.debug("Fallback fetch failed for %s: %s", t, e)
+        return None
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_ticker = {executor.submit(_fetch_one, t): t for t in tickers}
+        for future in as_completed(future_to_ticker):
+            if cancel_event is not None and cancel_event.is_set():
+                executor.shutdown(wait=False, cancel_futures=True)
+                logger.info(
+                    "Fallback fetch cancelled — %d/%d recovered",
+                    len(recovered), total,
+                )
+                break
+            done += 1
+            result = future.result()
+            if result is not None:
+                t, df = result
+                recovered[t] = df
+            if on_progress is not None:
+                try:
+                    on_progress(done, total)
+                except Exception:
+                    pass
+    return recovered
+
+
+def fetch_batch_yfinance_stream(
+    tickers: list, period: str = "1y", timeframe: str = "D",
+    cancel_event: threading.Event | None = None,
+    on_fallback_progress=None,
+):
     """
     Streaming generator that yields one dict per parallel batch.
 
     Each yielded dict is {ticker: DataFrame} for ~200-1000 tickers (one
     outer batch of up to MAX_PARALLEL_CHUNKS chunks). Caller can render
     incrementally instead of waiting for all ~5900.
+
+    After the yfinance chunks are exhausted, any ticker the batch pass
+    missed (Yahoo rate limit / no data on Yahoo) is retried through the
+    NSE-native providers (jugaad-data -> nselib) and, if anything was
+    recovered, yielded once more as a final batch.
 
     Usage:
         for chunk_data in fetch_batch_yfinance_stream(tickers):
@@ -204,6 +314,7 @@ def fetch_batch_yfinance_stream(tickers: list, period: str = "1y", timeframe: st
             seen.add(u)
             uniq_tickers.append(u)
     tickers = uniq_tickers
+    seen_tickers = set()  # union of tickers returned across yfinance chunks
 
     try:
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -283,6 +394,7 @@ def fetch_batch_yfinance_stream(tickers: list, period: str = "1y", timeframe: st
                     except Exception as e:
                         logger.warning("Chunk %d failed in parallel batch: %s", ci, e)
             cumulative += len(batch_results)
+            seen_tickers.update(batch_results)
             logger.info(
                 "Batch %d/%d done: %d this batch, %d/%d cumulative",
                 (batch_start // MAX_PARALLEL_CHUNKS) + 1,
@@ -295,6 +407,55 @@ def fetch_batch_yfinance_stream(tickers: list, period: str = "1y", timeframe: st
             if batch_start + MAX_PARALLEL_CHUNKS < len(chunks):
                 time.sleep(SLEEP_BETWEEN_BATCH)
 
+        # ── Fallback: recover tickers the yfinance pass missed ───────────
+        missing = [t for t in tickers if t not in seen_tickers]
+        if missing and not (cancel_event is not None and cancel_event.is_set()):
+            candidates = missing
+            skipped: list = []
+            # jugaad-data and nselib only serve NSE mainboard equities, so
+            # BSE-only symbols (present in FULL MARKET) would each burn two
+            # failed provider chains per scan. When the missed set is large
+            # enough to matter, filter against nselib's (4h-cached) mainboard
+            # list; when the list can't be resolved, attempt everything.
+            if len(missing) >= FALLBACK_FILTER_MIN_MISSING:
+                nse_members = _nse_membership_set()
+                if nse_members is not None:
+                    candidates = [t for t in missing if t in nse_members]
+                    skipped = [t for t in missing if t not in nse_members]
+            if skipped:
+                logger.info(
+                    "Skipping %d non-NSE (BSE-only / delisted) symbols in fallback",
+                    len(skipped),
+                )
+            if not candidates:
+                logger.warning(
+                    "yfinance missed %d/%d tickers but none are NSE mainboard — nothing to recover",
+                    len(missing), total,
+                )
+            else:
+                logger.info(
+                    "yfinance missed %d/%d tickers — attempting %d via jugaad-data/nselib...",
+                    len(missing), total, len(candidates),
+                )
+                recovered = _fetch_fallback_batch(
+                    candidates,
+                    period=period,
+                    timeframe=timeframe,
+                    cancel_event=cancel_event,
+                    on_progress=on_fallback_progress,
+                )
+                if recovered:
+                    logger.info(
+                        "Fallback recovered %d/%d attempted tickers",
+                        len(recovered), len(candidates),
+                    )
+                    yield recovered
+                else:
+                    logger.warning(
+                        "Fallback fetch returned nothing for %d missed tickers",
+                        len(candidates),
+                    )
+
     except ImportError:
         logger.warning("yfinance not available for batch download")
         return
@@ -304,7 +465,13 @@ def fetch_batch_yfinance_stream(tickers: list, period: str = "1y", timeframe: st
 
 
 @trace(level=logging.INFO, log_args=True, log_result=False)
-def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D") -> dict:
+def fetch_batch_yfinance(
+    tickers: list,
+    period: str = "1y",
+    timeframe: str = "D",
+    cancel_event=None,
+    on_fallback_progress=None,
+) -> dict:
     """
     Fast batch fetch using yfinance download — chunked for 6k symbols.
 
@@ -321,12 +488,20 @@ def fetch_batch_yfinance(tickers: list, period: str = "1y", timeframe: str = "D"
     Returns:
         Dict mapping ticker -> DataFrame
     """
-    # Backward-compat wrapper: collect streaming batches
+    # Backward-compat wrapper: collect streaming batches (yfinance chunks,
+    # then a final fallback batch for tickers yfinance missed).
     results: dict = {}
     total = len(tickers) if tickers else 0
-    for batch_data in fetch_batch_yfinance_stream(tickers, period, timeframe):
+    for batch_data in fetch_batch_yfinance_stream(
+        tickers, period, timeframe,
+        cancel_event=cancel_event,
+        on_fallback_progress=on_fallback_progress,
+    ):
         results.update(batch_data)
-    logger.info("Batch download complete: %d/%d stocks (parallel chunked)", len(results), total)
+    logger.info(
+        "Batch download complete: %d/%d stocks (parallel chunked + NSE fallback)",
+        len(results), total,
+    )
     return results
 
 

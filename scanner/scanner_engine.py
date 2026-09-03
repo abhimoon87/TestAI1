@@ -308,11 +308,27 @@ class ScannerEngine:
             else:
                 self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
             
-            # Batch download all stocks
+            # Batch download all stocks — yfinance chunks, then a per-ticker
+            # fallback pass (jugaad-data/nselib) for anything yfinance missed.
             self._progress(0.05, f"Batch downloading {len(tickers)} stocks...")
-            self._log(f"Batch downloading {len(tickers)} stocks via yfinance...")
-            batch_data = fetch_batch_yfinance(tickers, period=period, timeframe=timeframe)
-            self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
+            self._log(f"Batch downloading {len(tickers)} stocks via yfinance (fallback: jugaad-data/nselib)...")
+            batch_data = fetch_batch_yfinance(
+                tickers,
+                period=period,
+                timeframe=timeframe,
+                cancel_event=self._cancel_event,
+                on_fallback_progress=lambda done, total: self._progress(
+                    0.05 + 0.05 * (done / max(total, 1)),
+                    f"Fallback fetch {done}/{total} (jugaad/nselib)",
+                ),
+            )
+            if len(batch_data) < len(tickers):
+                self._log(
+                    f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched "
+                    f"({len(tickers) - len(batch_data)} unavailable on all providers)"
+                )
+            else:
+                self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
 
             # Cache API keys once (not per-ticker)
             self._api_config = load_api_config()
@@ -608,7 +624,16 @@ class ScannerEngine:
                     return None, "error"
 
             # ── Stream per parallel batch ─────────────────────────────────
-            for chunk_data in fetch_batch_yfinance_stream(tickers, period=period, timeframe=timeframe):
+            for chunk_data in fetch_batch_yfinance_stream(
+                tickers,
+                period=period,
+                timeframe=timeframe,
+                cancel_event=self._cancel_event,
+                on_fallback_progress=lambda done, total: self._progress(
+                    0.05 + 0.05 * (done / max(total, 1)),
+                    f"Fallback fetch {done}/{total} (jugaad/nselib)",
+                ),
+            ):
                 if self._cancel_event.is_set():
                     result.cancelled = True
                     self._log("\n⏹  Scan cancelled by user")
@@ -711,7 +736,13 @@ class ScannerEngine:
             results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
             passed = len([r for r in results if r["total"] >= settings.get("min_score", 50)])
             self._log("\n" + "━" * 25 + " Stream Scan Complete ")
+            missing_final = [t for t in tickers if t not in batch_data_all]
             self._log(f"  Total tickers: {total_tickers} | fetched: {len(batch_data_all)}")
+            if missing_final:
+                self._log(
+                    f"  ⚠ {len(missing_final)} tickers unavailable on all providers "
+                    "(yfinance, jugaad-data, nselib)"
+                )
             self._log(f"  Filtered out: {filtered_out}")
             self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull',0)} Bull, {direction_counts.get('Bear',0)} Bear)")
             self._log(f"  Scored {settings.get('min_score',50)}+: {passed}")

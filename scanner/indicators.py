@@ -1,6 +1,11 @@
 """
-Technical indicator calculations.
-Mirrors the indicators used in the Pine Script scoring engine.
+Technical indicator calculations — Python/NumPy ports of the indicators
+used by the HMAxEMA Pine Script scoring engine (HMA, EMA, SMA, KAMA,
+VWMA, RSI, MACD, stochastic, OBV, ATR, ADX, volume-profile POC).
+
+Where the Pine file defines a series function, the port aims to match it
+(e.g. Wilder RSI/ATR smoothing and HMA via layered WMA); these are
+vectorized so results may differ only in warm-up behaviour.
 """
 
 import numpy as np

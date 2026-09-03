@@ -5,6 +5,7 @@ are mocked so tests run fast and offline.
 """
 
 import json
+import time
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -373,3 +374,68 @@ class TestDataProvider:
 
             assert not (tmp_path / "test.pkl").exists()
             assert tmp_path.exists()  # dir should be recreated
+
+    def test_fetch_stock_provider_timeout_falls_through(self):
+        """A provider exceeding provider_timeout is skipped for the next one."""
+        provider = DataProvider(use_cache=False)
+
+        slow_jugaad = MagicMock(side_effect=lambda: time.sleep(0.5))
+        mock_yf_ticker = MagicMock()
+        mock_yf_ticker.history.return_value = _make_yf_history(200)
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value = mock_yf_ticker
+
+        with patch("scanner.data_providers._fetch_jugaad", slow_jugaad):
+            with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                result = provider.fetch_stock("RELIANCE", "1y", provider_timeout=0.05)
+
+        assert result is not None
+        assert provider.last_provider == "yfinance"
+        slow_jugaad.assert_called_once()
+
+    def test_fetch_stock_all_providers_timeout_is_bounded(self):
+        """When every provider hangs, the call returns quickly instead of stalling."""
+        provider = DataProvider(use_cache=False)
+
+        def _slow():
+            time.sleep(0.5)
+            return None
+
+        with patch("scanner.data_providers._fetch_jugaad", side_effect=_slow):
+            with patch("scanner.data_providers._fetch_yfinance", side_effect=_slow):
+                with patch("scanner.data_providers._fetch_nselib", side_effect=_slow):
+                    start = time.time()
+                    result = provider.fetch_stock("SLOW", "1y", provider_timeout=0.03)
+                    elapsed = time.time() - start
+
+        assert result is None
+        assert elapsed < 0.3  # bounded by 3 × 0.03s, not ~1.5s of sleeps
+
+    def test_fetch_stock_skips_yfinance(self):
+        """skip=('yfinance',) should exclude yfinance from the chain."""
+        provider = DataProvider(use_cache=False)
+
+        with patch("scanner.data_providers._fetch_jugaad", return_value=None):
+            with patch("scanner.data_providers._fetch_nselib", return_value=None):
+                with patch("scanner.data_providers._fetch_yfinance") as mock_yf:
+                    result = provider.fetch_stock("RELIANCE", "1y", skip=("yfinance",))
+
+        assert result is None
+        mock_yf.assert_not_called()
+
+    def test_fetch_stock_skips_jugaad(self):
+        """skip=('jugaad',) should skip jugaad and let yfinance serve data."""
+        provider = DataProvider(use_cache=False)
+
+        mock_yf_ticker = MagicMock()
+        mock_yf_ticker.history.return_value = _make_yf_history(200)
+        mock_yf = MagicMock()
+        mock_yf.Ticker.return_value = mock_yf_ticker
+
+        with patch("scanner.data_providers._fetch_jugaad") as mock_jugaad:
+            with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                result = provider.fetch_stock("RELIANCE", "1y", skip=("jugaad",))
+
+        assert result is not None
+        assert provider.last_provider == "yfinance"
+        mock_jugaad.assert_not_called()

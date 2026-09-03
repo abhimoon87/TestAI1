@@ -544,7 +544,9 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     )
 
     # ================================================================
-    # SCORING (matches scoring.py exactly)
+    # SCORING — per-bar re-implementation of scoring.py's category
+    # helpers (Pine-derived; see the scoring.py module docstring for the
+    # Pine-vs-Python mapping). KEEP IN SYNC with scoring.py.
     # ================================================================
 
     # -- 1. Trend (max 15) --
