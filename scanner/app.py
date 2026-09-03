@@ -651,6 +651,21 @@ class ScannerApp(ctk.CTk):
         self.cache_row.pack(fill="x", pady=(4, 0))
         self._refresh_neg_cache_ui()
 
+        # Enrichment cache — status + manual clear (phase-2 provider results)
+        self.enrich_cache_row = ctk.CTkFrame(bottom, fg_color="transparent")
+        self.enrich_cache_status_lbl = ctk.CTkLabel(
+            self.enrich_cache_row, text="", font=ctk.CTkFont(size=10),
+            text_color=c["text_dim"], anchor="w")
+        self.enrich_cache_status_lbl.pack(side="left", fill="x", expand=True)
+        self.enrich_cache_clear_btn = ctk.CTkButton(
+            self.enrich_cache_row, text="Clear", width=48, height=22,
+            font=ctk.CTkFont(size=10),
+            fg_color=c["option_btn"], hover_color=c["red_hover"],
+            text_color=c["text"], corner_radius=8,
+            command=self._clear_enrichment_cache)
+        self.enrich_cache_row.pack(fill="x", pady=(2, 0))
+        self._refresh_enrich_cache_ui()
+
     # ── Column 2: Main area (topbar + views) ─────────────────────────────
 
     def _build_main_area(self):
@@ -1425,6 +1440,37 @@ class ScannerApp(ctk.CTk):
             self._log(f"Could not clear dead-symbol cache: {e}")
         self._refresh_neg_cache_ui()
 
+    # ── Enrichment cache ─────────────────────────────────────────────────
+
+    def _refresh_enrich_cache_ui(self):
+        """Update the enrichment cache status label to match the on-disk cache."""
+        if not hasattr(self, "enrich_cache_status_lbl"):
+            return  # sidebar not built yet (early startup call)
+        try:
+            from . import data_fetcher
+            n = data_fetcher.enrichment_cache_size()
+            ttl_h = data_fetcher.ENRICHMENT_CACHE_TTL_HOURS
+        except Exception:
+            n, ttl_h = 0, 24
+        if n:
+            self.enrich_cache_status_lbl.configure(
+                text=f"Enrichment cache: {n} (auto-resets ~{ttl_h}h)"
+            )
+            self.enrich_cache_clear_btn.pack(side="right", padx=(6, 0))
+        else:
+            self.enrich_cache_status_lbl.configure(text="Enrichment cache: empty")
+            self.enrich_cache_clear_btn.pack_forget()
+
+    def _clear_enrichment_cache(self):
+        """Wipe cached phase-2 provider results — next scan re-fetches them."""
+        try:
+            from . import data_fetcher
+            data_fetcher.enrichment_cache_clear()
+            self._log("Cleared enrichment cache — next scan will re-fetch phase-2 data")
+        except Exception as e:
+            self._log(f"Could not clear enrichment cache: {e}")
+        self._refresh_enrich_cache_ui()
+
     def _on_stream_batch(self, batch: list):
         """Incremental grid update — debounced + dict-indexed (O(n))."""
         if not batch:
@@ -1894,6 +1940,7 @@ class ScannerApp(ctk.CTk):
         self.progress_label.configure(text="Stopped" if cancelled else "Done")
         self.status_label.configure(text="Status: Stopped" if cancelled else "Status: Done")
         self._refresh_neg_cache_ui()  # scans may have marked new symbols dead
+        self._refresh_enrich_cache_ui()  # phase-2 results may now be cached
         if self.results:
             self.html_btn.configure(state="normal")
             self.csv_btn.configure(state="normal")
