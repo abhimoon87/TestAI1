@@ -481,15 +481,25 @@ class TestFetchBatchFallback:
         assert "TCS" not in result
 
     def test_cancel_event_stops_fallback(self):
-        """A pre-set cancel event should abort the fallback pass early."""
+        """Cancel fired mid-pass aborts the fallback but keeps fetched data."""
         mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
         mock_yf = MagicMock()
         mock_yf.download.return_value = mock_data
 
         mock_provider = MagicMock()
-        mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
+
+        def slow_fetch(*a, **kw):
+            time.sleep(2.0)
+            return _make_daily_ohlcv(200)
+
+        mock_provider.fetch_stock.side_effect = slow_fetch
         cancel_event = threading.Event()
-        cancel_event.set()
+
+        def _fire():
+            time.sleep(0.5)
+            cancel_event.set()
+
+        threading.Thread(target=_fire, daemon=True).start()
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
             with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
@@ -497,8 +507,8 @@ class TestFetchBatchFallback:
                     ["RELIANCE", "TCS"], period="1y", cancel_event=cancel_event
                 )
 
-        assert "RELIANCE" in result
-        assert "TCS" not in result  # fallback aborted by cancel
+        assert "RELIANCE" in result  # yfinance phase completed
+        assert "TCS" not in result   # slow fallback fetch aborted by cancel
 
     def test_weekly_fallback_resamples(self):
         """Fallback frames should be resampled like batch frames (W timeframe)."""
@@ -705,3 +715,45 @@ class TestNegativeCache:
         assert data_fetcher.negative_cache_skip_count() == 12
         data_fetcher.reset_negative_cache_skip_count()
         assert data_fetcher.negative_cache_skip_count() == 0
+
+
+class TestAbortableBatchDownload:
+    """Stop must be able to interrupt yfinance chunks, not just the fallback."""
+
+    def test_cancel_preset_skips_yfinance_entirely(self):
+        """With cancel already set, no yfinance download should be scheduled."""
+        mock_yf = MagicMock()
+        cancel_event = threading.Event()
+        cancel_event.set()
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=MagicMock()):
+                result = fetch_batch_yfinance(
+                    ["AAA", "BBB"], period="1y", cancel_event=cancel_event
+                )
+        assert result == {}
+        mock_yf.download.assert_not_called()
+
+    def test_cancel_mid_batch_returns_without_waiting_for_chunk(self):
+        """Stop returns promptly even while a chunk download is still running."""
+        def slow_download(*a, **kw):
+            time.sleep(8)
+            return _make_yf_download_result(["RELIANCE.NS"], n=200)
+
+        mock_yf = MagicMock()
+        mock_yf.download.side_effect = slow_download
+        cancel_event = threading.Event()
+
+        def _fire():
+            time.sleep(0.5)
+            cancel_event.set()
+
+        threading.Thread(target=_fire, daemon=True).start()
+        t0 = time.time()
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=MagicMock()):
+                result = fetch_batch_yfinance(
+                    ["AAA", "BBB"], period="1y", cancel_event=cancel_event
+                )
+        elapsed = time.time() - t0
+        assert elapsed < 5  # returned while the 8s download was still running
+        assert result == {}

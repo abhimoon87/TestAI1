@@ -360,7 +360,7 @@ def _fetch_fallback_batch(
     if not tickers:
         return {}
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     provider = _get_provider()
     download_period = _extend_period_for_timeframe(period, timeframe)
@@ -389,16 +389,32 @@ def _fetch_fallback_batch(
             logger.debug("Fallback fetch failed for %s: %s", t, e)
             return "dead", t, None
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_ticker = {executor.submit(_fetch_one, t): t for t in tickers}
-        for future in as_completed(future_to_ticker):
-            if cancel_event is not None and cancel_event.is_set():
-                executor.shutdown(wait=False, cancel_futures=True)
-                logger.info(
-                    "Fallback fetch cancelled — %d/%d recovered",
-                    len(recovered), total,
-                )
-                break
+    executor = ThreadPoolExecutor(max_workers=workers)
+    future_to_ticker = {executor.submit(_fetch_one, t): t for t in tickers}
+    try:
+        # Daemon threads: on cancel we don't join, so in-flight provider calls
+        # must not keep the process alive afterwards.
+        for t in executor._threads:
+            t.daemon = True
+    except Exception:
+        pass
+    cancelled_fb = False
+    pending = set(future_to_ticker)
+    while pending:
+        if cancel_event is not None and cancel_event.is_set():
+            executor.shutdown(wait=False, cancel_futures=True)
+            cancelled_fb = True
+            logger.info(
+                "Fallback fetch cancelled — %d/%d recovered",
+                len(recovered), total,
+            )
+            break
+        # Poll every 0.5s instead of blocking on as_completed — lets Stop
+        # return promptly even while slow provider calls are still running.
+        completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+        if not completed:
+            continue
+        for future in completed:
             done += 1
             status, t, df = future.result()
             if status == "ok":
@@ -410,6 +426,8 @@ def _fetch_fallback_batch(
                     on_progress(done, total)
                 except Exception:
                     pass
+    if not cancelled_fb:
+        executor.shutdown(wait=True)
 
     # Remember what really has no data (skip future scans) and forget any
     # symbol that just came back (e.g. suspension lifted since TTL expiry).
@@ -454,7 +472,7 @@ def fetch_batch_yfinance_stream(
     seen_tickers = set()  # union of tickers returned across yfinance chunks
 
     try:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
         import pandas as pd
         import yfinance as yf
@@ -518,18 +536,43 @@ def fetch_batch_yfinance_stream(
 
         cumulative = 0
         for batch_start in range(0, len(chunks), MAX_PARALLEL_CHUNKS):
+            if cancel_event is not None and cancel_event.is_set():
+                logger.info("Batch download cancelled between batches")
+                break
             batch = chunks[batch_start : batch_start + MAX_PARALLEL_CHUNKS]
             batch_indices = list(range(batch_start + 1, batch_start + len(batch) + 1))
             batch_results: dict = {}
-            with ThreadPoolExecutor(max_workers=len(batch)) as executor:
-                future_to_ci = {executor.submit(_fetch_chunk, chunk, ci): ci for chunk, ci in zip(batch, batch_indices)}
-                for future in as_completed(future_to_ci):
+            cancelled_batch = False
+            executor = ThreadPoolExecutor(max_workers=len(batch))
+            future_to_ci = {executor.submit(_fetch_chunk, chunk, ci): ci for chunk, ci in zip(batch, batch_indices)}
+            try:
+                # Daemon threads: on cancel we don't join in-flight chunk
+                # downloads (which can take ~60s under Yahoo rate limits).
+                for t in executor._threads:
+                    t.daemon = True
+            except Exception:
+                pass
+            pending = set(future_to_ci)
+            while pending:
+                if cancel_event is not None and cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    cancelled_batch = True
+                    logger.info("Batch download cancelled — dropping in-flight chunks")
+                    break
+                # Poll every 0.5s instead of blocking on as_completed — lets
+                # Stop return promptly even while chunks are mid-download.
+                completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                if not completed:
+                    continue
+                for future in completed:
                     ci = future_to_ci[future]
                     try:
                         chunk_res = future.result()
                         batch_results.update(chunk_res)
                     except Exception as e:
                         logger.warning("Chunk %d failed in parallel batch: %s", ci, e)
+            if not cancelled_batch:
+                executor.shutdown(wait=True)
             cumulative += len(batch_results)
             seen_tickers.update(batch_results)
             logger.info(

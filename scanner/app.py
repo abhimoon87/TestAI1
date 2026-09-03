@@ -883,6 +883,7 @@ class ScannerApp(ctk.CTk):
             ("HIGH", "high", c["green"], "▲"),
             ("BULL", "bull", c["green"], "↗"),
             ("BEAR", "bear", c["red"], "↘"),
+            ("DEAD-SKIP", "dead_skip", c["orange"], "∅"),
         ]
         self.summary_cards = {}
         for label, key, color, icon in stats:
@@ -1922,10 +1923,17 @@ class ScannerApp(ctk.CTk):
         self.summary_cards["high"].configure(text=f"{high:.0f}")
         self.summary_cards["bull"].configure(text=str(bull))
         self.summary_cards["bear"].configure(text=str(bear))
+        # Dead symbols skipped via the negative cache during this scan
+        try:
+            from . import data_fetcher
+            dead_skips = data_fetcher.negative_cache_skip_count()
+        except Exception:
+            dead_skips = 0
+        self.summary_cards["dead_skip"].configure(text=str(dead_skips))
 
     def _reset_summary(self):
         """Reset the summary cards to their empty state."""
-        for key in ("total", "passed", "entry", "avg", "high", "bull", "bear"):
+        for key in ("total", "passed", "entry", "avg", "high", "bull", "bear", "dead_skip"):
             if hasattr(self, "summary_cards") and key in self.summary_cards:
                 self.summary_cards[key].configure(text="\u2014")
 
