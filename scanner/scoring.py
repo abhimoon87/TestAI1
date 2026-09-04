@@ -59,6 +59,11 @@ Refactored into composable helpers:
 
 from __future__ import annotations
 
+__all__ = [
+    "compute_scores", "score_bar", "check_filter", "get_direction",
+    "detect_crossover", "get_ma", "to_weekly",
+]
+
 import math
 
 import numpy as np
@@ -109,6 +114,9 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
 # WEEKLY RESAMPLE
 # ══════════════════════════════════════════════════════════════════════════════
 
+_WEEKLY_CACHE: dict[int, pd.DataFrame] = {}
+
+
 def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
     """
     Resample an OHLCV DataFrame to weekly bars.
@@ -116,14 +124,22 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
     Used to evaluate the higher-timeframe (weekly) entry condition
     independently of the analysis timeframe of the scan. If the data is
     already weekly (or cannot be resampled), it is returned as-is / None.
+
+    The result is cached by DataFrame id so repeated calls on the same
+    object (e.g. Phase-1 and Phase-2 scoring) skip the expensive
+    copy-resample.
     """
+    cached = _WEEKLY_CACHE.get(id(df))
+    if cached is not None:
+        return cached
+
     if df is None or df.empty or "close" not in df.columns:
         return None
     d = df.copy()
     if not isinstance(d.index, pd.DatetimeIndex):
         return None
     if d.index.tz is not None:
-        d.index = d.index.tz_localize(None)
+        d.index = d.index.tz_convert("Asia/Kolkata").tz_localize(None)
     agg = {}
     for col in ["open", "high", "low", "close"]:
         if col in d.columns:
@@ -133,7 +149,10 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
     if not agg:
         return None
     resampled = d.resample("W").agg(agg).dropna()
-    return resampled if not resampled.empty else None
+    result = resampled if not resampled.empty else None
+    if result is not None:
+        _WEEKLY_CACHE[id(df)] = result
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -559,17 +578,33 @@ def _score_volume(curr: dict) -> float:
 
 def _score_relative_strength(curr: dict, close: pd.Series,
                              index_df: pd.DataFrame | None,
-                             rs_length: int) -> float:
-    """Category 8: RELATIVE STRENGTH (max 10 pts)."""
+                             rs_length: int,
+                             close_to_bar: pd.Series | None = None) -> float:
+    """Category 8: RELATIVE STRENGTH (max 10 pts).
+
+    Args:
+        close_to_bar: close Series sliced to ``[:bar_idx+1]`` for backtest
+            parity.  When *None* the full ``close`` is used (live scorer).
+    """
     s = 0.0
     if index_df is not None and len(index_df) > rs_length + 5:
         idx_close = index_df["close"]
         idx_rs = (idx_close.iloc[-1] / idx_close.iloc[-1 - rs_length] - 1) * 100
-        stock_rs = (close.iloc[-1] / close.iloc[-1 - rs_length] - 1) * 100
-        if stock_rs > idx_rs:
-            s += 5.0
-        if stock_rs > 0:
-            s += 5.0
+        c = close_to_bar if close_to_bar is not None else close
+        if len(c) > rs_length:
+            stock_rs = (c.iloc[-1] / c.iloc[-1 - rs_length] - 1) * 100
+        else:
+            stock_rs = float("nan")
+        if not np.isnan(stock_rs):
+            if stock_rs > idx_rs:
+                s += 5.0
+            if stock_rs > 0:
+                s += 5.0
+        else:
+            if not np.isnan(curr["pc1m"]) and curr["pc1m"] > 0:
+                s += 5.0
+            if not np.isnan(curr["pc3m"]) and curr["pc3m"] > 0:
+                s += 5.0
     else:
         if not np.isnan(curr["pc1m"]) and curr["pc1m"] > 0:
             s += 5.0
@@ -585,13 +620,19 @@ def _score_volatility(curr: dict) -> tuple[float, float, str]:
         (score, atr_pct, volatility_status)
     """
     atr_pct = (curr["atr"] / curr["close"]) * 100 if curr["close"] > 0 else 0
+    if np.isnan(curr["atr"]) or np.isnan(curr["close"]) or curr["close"] <= 0:
+        return 0.0, 0.0, "N/A"
     volat_stat = "High" if atr_pct > 3 else ("Low" if atr_pct < 1 else "Medium")
     volat_score = 5.0 if volat_stat in ("Medium", "Low") else 0.0
     return volat_score, atr_pct, volat_stat
 
 
-def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
-    """Category 10: FUNDAMENTALS (max 20 pts).
+def _score_fundamentals_dict(fund: dict | None) -> tuple[float, dict]:
+    """Category 10: FUNDAMENTALS (max 20 pts) — from a plain dict.
+
+    Shared helper used by both the live scorer (which extracts fundamentals
+    from ``df.attrs['_fundamentals']``) and the backtest scorer (which
+    receives ``stock.fundamentals`` directly).
 
     Returns:
         (score, detail_dict)
@@ -599,14 +640,13 @@ def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
     fund_score = 0.0
     fund_detail = {}
 
-    fundamentals = getattr(df, '_fundamentals', None)
-    if not fundamentals:
+    if not fund:
         return 0.0, {"pe": "N/A", "eps_growth": "N/A", "rev_growth": "N/A", "roe": "N/A"}
 
-    calc_pe = fundamentals.get("pe_ratio")
-    eps_growth = fundamentals.get("eps_growth")
-    rev_growth = fundamentals.get("rev_growth")
-    roe = fundamentals.get("roe")
+    calc_pe = fund.get("pe_ratio")
+    eps_growth = fund.get("eps_growth")
+    rev_growth = fund.get("rev_growth")
+    roe = fund.get("roe")
 
     # P/E
     if calc_pe is not None and calc_pe > 0:
@@ -661,6 +701,85 @@ def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
         fund_detail["roe"] = "N/A"
 
     return min(fund_score, 20.0), fund_detail
+
+
+def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
+    """Category 10: FUNDAMENTALS (max 20 pts) — from a DataFrame.
+
+    Extracts fundamentals from ``df.attrs['_fundamentals']`` and delegates
+    to :func:`_score_fundamentals_dict`.
+    """
+    fundamentals = df.attrs.get('_fundamentals')
+    return _score_fundamentals_dict(fundamentals)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SHARED SCORING ENTRY POINT
+# ══════════════════════════════════════════════════════════════════════════════
+
+def score_bar(curr: dict, close: pd.Series, bar_idx: int,
+              index_df: pd.DataFrame | None, rs_length: int,
+              fund: dict | None = None) -> dict:
+    """Compute all 10 category scores for a single bar.
+
+    This is the **single source of truth** for per-bar scoring logic.
+    Both the live scorer (``compute_scores``) and the backtest scorer
+    (``compute_score_at_bar``) delegate here so the 10 ``_score_*``
+    functions are called exactly once per invocation.
+
+    Args:
+        curr: Flat dict of indicator values at this bar (the same format
+              used by the private ``_score_*`` helpers).  Must contain at
+              least: ``close``, ``fast_ma``, ``slow_ma``, ``rsi``,
+              ``macd_hist``, ``macd_hist_prev``, ``stoch_k``, ``obv``,
+              ``obv_prev``, ``obv_ma``, ``volume``, ``vol_ma``, ``atr``,
+              ``adx``, ``pc1m``, ``pc3m``, ``ma_bullish``,
+              ``above_poc``, ``close_above_both_ma``, ``ma_crossed_above``,
+              ``crossover_bars_ago``.
+        close: Full close Series (live) or full-series (backtest).
+        bar_idx: Index into ``close`` for the bar being scored.
+        index_df: Index DataFrame for relative-strength comparison, or None.
+        rs_length: Look-back period for relative-strength calculation.
+        fund: Fundamentals dict (backtest) or None (live extracts from df).
+
+    Returns:
+        Dict with ``total`` and all 10 category scores rounded to 1 decimal.
+    """
+    close_to_bar = close.iloc[: bar_idx + 1]
+
+    trend_score = _score_trend(curr)
+    mom_score = _score_momentum(curr)
+    rsi_score = _score_rsi(curr)
+    macd_score = _score_macd(curr)
+    stoch_score = _score_stochastic(curr)
+    obv_score = _score_obv(curr)
+    vol_score = _score_volume(curr)
+    rs_score = _score_relative_strength(
+        curr, close, index_df, rs_length, close_to_bar=close_to_bar,
+    )
+    volat_score, atr_pct, volat_stat = _score_volatility(curr)
+    fund_score, fund_detail = _score_fundamentals_dict(fund)
+
+    total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
+             + obv_score + vol_score + rs_score + volat_score + fund_score)
+    total = max(0.0, min(total, 100.0))
+
+    return {
+        "total": round(total, 1),
+        "trend":     round(trend_score, 1),
+        "momentum":  round(mom_score, 1),
+        "rsi":       round(rsi_score, 1),
+        "macd":      round(macd_score, 1),
+        "stoch":     round(stoch_score, 1),
+        "obv":       round(obv_score, 1),
+        "volume":    round(vol_score, 1),
+        "rel_str":   round(rs_score, 1),
+        "volatility": round(volat_score, 1),
+        "fundamentals": round(fund_score, 1),
+        "atr_pct":   round(atr_pct, 2),
+        "volat_stat": volat_stat,
+        "fund_detail": fund_detail,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -799,22 +918,27 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     sideways = _compute_sideways(df, ind["adx_val"], settings)
     curr["is_sideways"] = sideways["is_sideways"]
 
-    # ── Per-category scoring ───────────────────────────────────────────────
-    trend_score = _score_trend(curr)
-    mom_score = _score_momentum(curr)
-    rsi_score = _score_rsi(curr)
-    macd_score = _score_macd(curr)
-    stoch_score = _score_stochastic(curr)
-    obv_score = _score_obv(curr)
-    vol_score = _score_volume(curr)
-    rs_score = _score_relative_strength(curr, close, index_df, settings.get("rs_length", 14))
-    volat_score, atr_pct, volat_stat = _score_volatility(curr)
-    fund_score, fund_detail = _score_fundamentals(df)
+    # ── Per-category scoring (delegated to score_bar) ───────────────────
+    fund_for_bar = df.attrs.get('_fundamentals')
+    scores = score_bar(
+        curr, close, len(close) - 1, index_df,
+        settings.get("rs_length", 14), fund=fund_for_bar,
+    )
 
-    # ── Total ──────────────────────────────────────────────────────────────
-    total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
-             + obv_score + vol_score + rs_score + volat_score + fund_score)
-    total = max(0.0, min(total, 100.0))
+    trend_score = scores["trend"]
+    mom_score = scores["momentum"]
+    rsi_score = scores["rsi"]
+    macd_score = scores["macd"]
+    stoch_score = scores["stoch"]
+    obv_score = scores["obv"]
+    vol_score = scores["volume"]
+    rs_score = scores["rel_str"]
+    volat_score = scores["volatility"]
+    atr_pct = scores["atr_pct"]
+    volat_stat = scores["volat_stat"]
+    fund_score = scores["fundamentals"]
+    fund_detail = scores["fund_detail"]
+    total = scores["total"]
 
     # ── Build result ───────────────────────────────────────────────────────
     return {

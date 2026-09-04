@@ -9,14 +9,12 @@ Usage:
     python scanner/app.py
 """
 
-import json
 import logging
 import os
 import threading
 import webbrowser
 from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
 
 import flet as ft
 from flet.controls.alignment import Alignment
@@ -26,12 +24,12 @@ from .trace import setup_trace
 try:
     setup_trace()
 except Exception:
-    pass
+    logging.getLogger(__name__).debug("Trace setup failed", exc_info=True)
 
 logger = logging.getLogger(__name__)
-logger.info("app module loaded -- trace active at %s", Path(__file__).parent / "trace.log")
 
 from .report import generate_html_report, save_report
+from .settings_store import DEFAULT_SETTINGS  # noqa: E402 — canonical single source
 from .themes import THEMES
 from .universes import UNIVERSES
 from .views_backtest import BacktestViewMixin
@@ -45,39 +43,26 @@ LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12
 LOG_MAX_LINES = 500
 
-DEFAULT_SETTINGS = {
-    "fast_ma_type": "HMA", "fast_ma_len": 40,
-    "slow_ma_type": "EMA", "slow_ma_len": 50,
-    "rsi_len": 14, "rs_length": 14, "vol_ma_len": 20, "atr_len": 14,
-    "index_symbol": "NSEI",
-    "vp_lookback": 200, "vp_rows": 30, "vp_width": 40,
-    "adx_len": 14, "adx_threshold": 20.0,
-    "chop_len": 14, "chop_threshold": 61.8,
-    "slope_ma_type": "EMA", "slope_ma_len": 50, "slope_lookback": 10, "flat_threshold": 0.5,
-    "sideways_strong_move_pct": 5.0, "volume_participation_len": 5,
-    "min_adx_entry": 20.0,
-    "sc_pivot_len": 3, "sc_bands_mult": 0.6, "crossover_lookback": 20,
-    "min_score": 50.0, "data_period": "1y", "timeframe": "D", "trend_filter": "All",
-    "negative_cache_ttl_hours": 24, "theme": "dark",
-    "stale_member_max_age_days": 45.0,
-}
-
 
 def load_settings() -> dict:
+    """Load settings, merging saved values over DEFAULT_SETTINGS."""
     settings = DEFAULT_SETTINGS.copy()
     if os.path.exists(SETTINGS_FILE):
         try:
+            import json as _json
             with open(SETTINGS_FILE, "r") as f:
-                settings.update(json.load(f))
+                settings.update(_json.load(f))
         except Exception as e:
             logger.debug("Failed to load settings: %s", e)
     return settings
 
 
 def save_settings(settings: dict):
+    """Save settings to JSON file."""
     try:
+        import json as _json
         with open(SETTINGS_FILE, "w") as f:
-            json.dump(settings, f, indent=2)
+            _json.dump(settings, f, indent=2)
     except Exception as e:
         logger.debug("Failed to save settings: %s", e)
 
@@ -91,6 +76,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.all_results = []
         self.filtered_results = []
         self._results_lock = threading.Lock()
+        self._ui_lock = threading.Lock()
         self.scanning = False
         self.filter_text = ""
         self.last_warnings: list[str] = []
@@ -132,7 +118,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 self.settings.get("negative_cache_ttl_hours", 24)
             )
         except Exception:
-            pass
+            logger.debug("Failed to apply cache TTL settings", exc_info=True)
 
     def _build_ui(self):
         c = self.theme_colors
@@ -388,13 +374,18 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             self._scan_cancelled = result.cancelled
 
             def _final_sync():
-                self.results = result.results
-                self.all_results = list(result.results)
-                self.filtered_results = [r for r in result.results if self._row_matches_filters(r)]
+                # If result.results is empty but we have streaming results,
+                # preserve the streaming results (they survived via _on_stream_batch)
+                final_results = result.results
+                if not final_results and self.all_results:
+                    final_results = self.all_results
+                self.results = final_results
+                self.all_results = list(final_results)
+                self.filtered_results = [r for r in final_results if self._row_matches_filters(r)]
                 self.last_warnings = list(getattr(result, "warnings", []) or [])
                 self._render_current_page()
                 if result.cancelled:
-                    self._log(f"Scan stopped — showing {len(result.results)} partial results.")
+                    self._log(f"Scan stopped — showing {len(final_results)} partial results.")
                 if result.error:
                     self._log(f"Scan finished with error: {result.error}")
 
@@ -465,14 +456,15 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         worker thread as well as from callback handlers (log, progress,
         stream-batch, completion, error).
         """
-        try:
-            fn()
-        except Exception:  # pragma: no cover
-            logger.debug("UI update callback failed", exc_info=True)
-        try:
-            self.page.update()
-        except Exception:  # pragma: no cover
-            pass
+        with self._ui_lock:
+            try:
+                fn()
+            except Exception:  # pragma: no cover
+                logger.debug("UI update callback failed", exc_info=True)
+            try:
+                self.page.update()
+            except Exception:  # pragma: no cover
+                pass
 
     # ── Results rendering ───────────────────────────────────────────────
 
@@ -896,7 +888,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             with open(LOG_FILE, "a", encoding="utf-8") as f:
                 f.write(line)
         except Exception:
-            pass
+            logger.debug("Failed to write to log file", exc_info=True)
         try:
             col = getattr(self, "log_column", None)
             if col is not None:
@@ -905,7 +897,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 )
                 del col.controls[:-LOG_MAX_LINES]
         except Exception:
-            pass
+            logger.debug("Failed to append to UI log panel", exc_info=True)
 
     def _set_progress(self, value, text=""):
         self.progress_bar.value = value

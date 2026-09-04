@@ -45,7 +45,7 @@ def cli_mocks(recent_crossover_ohlcv, flat_ohlcv, monkeypatch):
         captured["results"] = list(results)
         return "<html>"
 
-    monkeypatch.setattr(run_scanner, "_load_settings", lambda: {"min_score": 50.0})
+    monkeypatch.setattr(run_scanner, "load_settings", lambda: {"min_score": 50.0})
     monkeypatch.setattr(run_scanner, "select_universe", lambda: ("TEST", ["AAA", "BBB"]))
     monkeypatch.setattr(run_scanner, "select_threshold", lambda: 50.0)
     monkeypatch.setattr(run_scanner, "select_period", lambda: "1y")

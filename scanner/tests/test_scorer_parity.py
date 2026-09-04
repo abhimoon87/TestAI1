@@ -90,11 +90,11 @@ def _score_both(df: pd.DataFrame, nifty_df: pd.DataFrame, settings: dict,
     stock_df = df.iloc[: window_end + 1].copy()
     idx_df = nifty_df[nifty_df.index <= df.index[window_end]].copy()
 
-    # .iloc[:].copy() drops custom attributes — carry _fundamentals over so
+    # .iloc[:].copy() drops .attrs — carry _fundamentals over so
     # the live scorer sees the same fundamentals as precompute_stock did.
-    fund = getattr(df, "_fundamentals", None)
+    fund = df.attrs.get("_fundamentals")
     if fund is not None:
-        object.__setattr__(stock_df, "_fundamentals", fund)
+        stock_df.attrs["_fundamentals"] = fund
 
     stock = precompute_stock("T", df, settings)  # precompute on full history
     assert stock is not None, "fixture too short for precompute_stock warmup"
@@ -142,7 +142,7 @@ class TestScorerParity:
         df = _ohlcv(500, seed=5)
         fund = {"pe_ratio": 12.0, "eps_growth": 25.0,
                 "rev_growth": 18.0, "roe": 22.0}  # -> 20/20 in both
-        object.__setattr__(df, "_fundamentals", fund)
+        df.attrs["_fundamentals"] = fund
         bt_t, live_t, bt_sw, live_sw = _score_both(df, index_ohlcv, settings)
         assert round(bt_t, 1) == round(live_t, 1)
         assert bt_sw == live_sw

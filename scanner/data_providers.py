@@ -30,33 +30,31 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Load API keys from config file if exists
+# Load API keys from config file (module-level dict, no os.environ mutation)
+_API_KEYS: dict[str, str] = {}
 _config_file = Path(__file__).parent / "api_config.json"
 if _config_file.exists():
     try:
         with open(_config_file, "r") as f:
-            _config = json.load(f)
-            for key, value in _config.items():
-                if key not in os.environ:  # Don't override existing env vars
-                    os.environ[key] = value
+            _API_KEYS = json.load(f)
     except Exception as e:
         logger.debug("Could not load api_config.json: %s", e)
+
+
+def _get_api_key(key_name: str) -> str:
+    """Resolve an API key: config file first, then os.environ."""
+    return _API_KEYS.get(key_name) or os.environ.get(key_name, "")
 
 # ── Cache Directory ────────────────────────────────────────────────────────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 CACHE_TTL_HOURS = 4  # Cache expires after 4 hours
 
 
-def _normalize_cache_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """Map a frame onto the canonical tz-naive IST trade-date calendar.
+from ._index_utils import _normalize_daily_index
 
-    The canonical implementation lives in ``data_fetcher``, which imports
-    THIS module -- so it is lazy-imported here to avoid the cycle.  Applying
-    it on every cache write AND read means no code path (batch or per-ticker,
-    yfinance or jugaad/nselib fallback) can surface the UTC-close 18:30
-    stamps that once made cross-ticker date unions double-count every day.
-    """
-    from .data_fetcher import _normalize_daily_index  # lazy: data_fetcher imports us
+
+def _normalize_cache_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Map a frame onto the canonical tz-naive IST trade-date calendar."""
     return _normalize_daily_index(df)
 
 
@@ -451,7 +449,7 @@ def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
 
         # Finnhub uses .NS suffix for NSE stocks
         finnhub_ticker = f"{ticker}.NS"
-        api_key = os.environ.get("FINNHUB_API_KEY", "")
+        api_key = _get_api_key("FINNHUB_API_KEY")
 
         if not api_key:
             return None
@@ -508,7 +506,7 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> dict | None:
     try:
         import requests
 
-        api_key = os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+        api_key = _get_api_key("ALPHA_VANTAGE_API_KEY")
         if not api_key:
             return None
 

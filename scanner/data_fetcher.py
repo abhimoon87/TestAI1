@@ -18,6 +18,7 @@ import time
 import pandas as pd
 
 from .trace import trace
+from ._index_utils import _normalize_daily_index  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -27,44 +28,6 @@ from .data_providers import (
     _set_cached,
     prune_stale_cache,
 )
-
-# ── OHLCV Resampling ───────────────────────────────────────────────────────
-
-def _normalize_daily_index(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize a daily OHLCV frame onto tz-naive IST trade dates (midnight).
-
-    Daily frames arrive in two flavors: local-midnight stamps (the yfinance
-    ``.NS`` path) and UTC-close stamps at 18:30 on the previous day (some
-    fallback providers).  Both encode the same NSE trade day, but the stamps
-    hash differently -- so cross-ticker date unions (backtest alignment,
-    relative-strength date masks) double-count every day and drift by one.
-    This treats any naive stamp as UTC, converts to Asia/Kolkata and truncates
-    to midnight: 18:30 UTC becomes 00:00 the next day, and local midnights are
-    unchanged (00:00 UTC -> 05:30 IST, same date).  Same-day collisions from
-    duplicate or dual-provider rows keep the last bar.
-    """
-    if df is None or df.empty:
-        return df
-    idx = df.index
-    if not isinstance(idx, pd.DatetimeIndex):
-        try:
-            idx = pd.DatetimeIndex(pd.to_datetime(idx))
-        except Exception:
-            return df
-    if idx.tz is None:
-        try:
-            idx = idx.tz_localize("UTC")
-        except Exception:
-            pass
-    try:
-        dates = idx.tz_convert("Asia/Kolkata").tz_localize(None).normalize()
-    except Exception:
-        dates = idx.normalize() if getattr(idx, "tz", None) is None \
-            else idx.tz_localize(None).normalize()
-    out = df.copy()
-    out.index = dates
-    out = out[~out.index.duplicated(keep="last")]
-    return out.sort_index()
 
 
 def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
@@ -124,13 +87,16 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 # ── Global provider instance ───────────────────────────────────────────────
 _provider = None
+_provider_lock = threading.Lock()
 
 
 def _get_provider() -> DataProvider:
-    """Get or create the global data provider."""
+    """Get or create the global data provider (thread-safe)."""
     global _provider
     if _provider is None:
-        _provider = DataProvider()
+        with _provider_lock:
+            if _provider is None:
+                _provider = DataProvider()
     return _provider
 
 
@@ -181,7 +147,7 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
                 # Attach fundamentals
                 fund = provider.fetch_fundamentals(ticker)
                 if fund is not None:
-                    object.__setattr__(df, '_fundamentals', fund)
+                    df.attrs['_fundamentals'] = fund
                 return df
         except Exception as e:
             if attempt < retries - 1:
@@ -260,7 +226,7 @@ def _negative_cache_load() -> dict[str, float]:
                     and now - ts < _negative_cache_ttl_hours * 3600
                 }
             except Exception:
-                pass  # missing / corrupt file -> empty cache
+                logger.debug("Negative cache load failed (missing/corrupt file)", exc_info=True)
             _negative_cache = cache
         return _negative_cache
 
@@ -390,7 +356,7 @@ def _enrichment_cache_load() -> dict:
                     ):
                         cache[k] = entry
             except Exception:
-                pass  # missing / corrupt file -> empty cache
+                logger.debug("Enrichment cache load failed (missing/corrupt file)", exc_info=True)
             _enrichment_cache = cache
         return _enrichment_cache
 

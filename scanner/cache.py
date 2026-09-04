@@ -15,6 +15,8 @@ Features:
 - Centralized hashlib.md5(usedforsecurity=False)
 """
 
+__all__ = ["TTLCache"]
+
 import hashlib
 import logging
 import threading

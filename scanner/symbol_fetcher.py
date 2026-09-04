@@ -75,7 +75,7 @@ def _cache_set(key: str, value: list):
     try:
         _save_disk_cache()
     except Exception:
-        pass
+        logger.debug("Symbol disk cache save failed", exc_info=True)
 
 
 def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> list:
@@ -99,47 +99,6 @@ def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> lis
         logger.info("Using static fallback for %s", key)
         return fallback
     
-    return []
-
-
-def _get_static_fallback(key: str) -> list:
-    """Get static fallback from universes module."""
-    if key == "mainboard":
-        try:
-            from .universes import CASH_MARKET
-            return CASH_MARKET
-        except Exception:
-            return []
-    elif key == "fno":
-        try:
-            from .universes import FNO_STOCKS
-            return FNO_STOCKS
-        except Exception:
-            return []
-    elif key == "nifty50":
-        try:
-            from .universes import NIFTY_50
-            return NIFTY_50
-        except Exception:
-            return []
-    elif key == "niftynext50":
-        try:
-            from .universes import NIFTY_NEXT_50
-            return NIFTY_NEXT_50
-        except Exception:
-            return []
-    elif key == "midcap150":
-        try:
-            from .universes import NIFTY_MIDCAP_100
-            return NIFTY_MIDCAP_100
-        except Exception:
-            return []
-    elif key == "smallcap250":
-        try:
-            from .universes import NIFTY_SMALLCAP_100
-            return NIFTY_SMALLCAP_100
-        except Exception:
-            return []
     return []
 
 

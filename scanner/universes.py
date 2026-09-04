@@ -2,6 +2,9 @@
 Stock universe definitions for Indian market scanner.
 All tickers are NSE symbols (suffix .NS added at fetch time).
 """
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ── Suspended / delisted members ────────────────────────────────────────────
 # Names that still sit in the index/F&O constituent lists below but have no
@@ -283,7 +286,7 @@ def get_universe(name: str) -> list:
                 UNIVERSES["NSE ALL (Live ~2,200)"] = live
                 return live
         except Exception:
-            pass
+            logger.debug("NSE live fetch failed, falling back to static list", exc_info=True)
         return UNIVERSES.get("NSE ALL (Live ~2,200)") or NIFTY_BROAD
 
     if low in ("bse all (live ~4,500)", "bse all", "bse all (live)"):
@@ -295,7 +298,7 @@ def get_universe(name: str) -> list:
                 UNIVERSES["BSE ALL (Live ~4,500)"] = live
                 return live
         except Exception:
-            pass
+            logger.debug("BSE live fetch failed, falling back to static list", exc_info=True)
         return UNIVERSES.get("BSE ALL (Live ~4,500)") or NIFTY_BROAD
 
     if low in ("full market (nse+bse ~5,900)", "full market", "full market (live)", "all market"):
@@ -307,7 +310,7 @@ def get_universe(name: str) -> list:
                 UNIVERSES["FULL MARKET (NSE+BSE ~5,900)"] = live
                 return live
         except Exception:
-            pass
+            logger.debug("Full market live fetch failed, falling back to static list", exc_info=True)
         return UNIVERSES.get("FULL MARKET (NSE+BSE ~5,900)") or NIFTY_BROAD
 
     for key, value in UNIVERSES.items():

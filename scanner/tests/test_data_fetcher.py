@@ -495,7 +495,7 @@ class TestFetchStockData:
         assert result is None
 
     def test_attaches_fundamentals(self):
-        """Fundamentals should be attached as _fundamentals attribute."""
+        """Fundamentals should be attached via df.attrs['_fundamentals']."""
         df = _make_daily_ohlcv(200)
         mock_provider = MagicMock()
         mock_provider.fetch_stock.return_value = df
@@ -504,8 +504,8 @@ class TestFetchStockData:
         with patch("scanner.data_fetcher._get_provider", return_value=mock_provider):
             result = fetch_stock_data("RELIANCE", period="1y")
 
-        assert hasattr(result, "_fundamentals")
-        assert result._fundamentals["pe_ratio"] == 15.0
+        assert "_fundamentals" in result.attrs
+        assert result.attrs["_fundamentals"]["pe_ratio"] == 15.0
 
     def test_retries_on_exception(self):
         """Should retry on exception and eventually fail."""

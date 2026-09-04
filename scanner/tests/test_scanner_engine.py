@@ -101,7 +101,7 @@ class TestEnrichRowsInPlaceCache:
         row = out[0]
         assert row["_sentiment_score"] == 0.9  # provider keys replayed
         assert row["_insider_score"] == 5
-        assert df._fundamentals == {"pe_ratio": 20.0}  # cached fundamentals attached
+        assert df.attrs.get("_fundamentals") == {"pe_ratio": 20.0}  # cached fundamentals attached
         assert row["total"] == 88.0  # re-scored on top of cached data
         assert row["combined_rating"] == "EXCELLENT"
 
@@ -123,7 +123,7 @@ class TestEnrichRowsInPlaceCache:
         row = out[0]
         assert row["_sentiment_score"] == 0.7
         assert row["_article_count"] == 3
-        assert df._fundamentals == {"pe_ratio": 15.0}
+        assert df.attrs.get("_fundamentals") == {"pe_ratio": 15.0}
         # The fetched result is now cached for the next scan
         entry = data_fetcher._enrichment_cache_get("TCS")
         assert entry is not None
@@ -143,7 +143,7 @@ class TestEnrichRowsInPlaceCache:
             out = self._run(rows, {"SMALL": df}, enrich)
 
         mock_fund.assert_not_called()
-        assert not hasattr(df, "_fundamentals")  # stays fundamentals-free
+        assert "_fundamentals" not in df.attrs  # stays fundamentals-free
         assert out[0]["total"] == 88.0
 
     def test_cache_miss_with_all_providers_empty_is_not_cached(self):

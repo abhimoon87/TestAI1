@@ -8,6 +8,12 @@ Where the Pine file defines a series function, the port aims to match it
 vectorized so results may differ only in warm-up behaviour.
 """
 
+__all__ = [
+    "hull_ma", "ema", "sma", "vwma", "kama",
+    "rsi", "macd", "stochastic", "obv", "atr", "adx",
+    "price_change", "highest", "lowest", "volume_profile_poc",
+]
+
 import numpy as np
 import pandas as pd
 
@@ -231,51 +237,51 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
     """
     n = len(close)
     poc_series = pd.Series(index=close.index, dtype=float)
-    
+
     high_arr = high.values.astype(float)
     low_arr = low.values.astype(float)
     vol_arr = volume.values.astype(float)
     close_arr = close.values.astype(float)
-    
+
     # Pre-allocate rolling min/max arrays (vectorized via pandas)
     rolling_high = pd.Series(high_arr, index=close.index).rolling(lookback).max().values
     rolling_low = pd.Series(low_arr, index=close.index).rolling(lookback).min().values
-    
+
     for i in range(lookback - 1, n):
         price_min = rolling_low[i]
         price_max = rolling_high[i]
-        
+
         if np.isnan(price_min) or np.isnan(price_max) or price_max == price_min:
             poc_series.iloc[i] = price_min if not np.isnan(price_min) else close_arr[i]
             continue
-        
+
         # Adaptive bin count (matches original logic)
         num_bins = min(20, int((price_max - price_min) / (close_arr[i] * 0.001)) + 1)
         num_bins = max(num_bins, 5)
-        
+
         bin_edges = np.linspace(price_min, price_max, num_bins + 1)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
+
         # Extract lookback window as numpy arrays (no iloc overhead)
         start = i - lookback + 1
         w_high = high_arr[start:i + 1]
         w_low = low_arr[start:i + 1]
         w_vol = vol_arr[start:i + 1]
-        
+
         # Vectorized: compute overlap of all bars × all bins at once
         # Shapes: bars=(B,), bins=(N+1,)
         overlap_low = np.maximum(w_low[:, None], bin_edges[None, :-1])
         overlap_high = np.minimum(w_high[:, None], bin_edges[None, 1:])
         overlap_len = np.maximum(overlap_high - overlap_low, 0.0)
-        
+
         bar_range = w_high - w_low
         # Avoid division by zero: replace 0 ranges with 1 (overlap will be 0 anyway)
         safe_range = np.where(bar_range > 0, bar_range, 1.0)
         overlap_pct = overlap_len / safe_range[:, None]
-        
+
         # Distribute volume: (B, 1) × (B, N) → sum over bars → (N,)
         bin_volumes = (w_vol[:, None] * overlap_pct).sum(axis=0)
-        
+
         poc_series.iloc[i] = bin_centers[np.argmax(bin_volumes)]
-    
+
     return poc_series

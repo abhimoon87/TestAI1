@@ -9,7 +9,6 @@ Requirements:
     pip install yfinance pandas numpy
 """
 
-import json
 import logging
 import os
 import sys
@@ -21,24 +20,16 @@ from .data_fetcher import (
     fetch_index_data,
 )
 from .report import generate_html_report, save_report
-from .scanner_engine import ScannerEngine, _enrich_rows_in_place, _score_ticker
+from .scanner_engine import (
+    ENRICH_TOP_N,
+    ScannerEngine,
+    _enrich_rows_in_place,
+    _score_ticker,
+)
+from .settings_store import load_settings
 from .universes import UNIVERSES
 
 logger = logging.getLogger(__name__)
-
-_SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
-
-
-def _load_settings():
-    """Load settings from JSON file."""
-    s = {}
-    if os.path.exists(_SETTINGS_FILE):
-        try:
-            with open(_SETTINGS_FILE, "r") as f:
-                s = json.load(f)
-        except Exception as e:
-            logger.debug("Failed to load settings: %s", e)
-    return s
 
 
 def print_banner():
@@ -152,7 +143,7 @@ def run_scan():
     timeframe = select_timeframe()
 
     # ── Load settings and override with CLI selections ──────────────────────
-    settings = _load_settings()
+    settings = load_settings()
     settings["data_period"] = period
     settings["timeframe"] = timeframe
     index_symbol = settings.get("index_symbol", "NSEI")
@@ -243,7 +234,7 @@ def run_scan():
     # ── Phase 2 (large universes): enrich top 200 + re-score like the engine ─
     if is_large and results:
         results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-        top_n = min(200, len(results))
+        top_n = min(ENRICH_TOP_N, len(results))
         top = results[:top_n]
         rest = results[top_n:]
         logger.info("Enriching top %d of %d with fundamentals/sentiment...",

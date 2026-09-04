@@ -83,7 +83,7 @@ class LayoutViewMixin:
         self._rail_pills["backtest"] = backtest_pill
 
         logo = ft.Container(
-            content=ft.Text("H", color="white", size=17, weight=ft.FontWeight.BOLD),
+            content=ft.Text("ABHI", color="white", size=11, weight=ft.FontWeight.BOLD),
             width=44, height=44, border_radius=22,
             bgcolor=c["purple"],
             alignment=Alignment.CENTER,
@@ -521,7 +521,7 @@ class LayoutViewMixin:
         c = self.theme_colors
 
         avatar = ft.Container(
-            content=ft.Text("H", size=20, weight=ft.FontWeight.BOLD, color="#8dffc4"),
+            content=ft.Text("ABHI", size=13, weight=ft.FontWeight.BOLD, color="#8dffc4"),
             width=52, height=52, border_radius=26,
             bgcolor="#12331f",
             border=_border_all(2, c["cyan"]),

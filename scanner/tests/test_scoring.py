@@ -386,13 +386,12 @@ class TestComputeScores:
 
     def test_fundamentals_attached(self, synthetic_ohlcv):
         """When _fundamentals is attached, it should be used."""
-        # Attach fundamentals via object.__setattr__ to avoid pandas warning
-        object.__setattr__(synthetic_ohlcv, '_fundamentals', {
+        synthetic_ohlcv.attrs['_fundamentals'] = {
             "pe_ratio": 12.0,
             "eps_growth": 25.0,
             "rev_growth": 18.0,
             "roe": 22.0,
-        })
+        }
         result = compute_scores(synthetic_ohlcv, timeframe="D")
         assert result is not None
         # With strong fundamentals, fund score should be high

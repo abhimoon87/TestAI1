@@ -247,7 +247,7 @@ class TestScoringRealData:
         for ticker, df in real_stock_data.items():
             fund = fetch_fundamentals(ticker)
             if fund is not None:
-                object.__setattr__(df, '_fundamentals', fund)
+                df.attrs['_fundamentals'] = fund
             result = compute_scores(df, timeframe="D")
             if result is not None:
                 assert 0 <= result["total"] <= 100
@@ -273,7 +273,7 @@ class TestEndToEndConsistency:
         for ticker, df in data.items():
             fund = fetch_fundamentals(ticker)
             if fund is not None:
-                object.__setattr__(df, '_fundamentals', fund)
+                df.attrs['_fundamentals'] = fund
             result = compute_scores(df, timeframe="D", index_df=index_df)
             if result is not None:
                 result["ticker"] = ticker

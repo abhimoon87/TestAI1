@@ -47,6 +47,10 @@ _POOR_RATINGS = ("POOR", "WEAK")
 
 STALE_MEMBER_MAX_AGE_DAYS = 45
 
+# Universe size thresholds for fast-mode optimization
+LARGE_UNIVERSE_THRESHOLD = 500
+ENRICH_TOP_N = 200
+
 
 def _find_stale_members(batch_data: dict, max_age_days: float | None = None):
     """Universe members whose latest bar is older than ``max_age_days``.
@@ -142,11 +146,11 @@ def _score_ticker(
             return None, "filtered"
         # Skip fundamentals/enrichment in fast mode phase 1 (large universes
         # attach them later in the top-200 pass and re-score there).
-        if not is_large and getattr(df, '_fundamentals', None) is None:
+        if not is_large and df.attrs.get('_fundamentals') is None:
             try:
                 fund = fetch_fundamentals(ticker)
                 if fund is not None:
-                    object.__setattr__(df, '_fundamentals', fund)
+                    df.attrs['_fundamentals'] = fund
             except (RequestException, ValueError, KeyError) as e:
                 logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
         if is_large:
@@ -223,7 +227,7 @@ def _enrich_rows_in_place(
             # them now and recompute so totals/ratings reflect real data.
             df = batch_data.get(ticker)
             if df is not None and not df.empty:
-                if getattr(df, '_fundamentals', None) is None:
+                if df.attrs.get('_fundamentals') is None:
                     try:
                         if cached is not None:
                             fund = cached.get("fundamentals")  # may be None = known-none
@@ -232,7 +236,7 @@ def _enrich_rows_in_place(
                             if provider_keys:
                                 _enrichment_cache_put(ticker, provider_keys, fund)
                         if fund is not None:
-                            object.__setattr__(df, '_fundamentals', fund)
+                            df.attrs['_fundamentals'] = fund
                     except (RequestException, ValueError, KeyError):
                         pass
                 recomputed = compute_scores(
@@ -376,6 +380,124 @@ class ScannerEngine:
                 # A failing log sink (e.g. a console that can't encode ✓) must
                 # never abort the scan and discard already-scored results.
                 logger.debug("Log callback failed: %s", e)
+
+    def _prepare_scan(
+        self,
+        universe: str,
+        settings: dict,
+        period: str,
+        timeframe: str,
+        trend_filter: str,
+        index_symbol: str,
+        scan_label: str = "SCAN",
+    ) -> tuple[list[str], Any, dict, bool]:
+        """Shared setup for scan() and scan_stream().
+
+        Resolves the universe, strips dead members, logs the header,
+        fetches the index, caches API keys and global enrichment data.
+
+        Returns ``(tickers, index_df, global_data, is_large)``.
+        """
+        try:
+            tickers = get_universe(universe)
+        except KeyError:
+            tickers = UNIVERSES.get(universe, [])
+
+        tickers, dead_members = strip_dead_members(tickers)
+        if dead_members:
+            self._log(
+                f"Skipping {len(dead_members)} suspended/delisted member(s): "
+                + ", ".join(f"{t} ({SUSPENDED_OR_DELISTED[t]})" for t in dead_members),
+            )
+
+        tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
+
+        self._log("\n" + "=" * 50)
+        self._log(f"START {scan_label} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self._log("=" * 50)
+        self._log(f"Starting scan: {universe} ({len(tickers)} stocks)")
+        self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
+        self._log(f"FastMA={settings.get('fast_ma_type','HMA')}{settings.get('fast_ma_len',40)} "
+                   f"SlowMA={settings.get('slow_ma_type','EMA')}{settings.get('slow_ma_len',50)} "
+                   f"RSI={settings.get('rsi_len',14)} Threshold={settings.get('min_score',50)}")
+
+        self._progress(0.0, "Fetching NIFTY 50 index...")
+        index_df = fetch_index_data(f"^{index_symbol}", period=period)
+        if index_df is not None:
+            self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
+        else:
+            self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
+
+        self._api_config = load_api_config()
+
+        self._log("Fetching global macro/commodity data...")
+        global_data = self._fetch_global_enrichment(settings)
+        if global_data:
+            self._log(f"Global enrichment: {len(global_data)} keys (macro, forex, crypto, commodity)")
+
+        is_large = len(tickers) > LARGE_UNIVERSE_THRESHOLD
+        if is_large:
+            self._log(f"Large universe fast mode: {len(tickers)} stocks — technicals first, enrich top {ENRICH_TOP_N} only")
+
+        return tickers, index_df, global_data, is_large
+
+    def _finalize_scan(
+        self,
+        result: ScanResult,
+        settings: dict,
+        tickers: list[str],
+        results: list[dict],
+        filtered_out: int,
+        poor_rating_hidden: int,
+        direction_counts: dict,
+        trend_filter: str,
+        batch_data: dict | None = None,
+        scan_label: str = "Scan Complete",
+    ) -> None:
+        """Shared teardown for scan() and scan_stream().
+
+        Sorts results, populates the ScanResult, logs the summary, and
+        attaches warnings (broad-filter, stale members).
+        """
+        results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
+        passed = len([r for r in results if r["total"] >= settings.get("min_score", 50)])
+
+        result.results = results
+        result.filtered_out = filtered_out
+        result.direction_counts = direction_counts
+
+        self._log("\n\u2501" * 25 + f" {scan_label} ")
+        if batch_data is not None:
+            missing_final = [t for t in tickers if t not in batch_data]
+            self._log(f"  Total tickers: {len(tickers)} | fetched: {len(batch_data)}")
+            if missing_final:
+                self._log(
+                    f"  \u26a0 {len(missing_final)} tickers unavailable on all providers "
+                    "(yfinance, jugaad-data, nselib)"
+                )
+        else:
+            self._log(f"  Total stocks:  {len(tickers)}")
+        self._log(f"  Filtered out:  {filtered_out}")
+        if poor_rating_hidden:
+            self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
+        neg_skips = negative_cache_skip_count()
+        if neg_skips:
+            self._log(f"  Dead-symbols skipped (negative cache): {neg_skips}")
+        self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
+        self._log(f"  Scored {settings.get('min_score', 50)}+: {passed}")
+
+        if not result.cancelled:
+            result.warnings = _build_scan_warnings(
+                settings, len(tickers), results, passed)
+            stale_days = float(settings.get("stale_member_max_age_days")
+                               or STALE_MEMBER_MAX_AGE_DAYS)
+            stale_members = _find_stale_members(batch_data or {}, max_age_days=stale_days)
+            if stale_members:
+                result.warnings.append(
+                    _stale_members_message(stale_members, max_age_days=stale_days)
+                )
+            for w in result.warnings:
+                self._log(f"  \u26a0 {w}")
 
     def _fetch_global_enrichment(self, settings: dict) -> dict:
         """
@@ -576,41 +698,11 @@ class ScannerEngine:
         result = ScanResult()
         
         try:
-            # Resolve universe
-            try:
-                tickers = get_universe(universe)
-            except KeyError:
-                tickers = UNIVERSES.get(universe, [])
+            tickers, index_df, global_data, is_large = self._prepare_scan(
+                universe, settings, period, timeframe, trend_filter,
+                index_symbol, scan_label="SCAN",
+            )
 
-            # Skip annotated suspended/delisted members (they are re-fetched
-            # pointlessly every scan otherwise) and say why.
-            tickers, dead_members = strip_dead_members(tickers)
-            if dead_members:
-                self._log(
-                    "Skipping %d suspended/delisted member(s): %s",
-                    len(dead_members),
-                    ", ".join(f"{t} ({SUSPENDED_OR_DELISTED[t]})" for t in dead_members),
-                )
-            
-            tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
-            
-            self._log("\n" + "=" * 50)
-            self._log(f"START SCAN | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log("=" * 50)
-            self._log(f"Starting scan: {universe} ({len(tickers)} stocks)")
-            self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
-            self._log(f"FastMA={settings.get('fast_ma_type','HMA')}{settings.get('fast_ma_len',40)} "
-                       f"SlowMA={settings.get('slow_ma_type','EMA')}{settings.get('slow_ma_len',50)} "
-                       f"RSI={settings.get('rsi_len',14)} Threshold={settings.get('min_score',50)}")
-            
-            # Fetch NIFTY index
-            self._progress(0.0, "Fetching NIFTY 50 index...")
-            index_df = fetch_index_data(f"^{index_symbol}", period=period)
-            if index_df is not None:
-                self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
-            else:
-                self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
-            
             # Batch download all stocks — yfinance chunks, then a per-ticker
             # fallback pass (jugaad-data/nselib) for anything yfinance missed.
             self._progress(0.05, f"Batch downloading {len(tickers)} stocks...")
@@ -633,23 +725,6 @@ class ScannerEngine:
                 )
             else:
                 self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
-
-            # Cache API keys once (not per-ticker)
-            self._api_config = load_api_config()
-
-            # Fetch global enrichment data ONCE (macro/mandi — same for all tickers)
-            self._log("Fetching global macro/commodity data...")
-            global_data = self._fetch_global_enrichment(settings)
-            if global_data:
-                self._log(f"Global enrichment: {len(global_data)} keys (macro, forex, crypto, commodity)")
-
-            # 3-Model Pipeline — fast mode for 5,900 scan
-            # For large universes (>500) we skip per-ticker enrichment and fundamentals
-            # on the first pass, score on technicals only, then enrich only the
-            # top 200 by score. This cuts 500*~1s enrichment → ~200*1s.
-            is_large = len(tickers) > 500
-            if is_large:
-                self._log(f"Large universe fast mode: {len(tickers)} stocks — technicals first, enrich top 200 only")
 
             results = []
             total = len(batch_data)
@@ -739,7 +814,7 @@ class ScannerEngine:
             # ── Phase 2: Enrich top 200 for large universes ───────────────
             if is_large and results and not self._cancel_event.is_set():
                 results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-                top_n = min(200, len(results))
+                top_n = min(ENRICH_TOP_N, len(results))
                 top = results[:top_n]
                 rest = results[top_n:]
                 self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
@@ -752,37 +827,11 @@ class ScannerEngine:
                 )
                 results = enriched_top + rest
 
-            # Sort and store
-            results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-            
-            passed = len([r for r in results if r["total"] >= settings.get("min_score", 50)])
-            
-            self._log("\n\u2501" * 25 + " Scan Complete ")
-            self._log(f"  Total stocks:  {len(tickers)}")
-            self._log(f"  Filtered out:  {filtered_out} (no recent crossover)")
-            if poor_rating_hidden:
-                self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
-            neg_skips = negative_cache_skip_count()
-            if neg_skips:
-                self._log(f"  Dead-symbols skipped (negative cache): {neg_skips}")
-            self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
-            self._log(f"  Scored {settings.get('min_score', 50)}+: {passed}")
-            
-            result.results = results
-            result.filtered_out = filtered_out
-            result.direction_counts = direction_counts
-            if not result.cancelled:
-                result.warnings = _build_scan_warnings(
-                    settings, len(tickers), results, passed)
-                stale_days = float(settings.get("stale_member_max_age_days")
-                                   or STALE_MEMBER_MAX_AGE_DAYS)
-                stale_members = _find_stale_members(batch_data, max_age_days=stale_days)
-                if stale_members:
-                    result.warnings.append(
-                        _stale_members_message(stale_members, max_age_days=stale_days)
-                    )
-                for w in result.warnings:
-                    self._log(f"  \u26a0 {w}")
+            self._finalize_scan(
+                result, settings, tickers, results, filtered_out,
+                poor_rating_hidden, direction_counts, trend_filter,
+                batch_data=batch_data, scan_label="Scan Complete",
+            )
 
         except Exception as e:
             result.error = str(e)
@@ -826,46 +875,10 @@ class ScannerEngine:
         result = ScanResult()
 
         try:
-            try:                tickers = get_universe(universe)
-            except KeyError:
-                tickers = UNIVERSES.get(universe, [])
-
-            # Skip annotated suspended/delisted members (they are re-fetched
-            # pointlessly every scan otherwise) and say why.
-            tickers, dead_members = strip_dead_members(tickers)
-            if dead_members:
-                self._log(
-                    "Skipping %d suspended/delisted member(s): %s",
-                    len(dead_members),
-                    ", ".join(f"{t} ({SUSPENDED_OR_DELISTED[t]})" for t in dead_members),
-                )
-            
-            tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
-            self._log("\n" + "=" * 50)
-            self._log(f"START STREAM SCAN | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log("=" * 50)
-            self._log(f"Starting scan: {universe} ({len(tickers)} stocks)")
-            self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
-            self._log(f"FastMA={settings.get('fast_ma_type','HMA')}{settings.get('fast_ma_len',40)} "
-                       f"SlowMA={settings.get('slow_ma_type','EMA')}{settings.get('slow_ma_len',50)} "
-                       f"RSI={settings.get('rsi_len',14)} Threshold={settings.get('min_score',50)}")
-
-            self._progress(0.0, "Fetching NIFTY 50 index...")
-            index_df = fetch_index_data(f"^{index_symbol}", period=period)
-            if index_df is not None:
-                self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
-            else:
-                self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
-
-            self._api_config = load_api_config()
-            self._log("Fetching global macro/commodity data...")
-            global_data = self._fetch_global_enrichment(settings)
-            if global_data:
-                self._log(f"Global enrichment: {len(global_data)} keys")
-
-            is_large = len(tickers) > 500
-            if is_large:
-                self._log(f"Large universe streaming mode: {len(tickers)} stocks — per-batch technical scoring, enrich top 200 at end")
+            tickers, index_df, global_data, is_large = self._prepare_scan(
+                universe, settings, period, timeframe, trend_filter,
+                index_symbol, scan_label="STREAM SCAN",
+            )
 
             results: list[dict] = []
             batch_data_all: dict = {}
@@ -983,7 +996,7 @@ class ScannerEngine:
             # ── Phase 2: Enrich top 200 for large universes (update in place) ─
             if is_large and results and not self._cancel_event.is_set():
                 results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-                top_n = min(200, len(results))
+                top_n = min(ENRICH_TOP_N, len(results))
                 top = results[:top_n]
                 rest = results[top_n:]
                 self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
@@ -1004,39 +1017,11 @@ class ScannerEngine:
                     except Exception as e:
                         logger.debug("on_batch enrichment callback failed: %s", e)
 
-            results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-            passed = len([r for r in results if r["total"] >= settings.get("min_score", 50)])
-            self._log("\n" + "━" * 25 + " Stream Scan Complete ")
-            missing_final = [t for t in tickers if t not in batch_data_all]
-            self._log(f"  Total tickers: {total_tickers} | fetched: {len(batch_data_all)}")
-            if missing_final:
-                self._log(
-                    f"  ⚠ {len(missing_final)} tickers unavailable on all providers "
-                    "(yfinance, jugaad-data, nselib)"
-                )
-            self._log(f"  Filtered out: {filtered_out}")
-            if poor_rating_hidden:
-                self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
-            neg_skips = negative_cache_skip_count()
-            if neg_skips:
-                self._log(f"  Dead-symbols skipped (negative cache): {neg_skips}")
-            self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull',0)} Bull, {direction_counts.get('Bear',0)} Bear)")
-            self._log(f"  Scored {settings.get('min_score',50)}+: {passed}")
-            result.results = results
-            result.filtered_out = filtered_out
-            result.direction_counts = direction_counts
-            if not result.cancelled:
-                result.warnings = _build_scan_warnings(
-                    settings, total_tickers, results, passed)
-                stale_days = float(settings.get("stale_member_max_age_days")
-                                   or STALE_MEMBER_MAX_AGE_DAYS)
-                stale_members = _find_stale_members(batch_data_all, max_age_days=stale_days)
-                if stale_members:
-                    result.warnings.append(
-                        _stale_members_message(stale_members, max_age_days=stale_days)
-                    )
-                for w in result.warnings:
-                    self._log(f"  \u26a0 {w}")
+            self._finalize_scan(
+                result, settings, tickers, results, filtered_out,
+                poor_rating_hidden, direction_counts, trend_filter,
+                batch_data=batch_data_all, scan_label="Stream Scan Complete",
+            )
 
         except Exception as e:
             result.error = str(e)
