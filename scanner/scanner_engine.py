@@ -279,14 +279,6 @@ def _enrich_rows_in_place(
     return rows  # mutated in place; unfinished rows keep phase-1 scores
 
 
-class ScanProgress:
-    """Progress tracking for scan operations."""
-    def __init__(self):
-        self.value = 0.0
-        self.text = ""
-        self.cancelled = False
-
-
 class ScanResult:
     """Container for scan results."""
     def __init__(self):

@@ -923,21 +923,3 @@ def fetch_batch_yfinance(
         len(results), total,
     )
     return results
-
-
-def fetch_stock_fast(ticker: str, period: str = "1y", timeframe: str = "D") -> pd.DataFrame | None:
-    """
-    Fast single stock fetch using cache-first approach.
-    Fundamentals are NOT fetched here — handled by ScannerEngine enrichment.
-    """
-    provider = _get_provider()
-    download_period = _extend_period_for_timeframe(period, timeframe)
-    try:
-        df = provider.fetch_stock(ticker, download_period)
-        if df is not None and not df.empty and len(df) >= 50:
-            df = resample_ohlcv(df, timeframe)
-            if df is not None and not df.empty:
-                return df
-    except Exception as e:
-        logger.debug("fetch_stock_fast failed for %s: %s", ticker, e)
-    return None

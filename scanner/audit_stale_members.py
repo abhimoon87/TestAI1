@@ -302,10 +302,10 @@ def _paste_ready(unannotated: list) -> str:
 def format_report(res: dict) -> str:
     """Human-readable report (also printed by the CLI)."""
     lines = [
-        f"=== Stale-member audit (period {res['period']}, "
-        f"cutoff {res['max_age_days']:.0f}d) ===",
-        f"Tickers: {res['tickers']} | fetched: {res['fetched']} | "
-        f"stale: {res['stale_total']} | missing: {len(res['missing'])}",
+        (f"=== Stale-member audit (period {res['period']}, "
+         f"cutoff {res['max_age_days']:.0f}d) ==="),
+        (f"Tickers: {res['tickers']} | fetched: {res['fetched']} | "
+         f"stale: {res['stale_total']} | missing: {len(res['missing'])}"),
     ]
     per_universe = res.get("per_universe")
     if per_universe:

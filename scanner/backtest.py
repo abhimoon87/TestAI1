@@ -172,16 +172,6 @@ SECTOR_MAP = {
     "CROMPTON": "Misc",
 }
 
-# Sector color coding for reports
-SECTOR_COLORS = {
-    "Banking": "#3b82f6", "Finance": "#8b5cf6", "IT": "#22c55e",
-    "Pharma": "#ec4899", "Auto": "#f97316", "Metals": "#94a3b8",
-    "OilGas": "#64748b", "FMCG": "#eab308", "Power": "#06b6d4",
-    "Realty": "#a855f7", "Cement": "#78716c", "Chemicals": "#14b8a6",
-    "Consumer": "#f43f5e", "Telecom": "#6366f1", "Infra": "#84cc16",
-    "Defence": "#0ea5e9", "Misc": "#6b7280",
-}
-
 def get_sector(ticker: str) -> str:
     """Get the sector for a stock ticker."""
     return SECTOR_MAP.get(ticker, "Other")
@@ -536,8 +526,8 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
                 w_ema50 = ema(w_close, 50)
                 if not np.isnan(w_hma.iloc[-1]) and not np.isnan(w_ema50.iloc[-1]):
                     weekly_hma_bull = w_hma.iloc[-1] > w_ema50.iloc[-1]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Weekly HMA/EMA gate failed at bar %d: %s", bar_idx, e)
 
     # --- Price change (adaptive) ---
     n = bar_idx + 1

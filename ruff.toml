@@ -1,0 +1,27 @@
+# Governed ruff rule set for the HMAxEMA Scanner.
+#
+# `ruff check .` is GREEN on this selection (ruff 0.16.x), so the plain
+# default run doubles as CI.  Categories the codebase uses deliberately are
+# NOT selected; they were quantified in the 2026-09 lint audit:
+#
+#   BLE001 blind `except Exception`    (~161) defensive provider/fallback style
+#   DTZ0xx  tz-naive datetime           (~51) market "today" is deliberately naive
+#   S110/S112 try-except-pass/continue  (~38) intentional suppression sites
+#   SIM117  nested with statements      (~36) test-fixture style
+#   E4xx/E7xx pycodestyle cosmetics     (E402 view imports, E731 lambdas...)
+#
+# Re-enable a category only after the codebase is cleaned to zero on it.
+
+target-version = "py311"
+exclude = [".cache", ".ruff_cache", "*.log"]
+
+[lint]
+select = [
+    # Enforced floor — always CI-clean (pyflakes + syntax errors).
+    "F", "E9",
+    # Audited + autofixed to zero (2026-09 lint pass).
+    "I001", "UP006", "UP035", "PIE807", "PLR0402", "PLR1711",
+    "FURB167", "PYI041", "RET501",
+    # Audited + hand-fixed to zero.
+    "TRY401", "RUF012", "PERF102", "PGH005", "C408", "FURB192", "ISC004",
+]

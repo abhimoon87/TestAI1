@@ -459,7 +459,7 @@ class TestBatchDownloadCache:
 
         assert set(result) == {"RELIANCE", "TCS"}
         assert set(written) == {"RELIANCE", "TCS"}
-        for t, df in written.items():
+        for df in written.values():
             assert list(df.columns) == ["open", "high", "low", "close", "volume"]
             assert len(df) == 200
 

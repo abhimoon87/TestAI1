@@ -10,6 +10,8 @@ the MRO) and rely on ``self.settings``, ``self.theme_colors`` and the
 ``_settings_inputs`` registry the builder creates.
 """
 
+from typing import ClassVar
+
 import flet as ft
 
 from .ui_kit import (
@@ -21,12 +23,12 @@ from .ui_kit import (
 
 
 class SettingsViewMixin:
-    _MA_TYPES = ["HMA", "EMA", "SMA", "KAMA", "VWMA"]
+    _MA_TYPES: ClassVar[list[str]] = ["HMA", "EMA", "SMA", "KAMA", "VWMA"]
 
     # (key, label, kind, min, max) — kind in {"int", "float", "ma_type", "theme"}.
     # Bounds are intentionally lenient: they only reject values the engine
     # itself cannot tolerate, so a stored setting can never brick Save.
-    _SETTINGS_SPEC = [
+    _SETTINGS_SPEC: ClassVar[list] = [
         ("Signal — HMA×EMA crossover", [
             ("fast_ma_type", "Fast MA type", "ma_type", None, None),
             ("fast_ma_len", "Fast MA length", "int", 2, 500),

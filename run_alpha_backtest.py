@@ -1,6 +1,6 @@
 from scanner.backtest import BacktestEngine
-from scanner.universes import UNIVERSES
 from scanner.settings_store import DEFAULT_SETTINGS
+from scanner.universes import UNIVERSES
 
 # Get Alpha 50 tickers
 alpha50 = UNIVERSES['NIFTY ALPHA 50']

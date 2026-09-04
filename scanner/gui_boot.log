@@ -1,11 +1,356 @@
-2026-09-04 16:56:42.200 | INFO  | MainThread   | trace.setup_trace:133 | Trace initialized -- file=C:\Users\91997\Desktop\TestAI1\scanner\trace.log level=INFO maxBytes=5242880 backups=5
-2026-09-04 16:56:42.200 | INFO  | MainThread   | trace.setup_trace:140 | Python 3.11.9 | Platform win32 | CWD C:\Users\91997\Desktop\TestAI1
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 15, in main
+    setup_trace()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\trace.py", line 133, in setup_trace
+    logging.getLogger("trace").info(
+Message: 'Trace initialized -- file=%s level=%s maxBytes=%d backups=%d'
+Arguments: (WindowsPath('C:/Users/91997/Desktop/TestAI1/scanner/trace.log'), 'INFO', 5242880, 5)
+2026-09-04 17:22:30.346 | INFO  | MainThread   | trace.setup_trace:133 | Trace initialized -- file=C:\Users\91997\Desktop\TestAI1\scanner\trace.log level=INFO maxBytes=5242880 backups=5
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 15, in main
+    setup_trace()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\trace.py", line 140, in setup_trace
+    logging.getLogger("trace").info(
+Message: 'Python %s | Platform %s | CWD %s'
+Arguments: ('3.11.9', 'win32', 'C:\\Users\\91997\\Desktop\\TestAI1')
+2026-09-04 17:22:30.353 | INFO  | MainThread   | trace.setup_trace:140 | Python 3.11.9 | Platform win32 | CWD C:\Users\91997\Desktop\TestAI1
 app module loaded -- trace active at C:\Users\91997\Desktop\TestAI1\scanner\trace.log
-2026-09-04 16:56:42.331 | INFO  | MainThread   | scanner.app.<module>:32 | app module loaded -- trace active at C:\Users\91997\Desktop\TestAI1\scanner\trace.log
-2026-09-04 16:56:42.483 | INFO  | MainThread   | flet.__get_assets_dir_path:705 | Assets path configured: C:\Users\91997\Desktop\TestAI1\scanner\assets
-2026-09-04 16:56:42.486 | INFO  | MainThread   | flet.start:105 | Starting up TCP server on localhost:60729
-2026-09-04 16:56:42.493 | INFO  | MainThread   | flet.run_async:298 | Flet app has started...
-2026-09-04 16:56:42.586 | INFO  | MainThread   | flet.on_app_startup:237 | App URL: tcp://localhost:60729
-2026-09-04 16:56:42.586 | INFO  | MainThread   | flet_desktop.__locate_and_unpack_flet_view:366 | Starting Flet View app...
-2026-09-04 16:56:42.591 | INFO  | MainThread   | flet_desktop.ensure_client_cached:231 | Flet client found in cache: C:\Users\91997\.flet\client\flet-desktop-full-0.86.5
-2026-09-04 16:56:42.868 | INFO  | MainThread   | flet.on_session_created:364 | App session started
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 27, in main
+    from .app import main as app_main
+  File "<frozen importlib._bootstrap>", line 1176, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1147, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 690, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\91997\Desktop\TestAI1\scanner\app.py", line 32, in <module>
+    logger.info("app module loaded -- trace active at %s", Path(__file__).parent / "trace.log")
+Message: 'app module loaded -- trace active at %s'
+Arguments: (WindowsPath('C:/Users/91997/Desktop/TestAI1/scanner/trace.log'),)
+2026-09-04 17:22:30.603 | INFO  | MainThread   | scanner.app.<module>:32 | app module loaded -- trace active at C:\Users\91997\Desktop\TestAI1\scanner\trace.log
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 213, in run_async
+    assets_dir = __get_assets_dir_path(assets_dir)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 705, in __get_assets_dir_path
+    logger.info("Assets path configured: %s", assets_dir)
+Message: 'Assets path configured: %s'
+Arguments: ('C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\assets',)
+2026-09-04 17:22:31.005 | INFO  | MainThread   | flet.__get_assets_dir_path:705 | Assets path configured: C:\Users\91997\Desktop\TestAI1\scanner\assets
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 277, in run_async
+    conn = await __run_socket_server(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 426, in __run_socket_server
+    await conn.start()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\messaging\flet_socket_server.py", line 105, in start
+    logger.info("Starting up TCP server on %s:%s", host, port)
+Message: 'Starting up TCP server on %s:%s'
+Arguments: ('localhost', 50124)
+2026-09-04 17:22:31.146 | INFO  | MainThread   | flet.start:105 | Starting up TCP server on localhost:50124
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 298, in run_async
+    logger.info("Flet app has started...")
+Message: 'Flet app has started...'
+Arguments: ()
+2026-09-04 17:22:31.164 | INFO  | MainThread   | flet.run_async:298 | Flet app has started...
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 310, in run_async
+    on_app_startup(conn.page_url)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 237, in on_app_startup
+    logger.info("App URL: %s", page_url)
+Message: 'App URL: %s'
+Arguments: ('tcp://localhost:50124',)
+2026-09-04 17:22:31.401 | INFO  | MainThread   | flet.on_app_startup:237 | App URL: tcp://localhost:50124
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 312, in run_async
+    fvp, pid_file = await open_flet_view_async(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet_desktop\__init__.py", line 304, in open_flet_view_async
+    args, flet_env, pid_file = __locate_and_unpack_flet_view(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet_desktop\__init__.py", line 366, in __locate_and_unpack_flet_view
+    logger.info("Starting Flet View app...")
+Message: 'Starting Flet View app...'
+Arguments: ()
+2026-09-04 17:22:31.406 | INFO  | MainThread   | flet_desktop.__locate_and_unpack_flet_view:366 | Starting Flet View app...
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 312, in run_async
+    fvp, pid_file = await open_flet_view_async(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet_desktop\__init__.py", line 304, in open_flet_view_async
+    args, flet_env, pid_file = __locate_and_unpack_flet_view(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet_desktop\__init__.py", line 398, in __locate_and_unpack_flet_view
+    cache_dir = ensure_client_cached()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet_desktop\__init__.py", line 231, in ensure_client_cached
+    logger.info(f"Flet client found in cache: {cache_dir}")
+Message: 'Flet client found in cache: C:\\Users\\91997\\.flet\\client\\flet-desktop-full-0.86.5'
+Arguments: ()
+2026-09-04 17:22:31.420 | INFO  | MainThread   | flet_desktop.ensure_client_cached:231 | Flet client found in cache: C:\Users\91997\.flet\client\flet-desktop-full-0.86.5
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 32, in <module>
+    main()
+  File "C:\Users\91997\Desktop\TestAI1\scanner\__main__.py", line 28, in main
+    ft.run(app_main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 135, in run
+    return asyncio.run(
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 190, in run
+    return runner.run(main)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 641, in run_until_complete
+    self.run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\windows_events.py", line 321, in run_forever
+    super().run_forever()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 608, in run_forever
+    self._run_once()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\base_events.py", line 1936, in _run_once
+    handle._run()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\asyncio\events.py", line 84, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\site-packages\flet\app.py", line 364, in on_session_created
+    logger.info("App session started")
+Message: 'App session started'
+Arguments: ()
+2026-09-04 17:22:31.809 | INFO  | MainThread   | flet.on_session_created:364 | App session started
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
+    self.doRollover()
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
+    self.rotate(self.baseFilename, dfn)
+  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
+    os.rename(source, dest)
+PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
+Call stack:

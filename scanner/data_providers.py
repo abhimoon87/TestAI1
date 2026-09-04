@@ -134,8 +134,8 @@ def cache_health() -> dict:
                 fresh += 1
             else:
                 stale += 1
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("cache_health census failed: %s", e)
     with _PRUNE_LOCK:
         last_ts = _last_prune_ts
     last_prune = datetime.fromtimestamp(last_ts).isoformat(timespec="minutes") if last_ts > 0 else ""

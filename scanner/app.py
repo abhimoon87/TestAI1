@@ -767,7 +767,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 self._safe_update(lambda: self._log(f"HTML report saved: {filename}"))
                 webbrowser.open(f"file://{os.path.abspath(filepath)}")
             except Exception as ex:
-                logger.exception("HTML export failed: %s", ex)
+                logger.exception("HTML export failed")  # traceback carries ex
                 msg = f"HTML export failed: {ex}"
                 # Bind first — ``ex`` is cleared on except-block exit.
                 self._safe_update(lambda: self._log(msg))

@@ -151,7 +151,7 @@ class TestCliScoringLoop:
         assert enrich_calls["kw"]["timeframe"] == "D"
         assert enrich_calls["kw"]["enrich"] is fake_engine._enrich_with_providers
         # And phase-1 used the engine semantics too
-        assert fake_engine._fetch_global_enrichment.called_once
+        assert fake_engine._fetch_global_enrichment.call_count == 1
 
     def test_small_universe_skips_engine_setup(self, cli_mocks, monkeypatch):
         """Small lists must not instantiate the engine or fetch global data."""

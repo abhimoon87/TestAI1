@@ -102,18 +102,6 @@ def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> lis
     return []
 
 
-# Static fallbacks (updated periodically)
-_STATIC_FALLBACKS = {
-    "mainboard": [],  # Will be populated from universes if needed
-    "fno": [],
-    "sme": [],
-    "nifty50": [],
-    "niftynext50": [],
-    "midcap150": [],
-    "smallcap250": [],
-}
-
-
 def _get_static_fallback(key: str) -> list:
     """Get static fallback from universes module."""
     if key == "mainboard":
@@ -463,23 +451,6 @@ def fetch_bse_all_live() -> list[str]:
     return _fetch_with_cache("bse_all", _do, fallback=_get_static_fallback("bse_all"))
 
 
-def fetch_bse_static_universes() -> dict:
-    """
-    Return static BSE universes from universes.py.
-    These are manually maintained and should be updated periodically.
-    """
-    try:
-        from .universes import BSE_MIDCAP, BSE_SENSEX, BSE_SMALLCAP
-        return {
-            "BSE SENSEX": BSE_SENSEX,
-            "BSE MIDCAP": BSE_MIDCAP,
-            "BSE SMALLCAP": BSE_SMALLCAP,
-        }
-    except ImportError as e:
-        logger.warning("Failed to import BSE static universes: %s", e)
-        return {}
-
-
 def fetch_all_market_symbols() -> list[str]:
     """
     Fetch all unique listed symbols across NSE+BSE (~5,900).
@@ -528,29 +499,6 @@ def fetch_all_market_symbols() -> list[str]:
 
     # Use 4h cache; fallback to NIFTY_BROAD so scan still works offline
     return _fetch_with_cache("all_market", _do, fallback=_get_static_fallback("all_market"))
-
-
-MAX_BSE_VALIDATE = 20
-
-def validate_bse_symbols(symbols: list[str], max_check: int = MAX_BSE_VALIDATE) -> list[str]:
-    """
-    Validate BSE symbols by checking if they exist on yfinance (.BO suffix).
-    Limited to max_check to avoid rate limits.
-    Uses fast_info for lightweight check instead of full info.
-    """
-    import yfinance as yf
-    valid = []
-    for sym in symbols[:max_check]:
-        try:
-            ticker = yf.Ticker(f"{sym}.BO")
-            # Use fast_info for lightweight existence check (no HTTP)
-            fi = ticker.fast_info
-            if fi and fi.get("symbol"):
-                valid.append(sym)
-        except (KeyError, ValueError, ConnectionError, TimeoutError) as e:
-            logger.debug("BSE validation failed for %s: %s", sym, e)
-            continue
-    return valid
 
 
 if __name__ == "__main__":

@@ -342,14 +342,15 @@ class TestBuildSettingsView:
 
 
 def _row(**over):
-    base = dict(
-        ticker="TCS", total=45.0, combined_rating="POOR", entry_signal=False,
-        close=120.0, trend=8.0, momentum=9.0, rsi=5.0, macd=4.0, volume=6.0,
-        rel_str=4.0, fundamentals=0.0, pc1m=-2.5, trend_dir="Bear",
-        adx_val=18.0, is_sideways=True,
-        ma_crossed_above=False, ma_bullish=False, crossover_bars_ago=-1,
-        crossover_count=0,
-    )
+    base = {
+        "ticker": "TCS", "total": 45.0, "combined_rating": "POOR",
+        "entry_signal": False, "close": 120.0, "trend": 8.0,
+        "momentum": 9.0, "rsi": 5.0, "macd": 4.0, "volume": 6.0,
+        "rel_str": 4.0, "fundamentals": 0.0, "pc1m": -2.5,
+        "trend_dir": "Bear", "adx_val": 18.0, "is_sideways": True,
+        "ma_crossed_above": False, "ma_bullish": False,
+        "crossover_bars_ago": -1, "crossover_count": 0,
+    }
     base.update(over)
     return base
 
@@ -358,7 +359,8 @@ class TestGetSortKey:
     def test_sorts_by_score_descending(self):
         app = _make_app()
         rows = [_row(ticker="A", total=30), _row(ticker="B", total=80)]
-        assert sorted(rows, key=app._get_sort_key(2), reverse=True)[0]["ticker"] == "B"
+        ordered = sorted(rows, key=app._get_sort_key(2), reverse=True)
+        assert ordered[0]["ticker"] == "B"
 
     def test_sorts_by_rating_order(self):
         app = _make_app()
@@ -373,7 +375,8 @@ class TestGetSortKey:
         app = _make_app()
         key = app._get_sort_key(4)
         rows = [_row(ticker="A", entry_signal=False), _row(ticker="B", entry_signal=True)]
-        assert sorted(rows, key=key, reverse=True)[0]["ticker"] == "B"
+        ordered = sorted(rows, key=key, reverse=True)
+        assert ordered[0]["ticker"] == "B"
 
     def test_ma_column_prefers_fresh_crossover(self):
         """MA sort: fresh crossover > bullish > bearish."""

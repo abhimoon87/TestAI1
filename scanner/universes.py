@@ -400,13 +400,3 @@ SECTOR_MAP = {
 def get_sector(ticker: str) -> str:
     """Get the sector for a stock ticker."""
     return SECTOR_MAP.get(ticker, "Other")
-
-
-SECTOR_COLORS = {
-    "Banking": "#3b82f6", "Finance": "#8b5cf6", "IT": "#22c55e",
-    "Pharma": "#ec4899", "Auto": "#f97316", "Metals": "#94a3b8",
-    "OilGas": "#64748b", "FMCG": "#eab308", "Power": "#06b6d4",
-    "Realty": "#a855f7", "Cement": "#78716c", "Chemicals": "#14b8a6",
-    "Consumer": "#f43f5e", "Telecom": "#6366f1", "Infra": "#84cc16",
-    "Defence": "#0ea5e9", "Misc": "#6b7280", "Other": "#6b7280",
-}

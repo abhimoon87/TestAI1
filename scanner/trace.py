@@ -179,8 +179,6 @@ def trace(
                     s = repr(v)
                     # For DataFrames, show shape instead of full data
                     if "DataFrame" in type(v).__name__:
-                        import pandas as pd  # noqa: F401
-
                         shape = getattr(v, "shape", "?")
                         s = f"<DataFrame shape={shape}>"
                     if len(s) > max_arg_len:
@@ -223,28 +221,3 @@ def trace(
     if _func is not None:
         return decorator(_func)
     return decorator
-
-
-def log_call(logger: logging.Logger | None = None, level: int = logging.DEBUG):
-    """Manual helper: log current function call with caller info."""
-    lg = logger or logging.getLogger("trace")
-    if lg.isEnabledFor(level):
-        import inspect
-
-        frame = inspect.currentframe()
-        if frame is not None and frame.f_back is not None:
-            caller = frame.f_back
-            lg.log(level, "call %s:%d %s", caller.f_code.co_filename.split("/")[-1], caller.f_lineno, caller.f_code.co_name)
-
-
-# ── Convenience: one-liner to tail trace log ───────────────────────────────
-
-def tail_trace(n: int = 50) -> str:
-    """Return last n lines of trace.log for UI display."""
-    try:
-        if not _trace_path.exists():
-            return "(trace.log not yet created)"
-        lines = _trace_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        return "\n".join(lines[-n:])
-    except Exception as e:
-        return f"(tail failed: {e})"
