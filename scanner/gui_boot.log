@@ -24,9 +24,8 @@ Traceback (most recent call last):
   File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 74, in emit
     self.doRollover()
   File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 179, in doRollover
-    self.rotate(self.baseFilename, dfn)
-  File "C:\Users\91997\AppData\Local\Programs\Python\Python311\Lib\logging\handlers.py", line 115, in rotate
-    os.rename(source, dest)
+    self.rotate(self.baseFilename, dfn2026-09-04 17:58:17.999 | INFO  | MainThread   | flet.<lambda>:75 | Session was garbage collected: hn0WpcknDRPsuxNN
+os.rename(source, dest)
 PermissionError: [WinError 32] The process cannot access the file because it is being used by another process: 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log' -> 'C:\\Users\\91997\\Desktop\\TestAI1\\scanner\\trace.log.1'
 Call stack:
   File "<frozen runpy>", line 198, in _run_module_as_main
