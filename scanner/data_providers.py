@@ -16,11 +16,13 @@ All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
 """
 
+import glob
 import hashlib
 import json
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -43,6 +45,102 @@ if _config_file.exists():
 # ── Cache Directory ────────────────────────────────────────────────────────
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 CACHE_TTL_HOURS = 4  # Cache expires after 4 hours
+
+
+def _normalize_cache_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Map a frame onto the canonical tz-naive IST trade-date calendar.
+
+    The canonical implementation lives in ``data_fetcher``, which imports
+    THIS module -- so it is lazy-imported here to avoid the cycle.  Applying
+    it on every cache write AND read means no code path (batch or per-ticker,
+    yfinance or jugaad/nselib fallback) can surface the UTC-close 18:30
+    stamps that once made cross-ticker date unions double-count every day.
+    """
+    from .data_fetcher import _normalize_daily_index  # lazy: data_fetcher imports us
+    return _normalize_daily_index(df)
+
+
+_PRUNE_LOCK = threading.Lock()
+_last_prune_ts = 0.0
+PRUNE_INTERVAL_SECONDS = 3600  # at most one stale-cache sweep per process per hour
+
+
+def prune_stale_cache(force: bool = False) -> int:
+    """Delete cache entries from earlier days -- unreachable dead weight.
+
+    The cache key embeds ``date.today()`` (see ``_cache_key``), so an entry
+    written on any previous day can never be read again -- but one file per
+    (ticker, period, provider, day) stays on disk forever unless pruned.
+    Sweeping is rate-limited per process (``PRUNE_INTERVAL_SECONDS``) so scan
+    starts stay cheap; only non-today files are ever deleted, so a sweep can
+    not race a concurrent writer or reader (both use today's key).
+
+    Returns the number of stale (pkl, meta) pairs removed.
+    """
+    global _last_prune_ts
+    now = time.time()
+    with _PRUNE_LOCK:
+        if not force and now - _last_prune_ts < PRUNE_INTERVAL_SECONDS:
+            return 0
+        _last_prune_ts = now
+
+    today = date.today().isoformat()
+    removed = 0
+    try:
+        for meta in glob.glob(os.path.join(CACHE_DIR, "*.meta")):
+            try:
+                with open(meta, "r") as f:
+                    ts = json.load(f).get("timestamp", "")
+            except Exception:
+                continue  # unreadable/corrupt meta -- leave the pair alone
+            if ts[:10] == today:
+                continue
+            try:
+                os.remove(meta[:-5] + ".pkl")
+            except OSError:
+                pass
+            try:
+                os.remove(meta)
+            except OSError:
+                pass
+            removed += 1
+    except Exception as e:
+        logger.debug("Stale-cache prune failed: %s", e)
+    if removed:
+        logger.info("Pruned %d stale cache entrie(s) from previous days", removed)
+    return removed
+
+
+def cache_health() -> dict:
+    """Price-cache census: fresh vs stale pkl+meta pairs on disk.
+
+    Returns ``{price_entries, stale_entries, last_prune}`` where
+    ``price_entries`` is the TOTAL pair count on disk (today's reachable
+    entries plus every other day's unreachable leftovers) and
+    ``stale_entries`` is the unreachable subset.  ``last_prune`` is an ISO
+    timestamp of the last ``prune_stale_cache`` sweep in this process (""
+    when never pruned).
+    """
+    fresh = stale = 0
+    today = date.today().isoformat()
+    try:
+        for meta in glob.glob(os.path.join(CACHE_DIR, "*.meta")):
+            try:
+                with open(meta, "r") as f:
+                    ts = json.load(f).get("timestamp", "")
+            except Exception:
+                continue
+            if ts[:10] == today:
+                fresh += 1
+            else:
+                stale += 1
+    except Exception:
+        pass
+    with _PRUNE_LOCK:
+        last_ts = _last_prune_ts
+    last_prune = datetime.fromtimestamp(last_ts).isoformat(timespec="minutes") if last_ts > 0 else ""
+    return {"price_entries": fresh + stale, "stale_entries": stale,
+            "last_prune": last_prune}
 
 
 def _ensure_cache_dir():
@@ -75,7 +173,7 @@ def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
         if age_hours > CACHE_TTL_HOURS:
             return None
 
-        return pd.read_pickle(cache_file)
+        return _normalize_cache_frame(pd.read_pickle(cache_file))
     except Exception as e:
         logger.debug("Cache read failed for %s: %s", ticker, e)
         return None
@@ -89,6 +187,7 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
     meta_file = os.path.join(CACHE_DIR, f"{key}.meta")
 
     try:
+        df = _normalize_cache_frame(df)
         df.to_pickle(cache_file)
         with open(meta_file, "w") as f:
             json.dump({"timestamp": datetime.now().isoformat(), "rows": len(df)}, f)
@@ -107,7 +206,7 @@ def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
 
         from jugaad_data.nse import stock_df
 
-        period_days = {"6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
+        period_days = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
         days = period_days.get(period, 365)
         end = date.today()
         start = end - timedelta(days=days)
@@ -124,11 +223,13 @@ def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
             "DATE": "date"
         })
 
-        # Set DATE as index (needed for resampling)
+        # Set DATE as index (needed for resampling). jugaad returns rows
+        # newest-first — flip to ascending so .iloc[-1] is the latest bar.
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"])
             df = df.set_index("date")
             df.index.name = None
+            df = df.sort_index()
 
         # Keep required columns
         cols = ["open", "high", "low", "close", "volume"]
@@ -155,7 +256,7 @@ def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
 
         from jugaad_data.nse import index_df
 
-        period_days = {"6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
+        period_days = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
         days = period_days.get(period, 365)
         end = date.today()
         start = end - timedelta(days=days)
@@ -175,6 +276,7 @@ def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
 
         # Normalize columns
         col_map = {}
+        date_col = None
         for c in df.columns:
             cl = c.lower().strip()
             if "open" in cl:
@@ -187,6 +289,12 @@ def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
                 col_map[c] = "close"
             elif "volume" in cl or "turnover" in cl:
                 col_map[c] = "volume"
+            elif "date" in cl:
+                # index_df() reports the trading day under HistoricalDate.
+                # Keep it so it can become the DatetimeIndex below — without
+                # this the frame has a RangeIndex and Relative-Strength
+                # date alignment silently breaks (epoch-1970 dates).
+                date_col = c
 
         df = df.rename(columns=col_map)
         cols = ["open", "high", "low", "close", "volume"]
@@ -195,10 +303,26 @@ def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
         if len(available) < 4:
             return None
 
-        df = df[available].copy()
-        df = df.dropna()
+        # Pull the date column out first, then keep only OHLCV.
+        if date_col is not None and date_col not in available:
+            df = df[[date_col] + available].copy()
+        else:
+            df = df[available].copy()
 
-        return df
+        if date_col is not None and date_col in df.columns:
+            dates = pd.to_datetime(df[date_col])
+            df = df.drop(columns=[date_col])
+            df.index = dates
+            df.index.name = None
+
+        if not isinstance(df.index, pd.DatetimeIndex) or len(df) < 2:
+            return None
+
+        # jugaad returns rows newest-first — flip to ascending so .iloc[-1]
+        # and date-mask alignment in the scorers use the latest bar.
+        df = df.sort_index()
+
+        return df.dropna()
 
     except ImportError:
         return None
@@ -267,7 +391,7 @@ def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
     try:
         from nselib import capital_market
 
-        period_days = {"6mo": 180, "1y": 365, "2y": 730, "5y": 1825}
+        period_days = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
         days = period_days.get(period, 365)
         end = date.today()
         start = end - timedelta(days=days)

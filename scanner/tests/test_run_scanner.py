@@ -12,8 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import scanner.run_scanner as run_scanner
-from scanner import scanner_engine
+from scanner import run_scanner, scanner_engine
 
 
 @pytest.fixture

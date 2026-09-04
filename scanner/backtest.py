@@ -93,6 +93,11 @@ DEFAULT_SETTINGS = {
     # ATR-based trailing stop
     "atr_trail_enabled": False,
     "atr_trail_multiplier": 2.5,      # trail = peak - multiplier * ATR
+    # Entry gates (backtest experiments; all default OFF so behavior is unchanged)
+    "index_regime_filter": False,     # only enter while NIFTY close > its EMA
+    "index_regime_ema_len": 50,       # regime EMA length
+    "min_adx_entry": 0.0,             # require ADX >= this at the signal bar (0 = off)
+    "blocked_entry_weekdays": [],     # skip entries whose entry date falls on these weekday ints (Mon=0..Fri=4)
 }
 
 WARMUP_BARS = 260  # ~1 year of daily data for indicators to stabilize
@@ -470,36 +475,47 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     close_above_both = close_val > fast_ma and close_val > slow_ma
     above_poc = not np.isnan(vp_poc) and close_val >= vp_poc
 
-    # --- Sideways filter ---
-    is_sideways = False
-    if not np.isnan(adx_val) and adx_val < settings["adx_threshold"]:
-        is_sideways = True
-    if not is_sideways:
-        atr1 = atr(df["high"], df["low"], df["close"], 1)
-        chop_len = settings["chop_len"]
-        if bar_idx >= chop_len:
-            chop_sum = atr1.iloc[bar_idx - chop_len + 1: bar_idx + 1].sum()
-            chop_range = (
-                df["high"].iloc[bar_idx - chop_len + 1: bar_idx + 1].max()
-                - df["low"].iloc[bar_idx - chop_len + 1: bar_idx + 1].min()
-            )
-            if chop_range > 0:
-                chop_val = 100 * math.log10(chop_sum / chop_range) / math.log10(chop_len)
-                if chop_val > settings["chop_threshold"]:
-                    is_sideways = True
-    if not is_sideways:
-        slope_ma = get_ma(
-            settings["slope_ma_type"], close.iloc[: bar_idx + 1],
-            settings["slope_ma_len"], volume.iloc[: bar_idx + 1]
+    # --- Sideways filter (direction-aware, mirrors scoring.py) ---
+    # A strong directional move (|1M change| >= 5%) needs two independent
+    # sideways evidences (weak ADX + chop/flat slope); otherwise any single
+    # trigger classifies the bar as sideways.
+    adx_weak = not np.isnan(adx_val) and adx_val < settings["adx_threshold"]
+    chop_weak = False
+    atr1 = atr(df["high"], df["low"], df["close"], 1)
+    chop_len = settings["chop_len"]
+    if bar_idx >= chop_len:
+        chop_sum = atr1.iloc[bar_idx - chop_len + 1: bar_idx + 1].sum()
+        chop_range = (
+            df["high"].iloc[bar_idx - chop_len + 1: bar_idx + 1].max()
+            - df["low"].iloc[bar_idx - chop_len + 1: bar_idx + 1].min()
         )
-        lb = settings["slope_lookback"]
-        if len(slope_ma) > lb and not np.isnan(slope_ma.iloc[-1]) and not np.isnan(slope_ma.iloc[-1 - lb]):
-            slope_pct = abs(
-                (slope_ma.iloc[-1] - slope_ma.iloc[-1 - lb])
-                / slope_ma.iloc[-1 - lb]
-            ) * 100
-            if slope_pct < settings["flat_threshold"]:
-                is_sideways = True
+        if chop_range > 0:
+            chop_val = 100 * math.log10(chop_sum / chop_range) / math.log10(chop_len)
+            chop_weak = chop_val > settings["chop_threshold"]
+    slope_weak = False
+    slope_ma = get_ma(
+        settings["slope_ma_type"], close.iloc[: bar_idx + 1],
+        settings["slope_ma_len"], volume.iloc[: bar_idx + 1]
+    )
+    lb = settings["slope_lookback"]
+    if len(slope_ma) > lb and not np.isnan(slope_ma.iloc[-1]) and not np.isnan(slope_ma.iloc[-1 - lb]):
+        slope_pct = abs(
+            (slope_ma.iloc[-1] - slope_ma.iloc[-1 - lb])
+            / slope_ma.iloc[-1 - lb]
+        ) * 100
+        slope_weak = slope_pct < settings["flat_threshold"]
+
+    n_bars = bar_idx + 1
+    pc_lookback = 21 if n_bars >= 100 else (4 if n_bars >= 40 else 1)
+    strong_move = False
+    if bar_idx >= pc_lookback and close.iloc[bar_idx - pc_lookback] > 0:
+        pc_tmp = (close_val / close.iloc[bar_idx - pc_lookback] - 1) * 100
+        strong_move = abs(pc_tmp) >= settings.get("sideways_strong_move_pct", 5.0)
+
+    if strong_move:
+        is_sideways = adx_weak and (chop_weak or slope_weak)
+    else:
+        is_sideways = adx_weak or chop_weak or slope_weak
 
     # --- Weekly HMA higher-timeframe check ---
     weekly_hma_bull = False
@@ -612,18 +628,30 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
             obv_s += 2.0
     obv_s = min(obv_s, 5.0)
 
-    # -- 7. Volume (max 10) --
+    # -- 7. Volume (max 10) -- participation-aware, mirrors scoring.py:
+    # the single-bar print is blended with a 5-bar participation average so
+    # a move that accumulated volume is not zeroed by one quiet close.
     vol_s = 0.0
     if not np.isnan(vol_ma) and vol_ma > 0:
         if vol_val > vol_ma:
-            vol_s += 5.0
-        if vol_val > vol_ma * 1.2:
             vol_s += 3.0
-        if not np.isnan(vol_50) and vol_val > vol_50:
-            vol_s += 2.0
+        vol_len = int(settings.get("volume_participation_len", 5))
+        vol_len = max(1, vol_len)
+        vol_5 = float(volume.iloc[max(0, bar_idx - vol_len + 1): bar_idx + 1].mean())
+        if not np.isnan(vol_5):
+            if vol_5 > vol_ma:
+                vol_s += 4.0
+            if vol_5 > vol_ma * 1.2:
+                vol_s += 2.0
+        if not np.isnan(vol_50) and (vol_val > vol_50 or (not np.isnan(vol_5) and vol_5 > vol_50)):
+            vol_s += 1.0
     vol_s = min(vol_s, 10.0)
 
-    # -- 8. Relative Strength (max 10) --
+    # -- 8. Relative Strength (max 10) -- mirrors scoring.py: the STOCK's
+    # rs_length-day return is compared against the INDEX's rs_length-day
+    # return (both from the same window). The old code compared the stock's
+    # adaptive pc1m (21-day) against a 14-day index return, which diverged
+    # from the live scanner whenever the two windows disagreed.
     rs_s = 0.0
     rs_length = settings["rs_length"]
     if nifty_df is not None and len(nifty_df) > rs_length + 5:
@@ -633,28 +661,29 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
         if isinstance(stock_date, pd.Timestamp):
             # Use the NIFTY close series indexed by date
             mask = idx_close.index <= stock_date
-            if mask.sum() > rs_length:
+            if mask.sum() > rs_length and bar_idx >= rs_length:
                 idx_pos = mask.sum() - 1
                 idx_rs = (idx_close.iloc[idx_pos] / idx_close.iloc[idx_pos - rs_length] - 1) * 100
-                if pc1m > idx_rs:
+                stock_rs = (close.iloc[bar_idx] / close.iloc[bar_idx - rs_length] - 1) * 100
+                if stock_rs > idx_rs:
                     rs_s += 5.0
-                if pc1m > 0:
+                if stock_rs > 0:
                     rs_s += 5.0
             else:
-                # Fallback: use stock momentum alone
-                if pc1m > 0:
+                # Fallback: use stock momentum alone (mirrors scoring.py)
+                if not np.isnan(pc1m) and pc1m > 0:
                     rs_s += 5.0
-                if pc3m > 0:
+                if not np.isnan(pc3m) and pc3m > 0:
                     rs_s += 5.0
         else:
-            if pc1m > 0:
+            if not np.isnan(pc1m) and pc1m > 0:
                 rs_s += 5.0
-            if pc3m > 0:
+            if not np.isnan(pc3m) and pc3m > 0:
                 rs_s += 5.0
     else:
-        if pc1m > 0:
+        if not np.isnan(pc1m) and pc1m > 0:
             rs_s += 5.0
-        if pc3m > 0:
+        if not np.isnan(pc3m) and pc3m > 0:
             rs_s += 5.0
     rs_s = min(rs_s, 10.0)
 
@@ -869,6 +898,19 @@ class BacktestEngine:
         # Skip first WARMUP_BARS days
         backtest_dates = trading_dates[WARMUP_BARS:]
 
+        # Optional calendar-window restriction (walk-forward / OOS runs)
+        sim_start = settings.get("sim_start")
+        sim_end = settings.get("sim_end")
+        sim_start = pd.Timestamp(sim_start) if sim_start is not None else None
+        sim_end = pd.Timestamp(sim_end) if sim_end is not None else None
+        if sim_start is not None:
+            backtest_dates = [d for d in backtest_dates if d >= sim_start]
+        if sim_end is not None:
+            backtest_dates = [d for d in backtest_dates if d <= sim_end]
+        if not backtest_dates:
+            print("  No dates in the simulation window after filters. Aborting.")
+            return {}
+
         print(f"  Simulation: {len(backtest_dates)} trading days")
         print(f"  {backtest_dates[0].strftime('%Y-%m-%d')} to "
               f"{backtest_dates[-1].strftime('%Y-%m-%d')}")
@@ -882,6 +924,19 @@ class BacktestEngine:
         sector_block_threshold = settings.get("sector_block_threshold", -0.05)
         self.sector_tracker.lookback = rotation_lookback
         self.sector_tracker.block_threshold = sector_block_threshold
+
+        # -- Index regime gate config --
+        regime_filter = settings.get("index_regime_filter", False)
+        regime_ema_len = int(settings.get("index_regime_ema_len", 50))
+        regime_close = None
+        regime_ema = None
+        if regime_filter:
+            if self.nifty_df is not None and len(self.nifty_df) >= regime_ema_len + 5:
+                regime_close = self.nifty_df["close"]
+                regime_ema = get_ma("EMA", regime_close, regime_ema_len)
+            else:
+                print("  WARNING: index_regime_filter enabled but no usable NIFTY "
+                      "index loaded -- gate disabled (fail-open)")
 
         # -- Main simulation loop --
         signals_generated = 0
@@ -911,7 +966,13 @@ class BacktestEngine:
                 self.positions = [p for p in self.positions if p.exit_date is None]
 
             # 2. Check for new entries (if we have room)
-            if len(self.positions) < max_pos:
+            # Index regime gate: only enter while NIFTY close > its EMA
+            regime_ok = True
+            if regime_ema is not None:
+                _ic = regime_close.asof(day)
+                _ie = regime_ema.asof(day)
+                regime_ok = not (pd.isna(_ic) or pd.isna(_ie)) and _ic > _ie
+            if len(self.positions) < max_pos and regime_ok:
                 for stock in self.stocks:
                     if len(self.positions) >= max_pos:
                         break
@@ -949,6 +1010,13 @@ class BacktestEngine:
                     close_val = stock.df["close"].iloc[bar_idx]
                     if crossover_level is None or close_val <= crossover_level:
                         continue  # Must close above crossover level
+
+                    # Min-ADX gate: require a real trend at the signal bar
+                    min_adx = settings.get("min_adx_entry", 0.0)
+                    if min_adx > 0:
+                        _adx = stock.adx_val.iloc[bar_idx]
+                        if np.isnan(_adx) or _adx < min_adx:
+                            continue
 
                     # Compute full score
                     score_result = compute_score_at_bar(
@@ -1001,7 +1069,6 @@ class BacktestEngine:
                         continue
 
                     # -- ENTRY SIGNAL CONFIRMED --
-                    signals_taken += 1
 
                     # Entry on next day's open
                     next_idx = bar_idx + 1
@@ -1012,6 +1079,17 @@ class BacktestEngine:
 
                     if np.isnan(entry_price) or entry_price <= 0:
                         continue
+
+                    # Window gate: never enter beyond the sim end (walk-forward)
+                    if sim_end is not None and entry_date > sim_end:
+                        continue
+
+                    # Weekday gate: skip entries landing on blocked weekdays
+                    blocked_wd = settings.get("blocked_entry_weekdays", [])
+                    if blocked_wd and entry_date.weekday() in blocked_wd:
+                        continue
+
+                    signals_taken += 1
 
                     # Position sizing — ATR-based or fixed percentage stop
                     atr_stop = settings.get("atr_stop_enabled", False)
@@ -1084,14 +1162,20 @@ class BacktestEngine:
 
             self.equity_curve.append((day, portfolio_value))
 
-        # Close any remaining positions at last close
+        # Close any remaining positions at the end of the simulated window
+        sim_last = backtest_dates[-1] if backtest_dates else None
         for pos in self.positions:
             stock = next((s for s in self.stocks if s.ticker == pos.ticker), None)
-            if stock is not None:
+            if stock is None:
+                continue
+            if sim_last is not None and sim_last in stock.df.index:
+                last_close = stock.df.loc[sim_last, "close"]
+                last_date = sim_last
+            else:
                 last_close = stock.df["close"].iloc[-1]
                 last_date = stock.df.index[-1]
-                result = _close_position(pos, last_close, last_date, "END_OF_DATA")
-                self.trades.append(result)
+            result = _close_position(pos, last_close, last_date, "END_OF_DATA")
+            self.trades.append(result)
         self.positions.clear()
 
         # -- Compute metrics --

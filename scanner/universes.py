@@ -3,6 +3,29 @@ Stock universe definitions for Indian market scanner.
 All tickers are NSE symbols (suffix .NS added at fetch time).
 """
 
+# ── Suspended / delisted members ────────────────────────────────────────────
+# Names that still sit in the index/F&O constituent lists below but have no
+# live trading data — every scan used to re-fetch them pointlessly.  They are
+# annotated here (NOT dropped from the lists, so published membership stays
+# intact) and the engine skips them with a log line.  Remove an entry if
+# trading ever resumes.
+SUSPENDED_OR_DELISTED = {
+    "GSPL": "suspended — no trades since 2026-05-11",
+    "TATAMETALI": "delisted — merged into Tata Steel (last trade 2024-02-05)",
+}
+
+
+def dead_member_reason(ticker: str) -> str | None:
+    """Why a ticker is skipped as suspended/delisted (None = active)."""
+    return SUSPENDED_OR_DELISTED.get(ticker)
+
+
+def strip_dead_members(tickers: list) -> tuple[list, list]:
+    """Split a ticker list into (active, dead) on SUSPENDED_OR_DELISTED."""
+    active = [t for t in tickers if t not in SUSPENDED_OR_DELISTED]
+    dead = [t for t in tickers if t in SUSPENDED_OR_DELISTED]
+    return active, dead
+
 # ── NIFTY 50 ────────────────────────────────────────────────────────────────
 NIFTY_50 = [
     "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK", "BAJAJ-AUTO",
@@ -28,7 +51,7 @@ BANK_NIFTY = [
 # ── NIFTY NEXT 50 ──────────────────────────────────────────────────────────
 NIFTY_NEXT_50 = [
     "ABB", "ACC", "ADANIENT", "ADANIGREEN", "AMBUJACEM",
-    "ASHOKLEY", "ASTRAL", "ATUL", "AVALONLABS", "BALKRISIND",
+    "ASHOKLEY", "ASTRAL", "ATUL", "AVALON", "BALKRISIND",
     "BIOCON", "BOSCHLTD", "CANFINHOME", "CHAMBLFERT", "COFORGE",
     "CONCOR", "COROMANDEL", "CROMPTON", "CUMMINSIND", "DALBHARAT",
     "DEEPAKNTR", "DIXON", "EMAMILTD", "ESCORTS", "GLENMARK",
@@ -62,8 +85,8 @@ NIFTY_MIDCAP_100 = [
 
 # ── NIFTY SMALLCAP 100 ─────────────────────────────────────────────────────
 NIFTY_SMALLCAP_100 = [
-    "AFFLE", "ALKYLAMINE", "ANGELONE", "APTUS", "ASTER",
-    "BIRLASOFT", "BLUESTARCO", "BSOFT", "CAMPUS", "CDSL",
+    "AFFLE", "ALKYLAMINE", "ANGELONE", "APTUS", "ASTERDM",
+    "BLUESTARCO", "BSOFT", "CAMPUS", "CDSL",
     "CENTURYPLY", "CLEAN", "CAMS", "CYIENT", "DATAPATTNS",
     "EASEMYTRIP", "ELECON", "ELGIEQUIP", "GALAXYSURF",
     "GRINDWELL", "HAPPSTMNDS", "IIFL",
@@ -138,7 +161,7 @@ BSE_MIDCAP = [
 
 # ── BSE SMALLCAP ────────────────────────────────────────────────────────────
 BSE_SMALLCAP = [
-    "AFFLE", "ANGELONE", "APTUS", "ASTER", "BIRLASOFT",
+    "AFFLE", "ANGELONE", "APTUS", "ASTERDM",
     "BLUESTARCO", "BSOFT", "CDSL", "CYIENT", "DATAPATTNS",
     "ELECON", "ELGIEQUIP", "GRINDWELL", "HAPPSTMNDS", "INDIAMART",
     "KPITTECH", "KRBL", "LATENTVIEW", "LEMONTREE", "METROPOLIS",

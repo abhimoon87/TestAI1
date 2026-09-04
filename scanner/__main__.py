@@ -23,6 +23,7 @@ def main():
         run_scan()
     else:
         import flet as ft
+
         from .app import main as app_main
         ft.run(app_main)
 

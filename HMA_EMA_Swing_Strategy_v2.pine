@@ -13,7 +13,7 @@ tf = input.timeframe("D", "Analysis Timeframe", group="Timeframe")
 
 // ── Moving Averages (Crossover) ──────────────────────────────────────────────
 fastMAType  = input.string("HMA", "Fast MA Type", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Moving Averages")
-fastMALen   = input.int(40, "Fast MA Length", minval=1, group="Moving Averages")
+fastMALen   = input.int(44, "Fast MA Length", minval=1, group="Moving Averages")
 slowMAType  = input.string("EMA", "Slow MA Type", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Moving Averages")
 slowMALen   = input.int(50, "Slow MA Length", minval=1, group="Moving Averages")
 showMAs     = input.bool(true, "Show MAs on Chart", group="Moving Averages")

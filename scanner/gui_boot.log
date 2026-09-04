@@ -1,0 +1,11 @@
+2026-09-04 16:56:42.200 | INFO  | MainThread   | trace.setup_trace:133 | Trace initialized -- file=C:\Users\91997\Desktop\TestAI1\scanner\trace.log level=INFO maxBytes=5242880 backups=5
+2026-09-04 16:56:42.200 | INFO  | MainThread   | trace.setup_trace:140 | Python 3.11.9 | Platform win32 | CWD C:\Users\91997\Desktop\TestAI1
+app module loaded -- trace active at C:\Users\91997\Desktop\TestAI1\scanner\trace.log
+2026-09-04 16:56:42.331 | INFO  | MainThread   | scanner.app.<module>:32 | app module loaded -- trace active at C:\Users\91997\Desktop\TestAI1\scanner\trace.log
+2026-09-04 16:56:42.483 | INFO  | MainThread   | flet.__get_assets_dir_path:705 | Assets path configured: C:\Users\91997\Desktop\TestAI1\scanner\assets
+2026-09-04 16:56:42.486 | INFO  | MainThread   | flet.start:105 | Starting up TCP server on localhost:60729
+2026-09-04 16:56:42.493 | INFO  | MainThread   | flet.run_async:298 | Flet app has started...
+2026-09-04 16:56:42.586 | INFO  | MainThread   | flet.on_app_startup:237 | App URL: tcp://localhost:60729
+2026-09-04 16:56:42.586 | INFO  | MainThread   | flet_desktop.__locate_and_unpack_flet_view:366 | Starting Flet View app...
+2026-09-04 16:56:42.591 | INFO  | MainThread   | flet_desktop.ensure_client_cached:231 | Flet client found in cache: C:\Users\91997\.flet\client\flet-desktop-full-0.86.5
+2026-09-04 16:56:42.868 | INFO  | MainThread   | flet.on_session_created:364 | App session started

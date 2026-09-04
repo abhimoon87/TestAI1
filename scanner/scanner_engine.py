@@ -29,7 +29,12 @@ from .data_fetcher import (
 from .scoring import check_filter, compute_scores, get_direction
 from .settings_store import get_api_key, load_api_config
 from .trace import trace
-from .universes import UNIVERSES, get_universe
+from .universes import (
+    SUSPENDED_OR_DELISTED,
+    UNIVERSES,
+    get_universe,
+    strip_dead_members,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,50 @@ logger = logging.getLogger(__name__)
 # summary counts all agree.
 _DIRECTIONAL_TREND_FILTERS = ("Bullish Only", "Bearish Only")
 _POOR_RATINGS = ("POOR", "WEAK")
+
+STALE_MEMBER_MAX_AGE_DAYS = 45
+
+
+def _find_stale_members(batch_data: dict, max_age_days: float | None = None):
+    """Universe members whose latest bar is older than ``max_age_days``.
+
+    Suspended/delisted names (e.g. GSPL, halted May 2026; TATAMETALI, merged
+    into Tata Steel in 2024) still occupy universe lists and are re-fetched on
+    every scan, but their data ends long before today.  Returns
+    ``[(ticker, 'YYYY-MM-DD'), ...]`` sorted oldest-first.
+    """
+    from datetime import timedelta
+
+    if not batch_data:
+        return []
+    days = max_age_days if max_age_days is not None else STALE_MEMBER_MAX_AGE_DAYS
+    cutoff = datetime.now().date() - timedelta(days=days)
+    stale = []
+    for t, df in batch_data.items():
+        try:
+            last = df.index[-1]
+            if not isinstance(last, datetime):
+                import pandas as pd
+                last = pd.Timestamp(last)
+            if last.date() < cutoff:
+                stale.append((str(t), last.date().isoformat()))
+        except Exception:
+            continue
+    return sorted(stale, key=lambda x: x[1])
+
+
+def _stale_members_message(stale_members: list, max_age_days: int | None = None) -> str:
+    """Human-readable warning for a stale-member list (oldest first)."""
+    days = max_age_days if max_age_days is not None else STALE_MEMBER_MAX_AGE_DAYS
+    names = ", ".join(f"{t} ({d})" for t, d in stale_members[:5])
+    if len(stale_members) > 5:
+        names += f" +{len(stale_members) - 5} more"
+    return (
+        f"{len(stale_members)} universe member(s) have stale data "
+        f"(last bar > {days}d old): {names} — "
+        "suspended/delisted? They are fetched each scan but never trade "
+        "the current window."
+    )
 
 
 def rating_ok_for_trend_filter(trend_filter: str, combined_rating: str | None) -> bool:
@@ -246,6 +295,43 @@ class ScanResult:
         self.direction_counts = {"Bull": 0, "Bear": 0}
         self.cancelled = False
         self.error: str | None = None
+        self.warnings: list[str] = []
+
+
+def _build_scan_warnings(settings: dict, total: int, results: list,
+                         passed: int, min_score_default: float = 50.0) -> list[str]:
+    """Warn when the crossover filter is broad but the candidate set is weak.
+
+    A large passed set with few scored / entry names is the signature of a
+    loose MA configuration (e.g. HMA20xEMA40): it screens breadth, and the
+    walk-forward backtests show such filters trade far worse than the default
+    40x50 set.  Returns human-readable warnings (empty when the scan is
+    healthy or too small to judge).
+    """
+    warnings = []
+    if not results or total <= 0:
+        return warnings
+    min_score = float(settings.get("min_score", min_score_default))
+    entry_ct = len([r for r in results if r.get("entry_signal")])
+    ratio = len(results) / total
+    fl = settings.get("fast_ma_len", "?")
+    sl = settings.get("slow_ma_len", "?")
+    if ratio < 0.30 or len(results) < 25:
+        return warnings
+    if entry_ct == 0:
+        warnings.append(
+            f"{len(results)}/{total} stocks pass the crossover filter but NONE has a valid "
+            f"entry signal (only {passed} score {min_score:.0f}+). HMA{fl}xEMA{sl} is screening "
+            "breadth, not tradeable signals."
+        )
+    elif entry_ct < 5 or passed < max(5, int(0.15 * len(results))):
+        warnings.append(
+            f"{len(results)}/{total} stocks pass the crossover filter but only {entry_ct} have "
+            f"entry signals and {passed} score {min_score:.0f}+. A broad MA filter "
+            f"(HMA{fl}xEMA{sl}) mostly surfaces weak setups — validate on the walk-forward "
+            "page before acting."
+        )
+    return warnings
 
 
 class ScannerEngine:
@@ -503,6 +589,16 @@ class ScannerEngine:
                 tickers = get_universe(universe)
             except KeyError:
                 tickers = UNIVERSES.get(universe, [])
+
+            # Skip annotated suspended/delisted members (they are re-fetched
+            # pointlessly every scan otherwise) and say why.
+            tickers, dead_members = strip_dead_members(tickers)
+            if dead_members:
+                self._log(
+                    "Skipping %d suspended/delisted member(s): %s",
+                    len(dead_members),
+                    ", ".join(f"{t} ({SUSPENDED_OR_DELISTED[t]})" for t in dead_members),
+                )
             
             tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
             
@@ -683,11 +779,30 @@ class ScannerEngine:
             result.results = results
             result.filtered_out = filtered_out
             result.direction_counts = direction_counts
-            
+            if not result.cancelled:
+                result.warnings = _build_scan_warnings(
+                    settings, len(tickers), results, passed)
+                stale_days = float(settings.get("stale_member_max_age_days")
+                                   or STALE_MEMBER_MAX_AGE_DAYS)
+                stale_members = _find_stale_members(batch_data, max_age_days=stale_days)
+                if stale_members:
+                    result.warnings.append(
+                        _stale_members_message(stale_members, max_age_days=stale_days)
+                    )
+                for w in result.warnings:
+                    self._log(f"  \u26a0 {w}")
+
         except Exception as e:
             result.error = str(e)
             self._log(f"\nERROR: {e!s}")
-        
+
+        # A user stop can land while the batch download winds down without
+        # another ticker/chunk to iterate (the generator stops cleanly before
+        # the loop body's own cancel check runs), leaving an empty result
+        # with cancelled=False. Always surface a requested stop.
+        if self._cancel_event.is_set():
+            result.cancelled = True
+
         return result
 
     @trace(level=logging.INFO, log_args=True)
@@ -719,11 +834,20 @@ class ScannerEngine:
         result = ScanResult()
 
         try:
-            try:
-                tickers = get_universe(universe)
+            try:                tickers = get_universe(universe)
             except KeyError:
                 tickers = UNIVERSES.get(universe, [])
 
+            # Skip annotated suspended/delisted members (they are re-fetched
+            # pointlessly every scan otherwise) and say why.
+            tickers, dead_members = strip_dead_members(tickers)
+            if dead_members:
+                self._log(
+                    "Skipping %d suspended/delisted member(s): %s",
+                    len(dead_members),
+                    ", ".join(f"{t} ({SUSPENDED_OR_DELISTED[t]})" for t in dead_members),
+                )
+            
             tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
             self._log("\n" + "=" * 50)
             self._log(f"START STREAM SCAN | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -798,7 +922,11 @@ class ScannerEngine:
                 # For large universes use parallel scoring per chunk (smaller
                 # pool) — poll cancel every 0.5s so Stop isn't held by scoring.
                 if is_large and len(chunk_data) > 20:
-                    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+                    from concurrent.futures import (
+                        FIRST_COMPLETED,
+                        ThreadPoolExecutor,
+                        wait,
+                    )
                     max_w = min(4, (len(chunk_data) // 25) + 1)
                     ex = ThreadPoolExecutor(max_workers=max_w)
                     futs = {ex.submit(_score_one, item): item[0] for item in chunk_data.items()}
@@ -905,10 +1033,28 @@ class ScannerEngine:
             result.results = results
             result.filtered_out = filtered_out
             result.direction_counts = direction_counts
+            if not result.cancelled:
+                result.warnings = _build_scan_warnings(
+                    settings, total_tickers, results, passed)
+                stale_days = float(settings.get("stale_member_max_age_days")
+                                   or STALE_MEMBER_MAX_AGE_DAYS)
+                stale_members = _find_stale_members(batch_data_all, max_age_days=stale_days)
+                if stale_members:
+                    result.warnings.append(
+                        _stale_members_message(stale_members, max_age_days=stale_days)
+                    )
+                for w in result.warnings:
+                    self._log(f"  \u26a0 {w}")
 
         except Exception as e:
             result.error = str(e)
             self._log(f"\nERROR: {e!s}")
+
+        # Same wind-down guarantee as scan(): if the user cancelled while the
+        # stream was between/inside batches (loop exited via generator stop,
+        # not via the loop-top check), report it as cancelled.
+        if self._cancel_event.is_set():
+            result.cancelled = True
 
         return result
 

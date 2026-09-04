@@ -15,7 +15,6 @@ Pine-vs-Python parity, per category:
     - MACD (positive histogram + rising histogram)
     - Stochastic (healthy 20-80 band)
     - OBV (above OBV-MA + rising OBV)
-    - Volume (above volume-MA, above 1.2x, above 50-bar average)
     - Volatility (ATR% bands -> Medium/Low scores)
     - Fundamentals thresholds (P/E < 15 / < 25; EPS > 20 % / > 0 %;
       revenue > 15 % / > 0 %; ROE > 20 % / > 10 %) — same points,
@@ -32,6 +31,17 @@ Pine-vs-Python parity, per category:
       index (settings['index_symbol']) and approximates the second
       leg with absolute positive momentum; without index data both
       legs are proxied from 1M/3M price change.
+    - Volume: Pine v2 only rewards a single-bar volume print above
+      the volume MA / 1.2x / 50-bar average. The Python scorer blends
+      the last-bar check with a 5-bar participation average, so a
+      sustained move that accumulated volume over the breakout week
+      is not zeroed out by one quiet closing day (still capped at 10).
+    - Sideways: the Pine sideways test is "any one of ADX / Choppiness /
+      slope". The Python scorer is direction-aware: a strong directional
+      move (|1M change| >= 5%) requires two independent sideways
+      evidences (weak ADX plus chop or flat slope) before it is
+      classified as sideways, so strong rallies are not mislabelled
+      choppy by the Choppiness index alone.
 
   Metadata only (never changes the total):
     - weekly HMA(44) x EMA(50) higher-timeframe state
@@ -364,6 +374,12 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     """
     Compute sideways / choppy market detection.
 
+    Direction-aware: a strong directional move (|1M change| >= 5%) needs
+    two independent sideways evidences (weak ADX plus chop *or* a flat
+    MA slope) before the stock is classified sideways; otherwise a single
+    trigger (as in the Pine reference) is enough. This stops strong
+    rallies from being mislabelled choppy by the Choppiness index alone.
+
     Returns:
         {"is_sideways": bool, "reasons": list[str]}
     """
@@ -379,14 +395,11 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     slope_ma_len = settings.get("slope_ma_len", 50)
     slope_lookback = settings.get("slope_lookback", 10)
     flat_threshold = settings.get("flat_threshold", 0.5)
-
-    reasons = []
+    strong_move_pct = settings.get("sideways_strong_move_pct", 5.0)
 
     # ADX filter
     adx_last = adx_val.iloc[-1]
     is_sideways_adx = adx_last < adx_threshold if not np.isnan(adx_last) else False
-    if is_sideways_adx:
-        reasons.append("ADX")
 
     # Cholangirong filter
     atr1 = atr(high, low, close, 1)
@@ -395,8 +408,6 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     chop_safe_range = chop_range.replace(0, np.nan)
     chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(chop_len)
     is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
-    if is_sideways_chop:
-        reasons.append("Chop")
 
     # Slope filter
     selected_ma = get_ma(slope_ma_type, close, slope_ma_len, volume)
@@ -408,11 +419,29 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     else:
         ma_slope_pct = 0.0
     is_sideways_slope = ma_slope_pct < flat_threshold
+
+    # Direction-awareness: a strong 1M move overrides the single-trigger rule
+    lookback = 21 if len(close) >= 100 else (4 if len(close) >= 40 else 1)
+    pc1m = price_change(close, min(lookback, len(close) - 2)).iloc[-1]
+    strong_move = not np.isnan(pc1m) and abs(pc1m) >= strong_move_pct
+
+    if strong_move:
+        is_sideways = is_sideways_adx and (is_sideways_chop or is_sideways_slope)
+    else:
+        is_sideways = is_sideways_adx or is_sideways_chop or is_sideways_slope
+
+    reasons = []
+    if is_sideways_adx:
+        reasons.append("ADX")
+    if is_sideways_chop:
+        reasons.append("Chop")
     if is_sideways_slope:
         reasons.append("Slope")
+    if not is_sideways and reasons and strong_move:
+        # Strong move overrode the flag — keep the reasons honest
+        reasons = []
 
-    return {"is_sideways": is_sideways_adx or is_sideways_chop or is_sideways_slope,
-            "reasons": reasons}
+    return {"is_sideways": is_sideways, "reasons": reasons}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -502,16 +531,29 @@ def _score_obv(curr: dict) -> float:
 
 
 def _score_volume(curr: dict) -> float:
-    """Category 7: VOLUME (max 10 pts)."""
+    """Category 7: VOLUME (max 10 pts).
+
+    Blends the last-bar print with 5-bar participation: a move that built
+    volume over the breakout week still scores even if the latest single
+    bar closed quietly (see module docstring for the Pine deviation).
+    """
     s = 0.0
     if not np.isnan(curr["vol_ma"]) and curr["vol_ma"] > 0:
         if curr["volume"] > curr["vol_ma"]:
-            s += 5.0
-        if curr["volume"] > curr["vol_ma"] * 1.2:
             s += 3.0
+        vol_5 = curr.get("vol_5")
+        if vol_5 is not None and not np.isnan(vol_5):
+            if vol_5 > curr["vol_ma"]:
+                s += 4.0
+            if vol_5 > curr["vol_ma"] * 1.2:
+                s += 2.0
         vol_t = curr.get("vol_t_50")
-        if vol_t is not None and not np.isnan(vol_t) and curr["volume"] > vol_t:
-            s += 2.0
+        above_50 = (
+            vol_t is not None and not np.isnan(vol_t)
+            and (curr["volume"] > vol_t or (vol_5 is not None and not np.isnan(vol_5) and vol_5 > vol_t))
+        )
+        if above_50:
+            s += 1.0
     return min(s, 10.0)
 
 
@@ -696,6 +738,9 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     if settings is None:
         settings = {}
 
+    # Entry-gate config (mirrors backtest.py's min_adx_entry gate)
+    min_adx_entry = float(settings.get("min_adx_entry", 0.0) or 0.0)
+
     n = len(df)
     min_required = {"D": 100, "W": 50, "M": 25}.get(timeframe, 100)
     if n < min_required:
@@ -723,9 +768,17 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
     curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
 
-    # ── 50-bar volume MA (used by _score_volume) ──────────────────────────
+    # ── Volume references (used by _score_volume) ─────────────────────────
+    # 50-bar average + participation average (mean of the last N bars, N is
+    # volume_participation_len, default 5 — see the module docstring).
     vol_t_50 = sma(volume, 50).iloc[-1]
     curr["vol_t_50"] = vol_t_50
+    vol_len = int(settings.get("volume_participation_len", 5))
+    vol_len = max(1, min(vol_len, len(volume)))
+    if len(volume) >= 1:
+        curr["vol_5"] = float(volume.iloc[-vol_len:].mean())
+    else:
+        curr["vol_5"] = float("nan")
 
     # ── Crossover detection (shared helper) ────────────────────────────────
     crossover_lookback = settings.get("crossover_lookback", 20)
@@ -808,12 +861,16 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         "combined_rating": _get_combined_rating(
             total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]
         ),
-        # Swing-trading ENTRY signal
+        # Swing-trading ENTRY signal (ADX gate mirrors the backtest engine:
+        # backtest skips entries when ADX < min_adx_entry at the signal bar,
+        # and NaN ADX fails the gate there just as it does here)
         "entry_signal": bool(
             curr["ma_crossed_above"]
             and curr["close_above_crossover"]
             and curr["above_poc"]
             and total >= 50
+            and (min_adx_entry <= 0
+                 or (not np.isnan(curr["adx"]) and curr["adx"] >= min_adx_entry))
         ),
         # Weekly HMA buy trigger
         "weekly_entry_signal": bool(weekly["cross"]),

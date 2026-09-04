@@ -348,6 +348,42 @@ class TestComputeScores:
         assert result is not None
         assert isinstance(result["entry_signal"], bool)
 
+    def test_entry_signal_adx_gate_off_matches_legacy(self, synthetic_ohlcv):
+        """min_adx_entry absent or 0 must leave the entry signal unchanged."""
+        base = compute_scores(synthetic_ohlcv, timeframe="D")
+        off = compute_scores(synthetic_ohlcv, timeframe="D",
+                             settings={"min_adx_entry": 0.0})
+        assert base is not None and off is not None
+        assert off["entry_signal"] == base["entry_signal"]
+
+    def test_entry_signal_adx_gate_blocks_when_adx_below(self, synthetic_ohlcv):
+        """An impossible ADX requirement suppresses the entry signal whenever a
+        real (finite) ADX is present — mirroring the backtest engine's gate."""
+        base = compute_scores(synthetic_ohlcv, timeframe="D")
+        assert base is not None
+        assert base["adx_val"] is not None  # 200 bars -> ADX is finite
+        blocked = compute_scores(synthetic_ohlcv, timeframe="D",
+                                 settings={"min_adx_entry": 1e9})
+        assert blocked is not None
+        assert blocked["entry_signal"] is False
+
+    def test_entry_signal_adx_gate_boundary_is_inclusive(self, synthetic_ohlcv):
+        """Gate uses >= on the raw ADX (like backtest.py). adx_val in the result
+        is rounded to 0.1, so probe 0.5 either side of it: half a point below
+        can never bind (raw >= rounded - 0.5 always holds) and half a point
+        above must always block."""
+        base = compute_scores(synthetic_ohlcv, timeframe="D")
+        assert base is not None and base["adx_val"] is not None
+        below = compute_scores(synthetic_ohlcv, timeframe="D",
+                               settings={"min_adx_entry": float(base["adx_val"]) - 0.5})
+        above = compute_scores(synthetic_ohlcv, timeframe="D",
+                               settings={"min_adx_entry": float(base["adx_val"]) + 0.5})
+        assert below is not None and above is not None
+        # Gate never binds half a point below the rounded value -> same as legacy
+        assert below["entry_signal"] == base["entry_signal"]
+        # Gate always binds half a point above -> signal suppressed
+        assert above["entry_signal"] is False
+
     def test_fundamentals_attached(self, synthetic_ohlcv):
         """When _fundamentals is attached, it should be used."""
         # Attach fundamentals via object.__setattr__ to avoid pandas warning

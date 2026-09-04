@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import scanner.data_fetcher as data_fetcher
+from scanner import data_fetcher
 from scanner.data_fetcher import (
     CHUNK,
     FALLBACK_PROVIDER_TIMEOUT,
@@ -1010,3 +1010,149 @@ class TestAbortableBatchDownload:
 
         assert calls["n"] == MAX_PARALLEL_CHUNKS  # batch 1 only — batch 2 never scheduled
         assert "T0" in result
+
+
+class TestScanStartStalePrune:
+    """fetch_batch_yfinance (scan start) sweeps unreachable previous-day entries."""
+
+    @staticmethod
+    def _write_stale_entry(d, name):
+        import json as _json
+        import os as _os
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        stale = (_dt.now() - _td(days=1)).isoformat()
+        _os.makedirs(str(d), exist_ok=True)
+        _make_daily_ohlcv(60).to_pickle(_os.path.join(str(d), name + ".pkl"))
+        with open(_os.path.join(str(d), name + ".meta"), "w") as f:
+            _json.dump({"timestamp": stale, "rows": 60}, f)
+
+    def test_batch_fetch_prunes_stale_entries(self, tmp_path, monkeypatch):
+        """A stale-day pair on disk is gone after the fetch pass runs."""
+        import os as _os
+
+        from scanner import data_providers
+        monkeypatch.setattr("scanner.data_providers._last_prune_ts", 0.0)
+        cache_dir = data_providers.CACHE_DIR
+        self._write_stale_entry(cache_dir, "stale1")
+        self._write_stale_entry(cache_dir, "stale2")
+        stale_pkl = _os.path.join(cache_dir, "stale1.pkl")
+        assert _os.path.exists(stale_pkl)
+
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = _make_yf_download_result(["RELIANCE.NS"], n=200)
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.data_fetcher._get_provider", return_value=MagicMock()):
+                result = fetch_batch_yfinance(["RELIANCE"], period="1y")
+
+        assert "RELIANCE" in result
+        assert not _os.path.exists(stale_pkl)         # stale pair pruned...
+        assert not _os.path.exists(stale_pkl[:-4] + ".meta")
+        fresh = [f for f in _os.listdir(cache_dir) if f.endswith(".pkl")]
+        assert len(fresh) == 1                        # ...today's new entry kept
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _normalize_daily_index — one trade-date calendar across stamp flavors
+# ══════════════════════════════════════════════════════════════════════════════
+# Regression: two cached FNO tickers (GSPL, TATAMOTORS) carried 18:30 UTC
+# previous-day stamps while the other 108 shared local-midnight trade dates.
+# Same NSE trade days, different hashes -> the engine's cross-ticker date
+# union doubled (~1489 dates instead of ~745) and every FNO backtest ran on
+# a fake calendar. Normalization must make both flavors hash identically.
+
+
+def _ohlcv_like(days, seed=0):
+    """OHLCV frame indexed by the given timestamps (values are irrelevant)."""
+    rng = np.random.RandomState(seed)
+    close = 500 + np.cumsum(rng.randn(len(days)) * 2)
+    return pd.DataFrame({
+        "open": close + rng.randn(len(days)),
+        "high": close + np.abs(rng.randn(len(days))) * 2,
+        "low": close - np.abs(rng.randn(len(days))) * 2,
+        "close": close,
+        "volume": (rng.rand(len(days)) * 1e6 + 5e5).astype(int),
+    }, index=pd.DatetimeIndex(days))
+
+
+def _trade_days(n=200, start="2024-01-01"):
+    return pd.bdate_range(start, periods=n)
+
+
+def _utc_close_stamps(trade_days, tz_aware):
+    """The same trade days encoded as 18:30 UTC stamps on the previous day."""
+    prev = trade_days - pd.Timedelta(days=1) + pd.Timedelta(hours=18, minutes=30)
+    return prev.tz_localize("UTC") if tz_aware else prev
+
+
+class TestNormalizeDailyIndex:
+    def test_midnight_and_utc_close_flavors_converge(self):
+        """Local-midnight and tz-aware UTC-close frames map to the same calendar."""
+        trade_days = _trade_days(200)
+
+        # Flavor A: local-midnight naive stamps (yfinance .NS path)
+        local = _ohlcv_like(trade_days)
+        # Flavor B: same trade days as 18:30 UTC stamps on the previous day
+        utc_close = _ohlcv_like(_utc_close_stamps(trade_days, tz_aware=True))
+
+        norm_local = data_fetcher._normalize_daily_index(local)
+        norm_utc = data_fetcher._normalize_daily_index(utc_close)
+
+        # Both collapse onto the exact same trade-date calendar...
+        assert norm_local.index.equals(norm_utc.index)
+        # ...which is the original trade days: tz-naive midnights, ascending.
+        assert list(norm_local.index) == list(trade_days)
+        assert norm_local.index.tz is None
+        assert norm_local.index.is_monotonic_increasing
+        assert list(norm_utc.index) == list(trade_days)
+
+    def test_naive_utc_close_flavor_matches_aware_flavor(self):
+        """Even tz-naive 18:30 stamps (tz dropped in the cache layer) converge."""
+        trade_days = _trade_days(120)
+        aware = _ohlcv_like(_utc_close_stamps(trade_days, tz_aware=True))
+        naive = _ohlcv_like(_utc_close_stamps(trade_days, tz_aware=False))
+
+        norm_aware = data_fetcher._normalize_daily_index(aware)
+        norm_naive = data_fetcher._normalize_daily_index(naive)
+        assert norm_aware.index.equals(norm_naive.index)
+        assert list(norm_aware.index) == list(trade_days)
+
+    def test_normalized_union_does_not_double(self):
+        """The 2x union: disjoint raw calendars collapse to one after normalize."""
+        trade_days = _trade_days(200)
+        a = _ohlcv_like(trade_days)  # midnight flavor
+        b = _ohlcv_like(_utc_close_stamps(trade_days, tz_aware=False))  # prev-18:30
+
+        # Before normalization the two calendars are disjoint -> ~2x inflation.
+        assert len(a.index.union(b.index)) == 400
+
+        # After normalization both share one calendar -> no inflation.
+        na = data_fetcher._normalize_daily_index(a)
+        nb = data_fetcher._normalize_daily_index(b)
+        assert na.index.equals(nb.index)
+        assert len(na.index.union(nb.index)) == len(trade_days)
+
+    def test_same_day_duplicates_keep_last_bar(self):
+        """Dual-provider rows for one day dedupe to a single midnight bar."""
+        trade_days = _trade_days(50)
+        df = _ohlcv_like(trade_days)
+        dup = pd.concat([df, df.iloc[24:34]])  # days 24-33 appear twice
+
+        result = data_fetcher._normalize_daily_index(dup)
+        assert result.index.is_unique
+        assert len(result) == len(trade_days)
+        assert result.index.equals(pd.DatetimeIndex(trade_days))
+
+    def test_descending_input_is_sorted(self):
+        """Provider feeds can arrive newest-first; normalize must sort ascending."""
+        trade_days = _trade_days(100)
+        df = _ohlcv_like(trade_days).iloc[::-1]
+
+        result = data_fetcher._normalize_daily_index(df)
+        assert result.index.is_monotonic_increasing
+        assert len(result) == len(trade_days)
+
+    def test_none_and_empty_pass_through(self):
+        assert data_fetcher._normalize_daily_index(None) is None
+        empty = data_fetcher._normalize_daily_index(pd.DataFrame())
+        assert empty is not None and empty.empty

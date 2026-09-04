@@ -26,7 +26,10 @@ from scanner.universes import (
     NIFTY_PHARMA,
     NIFTY_REALTY,
     NIFTY_SMALLCAP_100,
+    SUSPENDED_OR_DELISTED,
     UNIVERSES,
+    dead_member_reason,
+    strip_dead_members,
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -180,3 +183,40 @@ class TestKeyStocks:
 
     def test_dlf_in_realty(self):
         assert "DLF" in NIFTY_REALTY
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Suspended / delisted members — annotated so scans skip re-fetching them
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDeadMembers:
+    """GSPL/TATAMETALI stay in the lists (membership intact) but strip out."""
+
+    def test_annotated_names_are_real_list_members(self):
+        assert "GSPL" in FNO_STOCKS
+        assert "GSPL" in NIFTY_NEXT_50
+        assert "GSPL" in NIFTY_MIDCAP_100
+        assert "TATAMETALI" in NIFTY_MIDCAP_100
+
+    def test_headline_universes_are_unaffected(self):
+        """NIFTY 50 and BANK NIFTY contain no suspended/delisted names."""
+        assert not (set(NIFTY_50) & set(SUSPENDED_OR_DELISTED))
+        assert not (set(BANK_NIFTY) & set(SUSPENDED_OR_DELISTED))
+
+    def test_strip_splits_dead_from_active_preserving_order(self):
+        tickers = ["RELIANCE", "GSPL", "TCS", "TATAMETALI", "INFY"]
+        active, dead = strip_dead_members(tickers)
+        assert active == ["RELIANCE", "TCS", "INFY"]
+        assert dead == ["GSPL", "TATAMETALI"]
+
+    def test_strip_with_no_dead_is_identity(self):
+        tickers = ["RELIANCE", "TCS"]
+        active, dead = strip_dead_members(tickers)
+        assert active == tickers
+        assert dead == []
+
+    def test_dead_member_reason(self):
+        assert "suspended" in (dead_member_reason("GSPL") or "")
+        assert "delisted" in (dead_member_reason("TATAMETALI") or "")
+        assert dead_member_reason("RELIANCE") is None

@@ -21,9 +21,51 @@ from .trace import trace
 
 logger = logging.getLogger(__name__)
 
-from .data_providers import DataProvider, _get_cached, _set_cached
+from .data_providers import (
+    DataProvider,
+    _get_cached,
+    _set_cached,
+    prune_stale_cache,
+)
 
 # ── OHLCV Resampling ───────────────────────────────────────────────────────
+
+def _normalize_daily_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize a daily OHLCV frame onto tz-naive IST trade dates (midnight).
+
+    Daily frames arrive in two flavors: local-midnight stamps (the yfinance
+    ``.NS`` path) and UTC-close stamps at 18:30 on the previous day (some
+    fallback providers).  Both encode the same NSE trade day, but the stamps
+    hash differently -- so cross-ticker date unions (backtest alignment,
+    relative-strength date masks) double-count every day and drift by one.
+    This treats any naive stamp as UTC, converts to Asia/Kolkata and truncates
+    to midnight: 18:30 UTC becomes 00:00 the next day, and local midnights are
+    unchanged (00:00 UTC -> 05:30 IST, same date).  Same-day collisions from
+    duplicate or dual-provider rows keep the last bar.
+    """
+    if df is None or df.empty:
+        return df
+    idx = df.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        try:
+            idx = pd.DatetimeIndex(pd.to_datetime(idx))
+        except Exception:
+            return df
+    if idx.tz is None:
+        try:
+            idx = idx.tz_localize("UTC")
+        except Exception:
+            pass
+    try:
+        dates = idx.tz_convert("Asia/Kolkata").tz_localize(None).normalize()
+    except Exception:
+        dates = idx.normalize() if getattr(idx, "tz", None) is None \
+            else idx.tz_localize(None).normalize()
+    out = df.copy()
+    out.index = dates
+    out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index()
+
 
 def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """
@@ -54,9 +96,11 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
             else:
                 return df  # Can't resample without datetime index
 
-    # Remove timezone info if present to avoid issues
-    if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
+    # Normalize stamps onto tz-naive IST trade dates before bucketing, so a
+    # UTC-close frame does not land in the wrong weekly/monthly bucket.
+    df = _normalize_daily_index(df)
+    if len(df) < 2:
+        return df
 
     if timeframe == "W":
         rule = "W"
@@ -517,6 +561,8 @@ def _fetch_fallback_batch(
             if df is None or df.empty:
                 return "dead", t, None
             df = resample_ohlcv(df, timeframe)
+            if timeframe == "D":
+                df = _normalize_daily_index(df)
             if df is not None and not df.empty and len(df) >= 50:
                 return "ok", t, df
             # Data exists but too few bars — a miss, but NOT a dead symbol
@@ -597,6 +643,10 @@ def fetch_batch_yfinance_stream(
     if not tickers:
         return
 
+    # Sweep unreachable cache entries from previous days (once/hour/process)
+    # so day-keyed pkl files never accumulate across scans.
+    prune_stale_cache()
+
     # Deduplicate while preserving order
     seen = set()
     uniq_tickers = []
@@ -639,6 +689,10 @@ def fetch_batch_yfinance_stream(
                 except Exception as e:
                     logger.debug("Batch cache read failed for %s: %s", t, e)
                     daily = None
+                # Legacy cache entries can hold UTC-close stamps; normalize so
+                # all tickers share one trade-date calendar.
+                if daily is not None and not daily.empty:
+                    daily = _normalize_daily_index(daily)
                 if daily is not None and not daily.empty:
                     df = daily if timeframe == "D" else resample_ohlcv(daily, timeframe)
                     if df is not None and len(df) >= 50:
@@ -693,7 +747,8 @@ def fetch_batch_yfinance_stream(
                     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
                     df.columns = ["open", "high", "low", "close", "volume"]
                     df = df.dropna()
-                    daily = df  # normalized daily bars — the on-disk cache unit
+                    daily = _normalize_daily_index(df)  # on-disk cache unit
+                    df = daily
                     if timeframe != "D":
                         df = resample_ohlcv(df, timeframe)
                     if df is not None and len(df) >= 50:

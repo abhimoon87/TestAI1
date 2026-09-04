@@ -20,6 +20,8 @@ from scanner.data_providers import (
     _fetch_yfinance_index,
     _get_cached,
     _set_cached,
+    cache_health,
+    prune_stale_cache,
 )
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -399,7 +401,6 @@ class TestDataProvider:
 
         def _slow():
             time.sleep(0.5)
-            return None
 
         with patch("scanner.data_providers._fetch_jugaad", side_effect=_slow):
             with patch("scanner.data_providers._fetch_yfinance", side_effect=_slow):
@@ -439,3 +440,97 @@ class TestDataProvider:
         assert result is not None
         assert provider.last_provider == "yfinance"
         mock_jugaad.assert_not_called()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# prune_stale_cache — day-keyed entries from previous days are unreachable
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPruneStaleCache:
+    """Previous-day cache entries (never readable again) are swept."""
+
+    @staticmethod
+    def _write_entry(d, name, when):
+        import os
+        pd.DataFrame({"close": [1.0, 2.0]}).to_pickle(os.path.join(str(d), name + ".pkl"))
+        with open(os.path.join(str(d), name + ".meta"), "w") as f:
+            json.dump({"timestamp": when, "rows": 2}, f)
+
+    def _reset(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("scanner.data_providers.CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr("scanner.data_providers._last_prune_ts", 0.0)
+
+    def test_removes_previous_day_entries_only(self, tmp_path, monkeypatch):
+        self._reset(tmp_path, monkeypatch)
+        fresh = datetime.now().isoformat()
+        stale = (datetime.now() - timedelta(days=1)).isoformat()
+        self._write_entry(tmp_path, "old1", stale)
+        self._write_entry(tmp_path, "old2", stale)
+        self._write_entry(tmp_path, "fresh", fresh)
+
+        removed = prune_stale_cache()
+
+        assert removed == 2
+        assert not (tmp_path / "old1.pkl").exists()
+        assert not (tmp_path / "old1.meta").exists()
+        assert not (tmp_path / "old2.pkl").exists()
+        assert (tmp_path / "fresh.pkl").exists()
+        assert (tmp_path / "fresh.meta").exists()
+
+    def test_rate_limit_skips_second_call_without_force(self, tmp_path, monkeypatch):
+        self._reset(tmp_path, monkeypatch)
+        self._write_entry(tmp_path, "old", (datetime.now() - timedelta(days=1)).isoformat())
+        assert prune_stale_cache() == 1
+
+        # A second sweep within the interval is a no-op (rate-limited)...
+        self._write_entry(tmp_path, "older", (datetime.now() - timedelta(days=2)).isoformat())
+        assert prune_stale_cache() == 0
+        assert (tmp_path / "older.pkl").exists()
+
+        # ...unless forced.
+        assert prune_stale_cache(force=True) == 1
+        assert not (tmp_path / "older.pkl").exists()
+
+    def test_corrupt_meta_is_left_alone(self, tmp_path, monkeypatch):
+        self._reset(tmp_path, monkeypatch)
+        self._write_entry(tmp_path, "odd", "not-a-timestamp")
+        with open(tmp_path / "odd.meta", "w") as f:
+            f.write("{not valid json")
+
+        assert prune_stale_cache() == 0
+        assert (tmp_path / "odd.pkl").exists()  # conservative: untouched
+        assert (tmp_path / "odd.meta").exists()
+
+    def test_empty_dir_is_safe(self, tmp_path, monkeypatch):
+        self._reset(tmp_path, monkeypatch)
+        assert prune_stale_cache() == 0
+
+
+class TestCacheHealth:
+    """cache_health reports reachable-fresh vs unreachable-stale counts."""
+
+    def _reset(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("scanner.data_providers.CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr("scanner.data_providers._last_prune_ts", 0.0)
+
+    def test_counts_fresh_and_stale(self, tmp_path, monkeypatch):
+        self._reset(tmp_path, monkeypatch)
+        import os
+        fresh = datetime.now().isoformat()
+        stale = (datetime.now() - timedelta(days=1)).isoformat()
+        for name, when in [("a", fresh), ("b", fresh), ("c", stale)]:
+            pd.DataFrame({"close": [1.0]}).to_pickle(os.path.join(str(tmp_path), name + ".pkl"))
+            with open(os.path.join(str(tmp_path), name + ".meta"), "w") as f:
+                json.dump({"timestamp": when, "rows": 1}, f)
+
+        h = cache_health()
+        assert h["price_entries"] == 3
+        assert h["stale_entries"] == 1
+
+    def test_empty_dir_and_last_prune_stamp(self, tmp_path, monkeypatch):
+        self._reset(tmp_path, monkeypatch)
+        assert cache_health() == {"price_entries": 0, "stale_entries": 0, "last_prune": ""}
+        prune_stale_cache()  # records the sweep time
+        h = cache_health()
+        assert h["last_prune"] != ""  # ISO stamp of the in-process prune

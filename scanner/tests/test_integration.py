@@ -4,8 +4,8 @@ These tests hit the live Yahoo Finance API and verify the full pipeline
 works end-to-end with real market data. They are slower than unit tests
 and require network access.
 
-Run with:  pytest scanner/tests/test_integration.py -v
-Skip with: pytest scanner/tests/ -v -m "not integration"
+Run with:  pytest -m integration                  (CLI -m overrides the default deselect)
+Skip with: pytest                                 (default: integration tests are deselected via addopts)
 """
 
 import pytest
@@ -330,7 +330,6 @@ class TestLiveCancel:
             )
 
         th = threading.Thread(target=worker, daemon=True)
-        t0 = time.time()
         th.start()
         # Cancel while the live download is still in flight
         time.sleep(5)

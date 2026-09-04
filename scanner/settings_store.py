@@ -42,11 +42,15 @@ DEFAULT_SETTINGS = {
     "slope_ma_len": 50,
     "slope_lookback": 10,
     "flat_threshold": 0.5,
+    "sideways_strong_move_pct": 5.0,
+    "volume_participation_len": 5,
     # Step Channel
     "sc_pivot_len": 3,
     "sc_bands_mult": 0.6,
     # MA Crossover
     "crossover_lookback": 20,
+    # Entry gate (mirrors backtest engine): require ADX >= this for entry signal
+    "min_adx_entry": 20.0,
     # Scanner
     "min_score": 50.0,
     "data_period": "1y",
@@ -54,6 +58,8 @@ DEFAULT_SETTINGS = {
     "trend_filter": "All",
     # Dead-symbol cache
     "negative_cache_ttl_hours": 24,
+    # Scan hygiene: warn when a universe member's data is this old (days)
+    "stale_member_max_age_days": 45.0,
     # UI
     "theme": "dark",
     # Provider toggles
