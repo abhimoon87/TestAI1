@@ -114,8 +114,72 @@ THEMES = {
 
 
 def apply_theme(page, theme_name: str):
-    """Apply a Flet theme to the page."""
+    """Apply a full Flet theme (ft.Theme + ft.ColorScheme) from the palette."""
     c = THEMES[theme_name]
-    page.theme_mode = "dark" if theme_name == "dark" else "light"
-    page.bgcolor = c["main_bg"]
-    page.theme = page.theme
+
+    mode = "dark" if theme_name == "dark" else "light"
+    page.theme_mode = mode
+
+    # Build a ColorScheme from the palette keys.
+    # We pick a primary accent from the neon-blue family and map the
+    # remaining colors to the named slots Flet uses for theming.
+    if theme_name == "dark":
+        primary = c["purple"]        # #38bdf8 neon blue
+        on_primary = "#ffffff"
+        primary_container = c["card2"]    # #24242c
+        on_primary_container = c["text"]  # #e9eaf0
+        secondary = c["cyan"]          # #22d3ee
+        on_secondary = "#0a0a0d"
+        secondary_container = c["card"]    # #1c1c22
+        on_secondary_container = c["text_dim"]  # #8e93a8
+        surface = c["root_bg"]           # #121212
+        on_surface = c["text"]           # #e9eaf0
+        surface_variant = c["card"]      # #1c1c22
+        on_surface_variant = c["text_faint"]  # #5c6178
+        error = c["red"]                 # #f87171
+        on_error = "#ffffff"
+        outline = c["border"]            # #2b2b34
+        outline_variant = c["border_light"]  # #3a3a46
+        shadow_color = c["shadow"]       # #00000066
+    else:
+        primary = c["purple"]            # #047857 (dark teal‑green)
+        on_primary = "#ffffff"
+        primary_container = c["card2"]    # #eef5f0
+        on_primary_container = c["text"]  # #0f2318
+        secondary = c["cyan"]            # #0e7490
+        on_secondary = "#ffffff"
+        secondary_container = c["card"]    # #ffffff
+        on_secondary_container = c["text_dim"]  # #5a7a65
+        surface = c["root_bg"]             # #f0f5f1
+        on_surface = c["text"]             # #0f2318
+        surface_variant = c["card"]        # #ffffff
+        on_surface_variant = c["text_faint"]  # #8aa89a
+        error = c["red"]                   # #dc2626
+        on_error = "#ffffff"
+        outline = c["border"]              # #d1e3d6
+        outline_variant = c["border_light"]  # #e6efe8
+        shadow_color = c["shadow"]         # #00000014
+
+    page.theme = ft.Theme(
+        color_scheme=ft.ColorScheme(
+            primary=primary,
+            on_primary=on_primary,
+            primary_container=primary_container,
+            on_primary_container=on_primary_container,
+            secondary=secondary,
+            on_secondary=on_secondary,
+            secondary_container=secondary_container,
+            on_secondary_container=on_secondary_container,
+            surface=surface,
+            on_surface=on_surface,
+            surface_variant=surface_variant,
+            on_surface_variant=on_surface_variant,
+            background=c["root_bg"],
+            on_background=c["text"],
+            error=error,
+            on_error=on_error,
+            outline=outline,
+            outline_variant=outline_variant,
+            shadow_color=shadow_color,
+        ),
+    )

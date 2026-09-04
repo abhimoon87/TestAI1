@@ -16,39 +16,41 @@ import threading
 import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable, Any, Dict, List
 
 import flet as ft
 from flet.controls.alignment import Alignment
 
 
-def _border_all(width, color):
+def _border_all(width: float, color: str) -> ft.Border:
+    """Return a uniform ``ft.Border`` with ``ft.BorderSide`` on all sides."""
     side = ft.BorderSide(width=width, color=color)
     return ft.Border(top=side, bottom=side, left=side, right=side)
 
 
-def _glass_bg():
+def _glass_bg() -> ft.Paint:
     """Translucent white fill for frosted-glass cards."""
     return ft.Colors.with_opacity(0.045, ft.Colors.WHITE)
 
 
-def _glass_border():
+def _glass_border() -> ft.Border:
     side = ft.BorderSide(width=1, color=ft.Colors.with_opacity(0.09, ft.Colors.WHITE))
     return ft.Border(top=side, bottom=side, left=side, right=side)
 
 
-def _card_shadow():
+def _card_shadow() -> List[ft.BoxShadow]:
     return [ft.BoxShadow(blur_radius=18, color=ft.Colors.with_opacity(0.45, ft.Colors.BLACK))]
 
 
-def _neon_glow(color, blur=10):
+def _neon_glow(color: str, blur: int = 10) -> List[ft.BoxShadow]:
     return [ft.BoxShadow(blur_radius=blur, color=color)]
 
 
-def _padding_only(left=0, top=0, right=0, bottom=0):
+def _padding_only(left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -> ft.Padding:
     return ft.Padding(left=left, top=top, right=right, bottom=bottom)
 
 
-def _margin_only(left=0, top=0, right=0, bottom=0):
+def _margin_only(left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -> ft.Margin:
     return ft.Margin(left=left, top=top, right=right, bottom=bottom)
 
 from .trace import setup_trace
@@ -916,15 +918,20 @@ class ScannerApp:
 
     def _collect_settings(self) -> dict:
         s = dict(self.settings)
+        # min_score: tolerate empty/invalid slider values; fall back to default
         try:
             s["min_score"] = float(self.threshold_slider.value)
         except (ValueError, TypeError):
-            s["min_score"] = 50.0
-        period_map = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
+            s["min_score"] = float(self.settings.get("min_score", 50.0))
+        # period dropdown: map display name → engine key; default to "1y"
+        period_map: Dict[str, str] = {"6 Months": "6mo", "1 Year": "1y", "2 Years": "2y"}
         s["data_period"] = period_map.get(self.period_dd.value or "1 Year", "1y")
-        tf_map = {"Daily": "D", "Weekly": "W", "Monthly": "M"}
+        # timeframe dropdown: map display name → engine key; default to "D"
+        tf_map: Dict[str, str] = {"Daily": "D", "Weekly": "W", "Monthly": "M"}
         s["timeframe"] = tf_map.get(self.timeframe_dd.value or "Daily", "D")
+        # trend_filter dropdown
         s["trend_filter"] = self.trend_filter_dd.value or "All"
+        # universe dropdown
         s["universe"] = self.universe_dd.value or "NIFTY 50"
         return s
 
@@ -1081,19 +1088,24 @@ class ScannerApp:
         self._update_hero_status(self.results)
         self.page.update()
 
-    def _safe_update(self, fn):
+    def _safe_update(self, fn: Callable[[], None]) -> None:
         """Run a UI mutation from any thread, then push it to the page.
 
-        Flet controls may be mutated off the UI thread as long as
-        ``page.update()`` is called afterwards to flush the changes.
+        The provided callable ``fn`` is executed first; any exception is
+        logged at debug level.  After ``fn()`` returns, ``page.update()``
+        is called to flush the changes to the UI.
+
+        This method is thread-safe and may be called from the scanner
+        worker thread as well as from callback handlers (log, progress,
+        stream-batch, completion, error).
         """
         try:
             fn()
-        except Exception:
+        except Exception:  # pragma: no cover
             logger.debug("UI update callback failed", exc_info=True)
         try:
             self.page.update()
-        except Exception:
+        except Exception:  # pragma: no cover
             pass
 
     # ── Results rendering ───────────────────────────────────────────────
