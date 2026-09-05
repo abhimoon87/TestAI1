@@ -237,8 +237,9 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                         lbl += " (~5-10 min)"
                     if "FULL MARKET" in choice:
                         lbl += " — full 5,900"
-                    self.universe_count_label.value = lbl
-                    self.page.update()
+                    self._safe_update(
+                        lambda l=lbl: setattr(self.universe_count_label, "value", l)
+                    )
             except Exception:
                 pass
         threading.Thread(target=_bg, daemon=True).start()
@@ -446,25 +447,63 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.page.update()
 
     def _safe_update(self, fn: Callable[[], None]) -> None:
-        """Run a UI mutation from any thread, then push it to the page.
+        """Run a UI mutation, then push it to the page — on Flet's UI thread.
 
-        The provided callable ``fn`` is executed first; any exception is
-        logged at debug level.  After ``fn()`` returns, ``page.update()``
-        is called to flush the changes to the UI.
+        ``fn`` mutates controls (or reads state to build them), then
+        ``page.update()`` flushes the changes to the client.  Flet only
+        patches the client reliably when controls are touched on the thread
+        that runs the page's asyncio event loop; mutating from the scanner
+        worker thread races with that loop and page updates are silently
+        dropped — the results grid then stays on its placeholder until the
+        next UI event (e.g. clicking the window) forces a redraw.
 
-        This method is thread-safe and may be called from the scanner
-        worker thread as well as from callback handlers (log, progress,
-        stream-batch, completion, error).
+        This method may be called from any thread; the work is marshalled
+        onto the page's event loop when needed (see ``_run_on_ui_thread``).
+        Exceptions inside ``fn`` or ``page.update()`` are logged/ignored,
+        never raised.
         """
-        with self._ui_lock:
-            try:
-                fn()
-            except Exception:  # pragma: no cover
-                logger.debug("UI update callback failed", exc_info=True)
-            try:
-                self.page.update()
-            except Exception:  # pragma: no cover
-                pass
+        def _apply():
+            with self._ui_lock:
+                try:
+                    fn()
+                except Exception:  # pragma: no cover
+                    logger.debug("UI update callback failed", exc_info=True)
+                try:
+                    self.page.update()
+                except Exception:  # pragma: no cover
+                    pass
+
+        self._run_on_ui_thread(_apply)
+
+    def _run_on_ui_thread(self, fn: Callable[[], None]) -> None:
+        """Run ``fn`` on the thread that owns the page's asyncio event loop.
+
+        When called from a worker thread the callable is scheduled with
+        ``loop.call_soon_threadsafe`` (Flet must not have controls mutated
+        from arbitrary threads); on the loop thread itself, or when no live
+        page loop exists (e.g. unit tests with fake pages), it runs inline.
+        """
+        loop = self._page_event_loop()
+        if loop is not None:
+            thread_id = getattr(loop, "_thread_id", None)
+            if thread_id is None or thread_id != threading.get_ident():
+                try:
+                    loop.call_soon_threadsafe(fn)
+                    return
+                except Exception:  # pragma: no cover — loop closed mid-call
+                    pass
+        fn()
+
+    def _page_event_loop(self):
+        """Return the page's running asyncio loop, or None when unavailable."""
+        try:
+            conn = getattr(getattr(self.page, "session", None), "connection", None)
+            loop = getattr(conn, "loop", None)
+        except Exception:  # pragma: no cover
+            return None
+        if loop is None or not loop.is_running():
+            return None
+        return loop
 
     # ── Results rendering ───────────────────────────────────────────────
 
@@ -889,15 +928,20 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 f.write(line)
         except Exception:
             logger.debug("Failed to write to log file", exc_info=True)
-        try:
-            col = getattr(self, "log_column", None)
-            if col is not None:
-                col.controls.append(
-                    self._make_log_line(line.rstrip("\n"), self.theme_colors)
-                )
-                del col.controls[:-LOG_MAX_LINES]
-        except Exception:
-            logger.debug("Failed to append to UI log panel", exc_info=True)
+
+        def _append_to_panel():
+            try:
+                col = getattr(self, "log_column", None)
+                if col is not None:
+                    col.controls.append(
+                        self._make_log_line(line.rstrip("\n"), self.theme_colors)
+                    )
+                    del col.controls[:-LOG_MAX_LINES]
+            except Exception:
+                logger.debug("Failed to append to UI log panel", exc_info=True)
+
+        # Control mutation must happen on the page's event-loop thread.
+        self._run_on_ui_thread(_append_to_panel)
 
     def _set_progress(self, value, text=""):
         self.progress_bar.value = value
