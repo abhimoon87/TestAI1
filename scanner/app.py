@@ -662,7 +662,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             actions=[
                 ft.TextButton(content=ft.Text("Cancel"),
                               on_click=lambda _: self._close_dialog(dlg)),
-                ft.ElevatedButton(content=ft.Text("Apply fixes"),
+                ft.Button(content=ft.Text("Apply fixes"),
                                   on_click=lambda _: self._run_apply_fixes(dlg)),
             ],
         )

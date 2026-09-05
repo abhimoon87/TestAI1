@@ -20,14 +20,14 @@ import sys
 import numpy as np
 import pandas as pd
 
-from .data_fetcher import fetch_batch_yfinance, fetch_index_data
-from .scoring import detect_crossover, get_ma
-from .universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
+from .backtest_indicators import (  # noqa: E402
+    precompute_nifty,
+    precompute_stock,
+)
 
 # Sub-module re-exports (backward-compatible public API)
 from .backtest_models import (  # noqa: E402
     DEFAULT_SETTINGS,
-    SECTOR_MAP,
     WARMUP_BARS,
     Position,
     SectorTracker,
@@ -35,20 +35,18 @@ from .backtest_models import (  # noqa: E402
     TradeResult,
     get_sector,
 )
-from .backtest_indicators import (  # noqa: E402
-    precompute_nifty,
-    precompute_stock,
-)
-from .backtest_scoring import compute_score_at_bar  # noqa: E402
 from .backtest_position import (  # noqa: E402
     _close_position,
     update_position,
 )
 from .backtest_report import (  # noqa: E402
-    _generate_trade_chart,
     generate_html_report,
     save_trades_csv,
 )
+from .backtest_scoring import compute_score_at_bar  # noqa: E402
+from .data_fetcher import fetch_batch_yfinance, fetch_index_data
+from .scoring import detect_crossover, get_ma
+from .universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +169,7 @@ class BacktestEngine:
         # -- Sector rotation config --
         rotation_enabled = settings.get("sector_rotation_enabled", False)
         rotation_lookback = settings.get("sector_rotation_lookback", 8)
-        settings.get("sector_boost_weight", 1.5)
+        rotation_boost = settings.get("sector_boost_weight", 0.5)
         sector_block_threshold = settings.get("sector_block_threshold", -0.05)
         self.sector_tracker.lookback = rotation_lookback
         self.sector_tracker.block_threshold = sector_block_threshold
@@ -303,7 +301,7 @@ class BacktestEngine:
 
                         if is_top and sector_momentum > 0:
                             # Add fixed bonus for top sectors (capped at +15 pts)
-                            bonus = min(sector_momentum * 0.5, 15.0)
+                            bonus = min(sector_momentum * rotation_boost, 15.0)
                             adjusted_score = base_score + bonus
                             signals_boosted += 1
                             self.sector_tracker.log_decision(

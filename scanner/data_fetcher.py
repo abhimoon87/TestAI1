@@ -17,8 +17,8 @@ import time
 
 import pandas as pd
 
-from .trace import trace
 from ._index_utils import _normalize_daily_index  # noqa: F401
+from .trace import trace
 
 logger = logging.getLogger(__name__)
 

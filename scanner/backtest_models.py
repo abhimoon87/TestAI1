@@ -9,6 +9,7 @@ from datetime import datetime
 import pandas as pd
 
 from .settings_store import DEFAULT_SETTINGS as _SCANNER_DEFAULTS
+from .universes import SECTOR_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -54,75 +55,9 @@ DEFAULT_SETTINGS = {**_SCANNER_DEFAULTS, **_BACKTEST_OVERRIDES, **_BACKTEST_ONLY
 
 WARMUP_BARS = 260  # ~1 year of daily data for indicators to stabilize
 
-# Sector mapping for FNO/NIFTY stocks
-SECTOR_MAP = {
-    # Banking & Financial
-    "HDFCBANK": "Banking", "ICICIBANK": "Banking", "KOTAKBANK": "Banking",
-    "AXISBANK": "Banking", "INDUSINDBK": "Banking", "SBIN": "Banking",
-    "PNB": "Banking", "BANKBARODA": "Banking", "FEDERALBNK": "Banking",
-    "BANDHANBNK": "Banking", "AUBANK": "Banking", "IDFCFIRSTB": "Banking",
-    "CANBK": "Banking", "UNIONBANK": "Banking",
-    "BAJFINANCE": "Finance", "BAJAJFINSV": "Finance", "SBICARD": "Finance",
-    "SBILIFE": "Finance", "HDFCLIFE": "Finance", "HDFCAMC": "Finance",
-    "LICHSGFIN": "Finance", "MUTHOOTFIN": "Finance", "MANAPPURAM": "Finance",
-    "MFSL": "Finance", "SHRIRAMFIN": "Finance", "PFC": "Finance",
-    "RECLTD": "Finance", "CHOLAFIN": "Finance",
-    # IT
-    "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
-    "TECHM": "IT", "LTTS": "IT", "PERSISTENT": "IT", "MPHASIS": "IT",
-    "COFORGE": "IT", "KPITTECH": "IT", "TATAELXSI": "IT",
-    "ZENSARTECH": "IT", "BSOFT": "IT", "BIRLASOFT": "IT",
-    # Pharma
-    "SUNPHARMA": "Pharma", "DRREDDY": "Pharma", "CIPLA": "Pharma",
-    "DIVISLAB": "Pharma", "TORNTPHARM": "Pharma", "LUPIN": "Pharma",
-    "GLENMARK": "Pharma", "ALCHEMIST": "Pharma",
-    # Auto
-    "MARUTI": "Auto", "M&M": "Auto", "TATAMOTORS": "Auto",
-    "HEROMOTOCO": "Auto", "BAJAJ-AUTO": "Auto", "EICHERMOT": "Auto",
-    "ASHOKLEY": "Auto", "TVSMOTOR": "Auto", "MOTHERSON": "Auto",
-    "ESCORTS": "Auto", "BALKRISIND": "Auto",
-    # Metals & Mining
-    "TATASTEEL": "Metals", "HINDALCO": "Metals", "JSWSTEEL": "Metals",
-    "VEDL": "Metals", "SAIL": "Metals", "NMDC": "Metals",
-    "NATIONALUM": "Metals", "JINDALSTEL": "Metals",
-    # Oil & Gas
-    "RELIANCE": "OilGas", "ONGC": "OilGas", "BPCL": "OilGas",
-    "IOC": "OilGas", "GAIL": "OilGas", "PETRONET": "OilGas",
-    "TATACOMM": "OilGas",
-    # FMCG
-    "HINDUNILVR": "FMCG", "ITC": "FMCG", "BRITANNIA": "FMCG",
-    "NESTLEIND": "FMCG", "TATACONSUM": "FMCG", "MARICO": "FMCG",
-    "DABUR": "FMCG", "GODREJCP": "FMCG", "COLPAL": "FMCG",
-    "UBL": "FMCG", "RADICO": "FMCG",
-    # Power & Infrastructure
-    "NTPC": "Power", "POWERGRID": "Power", "TATAPOWER": "Power",
-    "ADANIGREEN": "Power",
-    # Real Estate
-    "GODREJPROP": "Realty", "OBEROIRLTY": "Realty", "PRESTIGE": "Realty",
-    "PHOENIXLTD": "Realty",
-    # Cement & Materials
-    "ULTRACEMCO": "Cement", "GRASIM": "Cement", "AMBUJACEM": "Cement",
-    "ACC": "Cement", "DALBHARAT": "Cement",
-    # Chemicals
-    "TATACHEM": "Chemicals", "COROMANDEL": "Chemicals",
-    "PIDILITIND": "Chemicals", "SRF": "Chemicals",
-    "CHAMBLFERT": "Chemicals", "GSPL": "Chemicals",
-    # Consumer
-    "TITAN": "Consumer", "TRENT": "Consumer", "VOLTAS": "Consumer",
-    "HAVELLS": "Consumer", "POLYCAB": "Consumer",
-    # Telecom
-    "BHARTIARTL": "Telecom", "IDEA": "Telecom",
-    # Ports & Logistics
-    "ADANIPORTS": "Infra", "CONCOR": "Infra", "DELHIVERY": "Infra",
-    # Defence & Industrials
-    "HAL": "Defence", "BEL": "Defence", "COCHINSHIP": "Defence",
-    # Miscellaneous
-    "IRCTC": "Misc", "PVRINOX": "Misc", "ZOMATO": "Misc",
-    "NYKAA": "Misc", "PAYTM": "Misc",
-    "LALPATHLAB": "Misc", "METROPOLIS": "Misc",
-    "DIXON": "Misc", "SONACOMS": "Misc",
-    "CROMPTON": "Misc",
-}
+# Sector mapping — the single source of truth lives in universes.py and is
+# kept current by scanner/audit_stale_members.py --fix; imported here so
+# backtest sector stats always agree with the live scanner.
 
 
 def get_sector(ticker: str) -> str:

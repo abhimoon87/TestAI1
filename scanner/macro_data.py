@@ -446,7 +446,6 @@ def detect_market_regime(
             risk_on_score += 1
 
     # Determine regime
-    max(risk_on_score, risk_off_score, recession_score)
     total = risk_on_score + risk_off_score + recession_score + 1  # avoid /0
 
     if recession_score >= 4:
@@ -481,12 +480,11 @@ def detect_market_regime(
 
 # ── Frankfurter / CoinGecko — delegated to free_apis ────────────────────────
 from .free_apis import (  # noqa: F401
-    ForexData,
-    fetch_forex_data,
     CryptoSentiment,
+    ForexData,
     fetch_crypto_sentiment,
+    fetch_forex_data,
 )
-
 
 # ── Unified Macro Fetcher ──────────────────────────────────────────────────
 

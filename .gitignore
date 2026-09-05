@@ -10,6 +10,7 @@ scanner/nifty50_weekly_report.html
 scanner/test_report.html
 scanner/test_report_columns.html
 scanner/scan.log
+scanner/gui_boot.log
 scanner/trace.log
 scanner/trace.log.*
 

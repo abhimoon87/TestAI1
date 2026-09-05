@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .backtest_models import StockData, WARMUP_BARS
+from .backtest_models import WARMUP_BARS, StockData
 from .indicators import (
     adx,
     atr,

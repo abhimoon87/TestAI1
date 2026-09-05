@@ -161,7 +161,7 @@ class SettingsViewMixin:
             ft.Container(expand=True),
             ft.TextButton(content=ft.Text("Cancel", size=13),
                           on_click=lambda e: self._show_view("dashboard")),
-            ft.ElevatedButton(content=ft.Text("Save Settings", size=13),
+            ft.Button(content=ft.Text("Save Settings", size=13),
                                bgcolor=c["green"], color="#052e16",
                                on_click=lambda e: self._save_settings_page()),
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER)

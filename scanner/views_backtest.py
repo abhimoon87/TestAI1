@@ -183,7 +183,7 @@ class BacktestViewMixin:
 
         self._wf_status = ft.Text(state.get("status", ""), size=12,
                                   color=c["green"] if not state.get("error") else c["red"])
-        self._wf_btn = ft.ElevatedButton(
+        self._wf_btn = ft.Button(
             content=ft.Text("Run Walk-forward" if not busy else "Running…", size=13),
             bgcolor=c["green"], color="#052e16", disabled=busy,
             on_click=None if busy else lambda e: self._run_wf(),

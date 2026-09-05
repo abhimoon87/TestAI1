@@ -197,7 +197,7 @@ class LayoutViewMixin:
         )
 
         self.action_btn_label = ft.Text("▶  RUN SCAN", size=14, weight=ft.FontWeight.BOLD)
-        self.action_btn = ft.ElevatedButton(
+        self.action_btn = ft.Button(
             content=self.action_btn_label, expand=True, height=46,
             bgcolor=c["green"], color="#052e16",
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
