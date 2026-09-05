@@ -11,12 +11,11 @@ and on the controls created by ``LayoutViewMixin._build_main_area``
 """
 
 import threading
-from datetime import datetime, timedelta
 
 import flet as ft
 from flet.controls.alignment import Alignment
 
-from .report import _parse_date, _sentiment
+from .report import fetch_news_for_ticker
 from .ui_kit import (
     RESULT_COLS,
     _border_all,
@@ -24,6 +23,17 @@ from .ui_kit import (
     _padding_only,
     _score_of,
 )
+
+# Rating → theme-color-key accent used for row rails / washes.
+_RATING_ACCENT = {"EXCELLENT": "green", "GOOD": "lime", "MODERATE": "orange", "POOR": "red"}
+
+
+def _spark_move(r: dict) -> float:
+    """Net % move across the row's sparkline closes (for column sorting)."""
+    px = r.get("px_tail") or []
+    if len(px) < 2 or not px[0]:
+        return 0.0
+    return (px[-1] - px[0]) / px[0] * 100.0
 
 
 class ResultsViewMixin:
@@ -53,17 +63,7 @@ class ResultsViewMixin:
             if self.scanning and not results:
                 live = (getattr(self.progress_label, "value", "") or "").strip()
                 headline = live if live and live not in ("Ready", "Done", "Stopped") else "Scanning — fetching batches…"
-                self.table_column.controls.append(
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Icon(ft.Icons.SHOW_CHART, size=48, color=c["green"]),
-                            ft.Text(headline, size=12, weight=ft.FontWeight.BOLD, color=c["green"]),
-                            ft.Text("First results appear after ~1 batch (~20s)", size=11, color=c["text_dim"]),
-                        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=6),
-                        alignment=Alignment.CENTER,
-                        padding=30,
-                    )
-                )
+                self.table_column.controls.append(self._make_scan_placeholder(headline))
             else:
                 has_active_filter = self._is_filter_active()
                 msg = "No results match your filter." if results and has_active_filter else "No results found."
@@ -149,17 +149,62 @@ class ResultsViewMixin:
             margin=_margin_only(bottom=6),
         )
 
+    def _rating_accent(self, rating) -> str:
+        return self.theme_colors.get(_RATING_ACCENT.get(rating, "red"),
+                                     self.theme_colors["red"])
+
+    def _sentiment_badge(self, r: dict, c) -> ft.Container | None:
+        """Compact news count pill (arrow + n) colored by sentiment score.
+
+        Shown next to the ticker when the enrichment pass attached an
+        ``_article_count`` / ``_sentiment_score``; None when there is no
+        sentiment data (the common keyless case).
+        """
+        try:
+            n = int(r.get("_article_count") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n <= 0:
+            return None
+        try:
+            s = float(r.get("_sentiment_score") or 0.0)
+        except (TypeError, ValueError):
+            s = 0.0
+        if s >= 0.05:
+            arrow, fg, bg = "↑", c["green"], c["chip_good"]
+            tone = "positive"
+        elif s <= -0.05:
+            arrow, fg, bg = "↓", c["red"], c["chip_bad"]
+            tone = "negative"
+        else:
+            arrow, fg, bg = "·", c["text_dim"], c["chip_neutral"]
+            tone = "neutral"
+        return ft.Container(
+            content=ft.Row([
+                ft.Text(arrow, size=8, color=fg, weight=ft.FontWeight.BOLD),
+                ft.Text(str(n), size=8, weight=ft.FontWeight.BOLD, color=fg),
+            ], spacing=1, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor=bg, border_radius=5,
+            padding=_padding_only(left=4, right=4, top=1, bottom=1),
+            tooltip=f"News sentiment: {tone} · {n} articles — click ticker to read",
+        )
+
     def _make_data_row(self, r, rank, c, bg, threshold):
         total = _score_of(r)
         ticker = r.get("ticker", "?")
         trend_dir = r.get("trend_dir") or ""
         is_above = total >= threshold
+        rating = r.get("combined_rating", "POOR")
+        rating_txt_color = {"EXCELLENT": c["green"], "GOOD": c["lime"],
+                            "MODERATE": c["orange"]}.get(rating, c["red"])
+        entry = bool(r.get("entry_signal"))
+        accent = self._rating_accent(rating)
         cols = [
             (str(rank), c["text_dim"], 11, False),
             (ticker, c["green"] if is_above else c["text"], 12, True),
             (f'{total:.0f}', c["green"] if total >= 70 else c["lime"] if total >= 50 else c["orange"] if total >= 30 else c["red"], 13, True),
-            (r.get("combined_rating", "POOR"), {"EXCELLENT": c["green"], "GOOD": c["lime"], "MODERATE": c["orange"]}.get(r.get("combined_rating"), c["red"]), 10, True),
-            ("YES" if r.get("entry_signal") else "--", c["green"] if r.get("entry_signal") else c["text_dim"], 10, True),
+            (rating, rating_txt_color, 10, True),
+            ("YES" if entry else "--", c["green"] if entry else c["text_dim"], 10, True),
             (f'₹{r.get("close", 0) or 0:.0f}', c["text"], 11, True),
             (self._ma_text(r), self._ma_color(r), 10, False),
             (f'{r.get("trend", 0) or 0:.0f}', c["green"], 10, False),
@@ -175,6 +220,18 @@ class ResultsViewMixin:
             ("Chop" if r.get("is_sideways") else "OK", c["orange"] if r.get("is_sideways") else c["green"], 10, False),
         ]
 
+        # Subtle chip washes for the rating and ENTRY columns — the text color
+        # (asserted by tests) is untouched, only the cell background differs.
+        wash_for = {}
+        if entry:
+            wash_for[4] = ft.Colors.with_opacity(0.14, c["green"])
+        wash_for[3] = {
+            "EXCELLENT": ft.Colors.with_opacity(0.12, c["green"]),
+            "GOOD": ft.Colors.with_opacity(0.09, c["lime"]),
+            "MODERATE": ft.Colors.with_opacity(0.12, c["orange"]),
+            "POOR": ft.Colors.with_opacity(0.12, c["red"]),
+        }.get(rating)
+
         controls = []
         ticker_cell = None
         for idx, ((text, color, size, bold), (_col_name, width)) in enumerate(zip(cols, RESULT_COLS)):
@@ -182,16 +239,78 @@ class ResultsViewMixin:
                 text, size=size,
                 weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
                 color=color,
+                max_lines=1, overflow=ft.TextOverflow.CLIP,
             )
             cell = ft.Container(content=w, width=width)
+            if idx == 0:
+                # Rank cell carries a rating-colored accent rail so rows read
+                # as green/lime/orange/red bands at a glance.
+                cell.content = ft.Row(
+                    controls=[
+                        ft.Container(width=3, height=18, border_radius=2, bgcolor=accent),
+                        w,
+                    ],
+                    spacing=5,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+                cell.tooltip = rating.title()
+            if idx in wash_for and wash_for[idx] is not None:
+                cell.bgcolor = wash_for[idx]
+                cell.border_radius = 6
             if idx == 1:
                 ticker_cell = cell
+                badge = self._sentiment_badge(r, c)
+                if badge is not None:
+                    # Keep the ticker text as the row's first control so the
+                    # news-expansion scanners can still find it by value; the
+                    # text shrinks to make room for the badge.
+                    w.expand = True
+                    cell.content = ft.Row(
+                        controls=[w, badge], spacing=5,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
             controls.append(cell)
+
+        # Trailing column: mini 1-month sparkline from the closes the engine
+        # attached to each row (``px_tail``); dim dash when unavailable.
+        spark_w = RESULT_COLS[-1][1]
+        px = r.get("px_tail") or []
+        if len(px) >= 2:
+            lo, hi = min(px), max(px)
+            span = (hi - lo) or 1.0
+            up = px[-1] >= px[0]
+            spark_color = c["green"] if up else c["red"]
+            move = (px[-1] - px[0]) / px[0] * 100.0 if px[0] else 0.0
+            bars = [
+                ft.Container(
+                    expand=True,
+                    height=round(4 + (v - lo) / span * 16),
+                    bgcolor=spark_color,
+                    border_radius=1,
+                )
+                for v in px[-14:]
+            ]
+            spark_cell = ft.Container(
+                content=ft.Row(
+                    controls=bars, spacing=1, height=26,
+                    vertical_alignment=ft.CrossAxisAlignment.END,
+                ),
+                width=spark_w,
+                padding=_padding_only(top=2, bottom=2),
+                tooltip=f"{ticker}: {move:+.1f}% over the last {len(px)} closes",
+            )
+        else:
+            spark_cell = ft.Container(
+                content=ft.Text("—", size=10, color=c["text_faint"],
+                                text_align=ft.TextAlign.CENTER),
+                width=spark_w,
+            )
+        controls.append(spark_cell)
 
         ticker_cell.on_click = lambda e, t=ticker: self._toggle_stock_news(t)
         ticker_cell.tooltip = "Click for news & sentiment"
 
-        return ft.Container(
+        row = ft.Container(
             content=ft.Row(controls=controls, spacing=2, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=bg,
             border_radius=8,
@@ -200,6 +319,16 @@ class ResultsViewMixin:
             padding=_padding_only(left=4, right=4),
             margin=_margin_only(bottom=1),
         )
+        row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
+        return row
+
+    def _on_row_hover(self, container, base_bg, e):
+        """Highlight the hovered result row (desktop mouse feedback)."""
+        try:
+            container.bgcolor = self.theme_colors["row_hover"] if e.data else base_bg
+            self.page.update()
+        except Exception:
+            pass
 
     def _on_sort(self, col_idx):
         if self.sort_col == col_idx:
@@ -210,6 +339,7 @@ class ResultsViewMixin:
         self.current_page = 0
         self._render_current_page()
         self._scroll_to_top()
+        self._save_ui_prefs()
 
     def _get_sort_key(self, col_idx):
         rating_order = {"EXCELLENT": 4, "GOOD": 3, "MODERATE": 2, "POOR": 1, "WEAK": 0}
@@ -238,6 +368,8 @@ class ResultsViewMixin:
             15: lambda r: 1 if r.get("trend_dir") == "Bull" else 0,
             16: lambda r: r.get("adx_val", 0) or 0,
             17: lambda r: 1 if r.get("is_sideways") else 0,
+            # Sparkline column sorts by the move it draws (last vs first close).
+            18: lambda r: _spark_move(r),
         }
         return sort_keys.get(col_idx, lambda r: r.get("total", 0))
 
@@ -281,6 +413,7 @@ class ResultsViewMixin:
         self.current_page = 0
         self._render_current_page()
         self._scroll_to_top()
+        self._save_ui_prefs()
 
     def _load_all_pages(self):
         total = len(self._visible_results())
@@ -290,75 +423,199 @@ class ResultsViewMixin:
         self.current_page = 0
         self._render_current_page()
         self._scroll_to_top()
+        self._save_ui_prefs()
+
+    # ── Table-view persistence (sort / page size / rating filter) ────────
+
+    def _load_ui_prefs(self):
+        """Re-apply the table prefs saved by the last session (sort column,
+        direction, page size and rating filter) after a fresh UI build."""
+        try:
+            sc = self.settings.get("ui_sort_col")
+            if isinstance(sc, int) and 0 <= sc < len(RESULT_COLS):
+                self.sort_col = sc
+                self.sort_reverse = bool(self.settings.get("ui_sort_reverse", False))
+            ps = self.settings.get("ui_page_size")
+            if isinstance(ps, int) and ps > 0:
+                self.page_size = min(500, ps)
+                if str(self.page_size) in self.page_size_options:
+                    self.page_size_dd.value = str(self.page_size)
+            rf = self.settings.get("ui_rating_filter")
+            dd = getattr(self, "rating_filter_dd", None)
+            if dd is not None and rf in ("ALL", "EXCELLENT", "GOOD", "MODERATE", "POOR"):
+                dd.value = rf.title() if rf != "ALL" else "All"
+        except Exception:
+            pass
+
+    def _save_ui_prefs(self):
+        """Persist current table view to settings.json (sort, size, filter)."""
+        try:
+            s = self.settings
+            s["ui_sort_col"] = self.sort_col
+            s["ui_sort_reverse"] = self.sort_reverse
+            s["ui_page_size"] = self.page_size
+            s["ui_rating_filter"] = self._rating_filter()
+            # Late import: scanner.app imports this mixin at module load.
+            from .app import save_settings
+            save_settings(s)
+        except Exception:
+            pass
 
     def _toggle_stock_news(self, ticker):
+        ctrls = self.table_column.controls
+        ticker_frames = [x for x in ctrls if getattr(x, "_news_ticker", None) == ticker]
+
+        # Second click on an already-open panel collapses it immediately.
+        if any(not getattr(x, "_news_loading", False) for x in ticker_frames):
+            for x in ticker_frames:
+                ctrls.remove(x)
+            self.page.update()
+            return
+
+        # A fetch is already in flight for this ticker — ignore the click.
+        if ticker_frames:
+            return
+
+        # The scan prefetched this row's stories — show them instantly.
+        row = self._find_result_row(ticker)
+        if row is not None and "_news_items" in row:
+            self._show_news(ticker, row["_news_items"] or [])
+            return
+
+        # Fallback (rows the scan did not prefetch): show an immediate
+        # "fetching…" placeholder; the worker replaces it once yfinance
+        # responds.
+        c = self.theme_colors
+        loading = ft.Container(
+            content=ft.Row([
+                ft.ProgressRing(width=14, height=14, stroke_width=2,
+                                color=c["cyan"]),
+                ft.Text("Loading news & sentiment…", size=11, color=c["text_dim"]),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            bgcolor=c["card2"],
+            border_radius=10,
+            padding=10,
+            margin=_margin_only(bottom=4),
+        )
+        loading._news_ticker = ticker
+        loading._news_loading = True
+        self._insert_news_frame(ticker, loading)
+        self.page.update()
 
         def _fetch_news():
             try:
-                import yfinance as yf
-                news_items = []
-                for suffix in (".NS", ".BO"):
-                    try:
-                        items = yf.Ticker(f"{ticker}{suffix}").news or []
-                    except Exception:
-                        items = []
-                    if items:
-                        news_items = items
-                        break
-                cutoff = datetime.now() - timedelta(days=60)
-                parsed = []
-                for item in news_items[:10]:
-                    content = item.get("content", item)
-                    title = content.get("title", "")
-                    if not title:
-                        continue
-                    summary = content.get("summary", "")
-                    pub_date = content.get("pubDate", "")
-                    dt = _parse_date(pub_date) if pub_date else None
-                    if dt is not None and dt < cutoff:
-                        continue
-                    provider = content.get("provider", {})
-                    prov_name = provider.get("displayName", "") if isinstance(provider, dict) else ""
-                    sentiment = _sentiment(title, summary)
-                    parsed.append({
-                        "title": title,
-                        "summary": (summary[:150] + "...") if len(summary) > 150 else summary,
-                        "date": pub_date[:10] if pub_date else "",
-                        "provider": prov_name,
-                        "sentiment": sentiment,
-                    })
-                self._safe_update(lambda: self._show_news(ticker, parsed))
+                parsed = fetch_news_for_ticker(ticker)
             except Exception:
-                self._safe_update(lambda: self._show_news(ticker, []))
+                parsed = []
+            self._safe_update(lambda: self._show_news(ticker, parsed))
 
         threading.Thread(target=_fetch_news, daemon=True).start()
+
+    def _find_result_row(self, ticker: str) -> dict | None:
+        """The live result-row dict for ``ticker`` (news/stats live on it)."""
+        pool = getattr(self, "all_results", None) or getattr(self, "results", None) or []
+        for r in pool:
+            if r.get("ticker") == ticker:
+                return r
+        return None
+
+    def _news_stats_row(self, row: dict | None) -> ft.Row | None:
+        """Key-price chips (close / RSI / 1M move) for the news panel header."""
+        if not row:
+            return None
+        c = self.theme_colors
+        chips = []
+        try:
+            close = row.get("close")
+            if close is not None:
+                chips.append((f"₹{float(close):,.0f}", c["text"]))
+        except (TypeError, ValueError):
+            pass
+        try:
+            rsi = row.get("rsi")
+            if rsi is not None:
+                chips.append((f"RSI {float(rsi):.0f}", c["cyan"]))
+        except (TypeError, ValueError):
+            pass
+        try:
+            move = row.get("pc1m")
+            if move is not None:
+                mv = float(move)
+                chips.append((f"1M {mv:+.1f}%", c["green"] if mv > 0 else c["red"]))
+        except (TypeError, ValueError):
+            pass
+        if not chips:
+            return None
+        return ft.Row(
+            controls=[
+                ft.Container(
+                    content=ft.Text(label, size=10, weight=ft.FontWeight.BOLD, color=color),
+                    bgcolor=c["card"],
+                    border_radius=6,
+                    padding=_padding_only(left=7, right=7, top=2, bottom=2),
+                )
+                for label, color in chips
+            ],
+            spacing=5,
+        )
+
+    @staticmethod
+    def _row_ticker_text(cell) -> ft.Text | None:
+        """The ticker ft.Text inside a data-row cell (content may be a Row
+        when a sentiment badge is present — the ticker is always first)."""
+        inner = getattr(cell, "content", cell)
+        if isinstance(inner, ft.Row):
+            inner = inner.controls[0] if inner.controls else None
+        return inner if isinstance(inner, ft.Text) else None
+
+    def _insert_news_frame(self, ticker, frame):
+        """Insert ``frame`` right under the given ticker's row (or at the end)."""
+        ctrls = self.table_column.controls
+        insert_at = None
+        for i, ctrl in enumerate(ctrls):
+            content = getattr(ctrl, "content", None)
+            if isinstance(content, ft.Row):
+                cells = content.controls or []
+                if len(cells) > 1:
+                    inner = self._row_ticker_text(cells[1])
+                    if inner is not None and inner.value == ticker:
+                        insert_at = i + 1
+                        break
+        if insert_at is None:
+            ctrls.append(frame)
+        else:
+            ctrls.insert(insert_at, frame)
 
     def _show_news(self, ticker, items):
         c = self.theme_colors
         ctrls = self.table_column.controls
-        for ctrl in [x for x in ctrls if getattr(x, "_news_ticker", None) == ticker]:
-            ctrls.remove(ctrl)
-            self.page.update()
-            return
-
+        # Replace this ticker's loading placeholder and drop any other open
+        # frames (loading placeholders also carry ``_news_ticker``; they are
+        # distinguished by ``_news_loading`` and must not collapse the panel).
         for ctrl in [x for x in ctrls if hasattr(x, "_news_ticker")]:
             ctrls.remove(ctrl)
 
         news_controls = []
+        stats = self._news_stats_row(self._find_result_row(ticker))
+        if stats is not None:
+            news_controls.append(stats)
         if not items:
             news_controls.append(ft.Text("No recent news found.", size=11, color=c["text_dim"]))
         else:
-            good = sum(1 for i in items if i["sentiment"] == "Good")
-            bad = sum(1 for i in items if i["sentiment"] == "Bad")
+            good = sum(1 for i in items if i.get("sentiment") == "Good")
+            bad = sum(1 for i in items if i.get("sentiment") == "Bad")
             neu = len(items) - good - bad
             news_controls.append(
                 ft.Text(f"{good} Good  |  {bad} Bad  |  {neu} Neutral", size=11, weight=ft.FontWeight.BOLD, color=c["lime"])
             )
             for item in items:
-                sent = item["sentiment"]
-                sent_color = {"Good": c["green"], "Bad": c["red"], "Neutral": c["text_dim"]}[sent]
-                sent_bg = {"Good": c["chip_good"], "Bad": c["chip_bad"], "Neutral": c["card"]}[sent]
-                meta = f"{item['date']}  {item['provider']}" if item['provider'] else item['date']
+                sent = item.get("sentiment") or "Neutral"
+                sent_colors = {"Good": c["green"], "Bad": c["red"], "Neutral": c["text_dim"]}
+                sent_bgs = {"Good": c["chip_good"], "Bad": c["chip_bad"], "Neutral": c["card"]}
+                sent_color = sent_colors.get(sent, c["text_dim"])
+                sent_bg = sent_bgs.get(sent, c["card"])
+                provider = item.get("provider") or item.get("publisher") or ""
+                meta = f"{item.get('date', '')}  {provider}" if provider else item.get("date", "")
                 card_lines = [
                     ft.Row([
                         ft.Container(
@@ -368,9 +625,9 @@ class ResultsViewMixin:
                         ),
                         ft.Text(meta, size=9, color=c["text_dim"]),
                     ], spacing=6),
-                    ft.Text(item["title"], size=11, weight=ft.FontWeight.BOLD, color=c["text"], max_lines=2),
+                    ft.Text(item.get("title", ""), size=11, weight=ft.FontWeight.BOLD, color=c["text"], max_lines=2),
                 ]
-                if item["summary"]:
+                if item.get("summary"):
                     card_lines.append(ft.Text(item["summary"], size=10, color=c["text_dim"], max_lines=2))
                 news_controls.append(
                     ft.Container(
@@ -390,23 +647,22 @@ class ResultsViewMixin:
             margin=_margin_only(bottom=4),
         )
         news_frame._news_ticker = ticker
-
-        insert_at = None
-        for i, ctrl in enumerate(ctrls):
-            content = getattr(ctrl, "content", None)
-            if isinstance(content, ft.Row):
-                cells = content.controls or []
-                if len(cells) > 1:
-                    cell = cells[1]
-                    inner = getattr(cell, "content", cell)
-                    if isinstance(inner, ft.Text) and inner.value == ticker:
-                        insert_at = i + 1
-                        break
-        if insert_at is None:
-            ctrls.append(news_frame)
-        else:
-            ctrls.insert(insert_at, news_frame)
+        self._insert_news_frame(ticker, news_frame)
         self.page.update()
+
+    def _make_scan_placeholder(self, headline="Scanning — fetching batches…"):
+        """Animated placeholder shown in the results area during a scan."""
+        c = self.theme_colors
+        return ft.Container(
+            content=ft.Column([
+                ft.ProgressRing(width=40, height=40, stroke_width=3, color=c["green"]),
+                ft.Container(height=8),
+                ft.Text(headline, size=12, weight=ft.FontWeight.BOLD, color=c["green"]),
+                ft.Text("First results appear after ~1 batch (~20s)", size=11, color=c["text_dim"]),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
+            alignment=Alignment.CENTER,
+            padding=30,
+        )
 
     def _render_chart(self, results):
         c = self.theme_colors
@@ -484,5 +740,5 @@ class ResultsViewMixin:
             self.hero_sub.color = c.get("orange", c["text_dim"])
             self.hero_sub.size = 11
         else:
-            self.hero_sub.color = c["text_dim"]
+            self.hero_sub.color = c["hero_sub"]
             self.hero_sub.size = 12

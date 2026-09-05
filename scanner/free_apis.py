@@ -17,29 +17,17 @@ Providers:
 
 import hashlib
 import logging
-import time
 from dataclasses import dataclass, field
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_FREE_API_CACHE: dict[str, tuple[dict, float]] = {}
-_FREE_API_CACHE_TTL = 4 * 3600  # 4 hours
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _FREE_API_CACHE:
-        result, ts = _FREE_API_CACHE[key]
-        if time.time() - ts < _FREE_API_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _FREE_API_CACHE[key] = (value, time.time())
+_FREE_API_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="free_api")
 
 
 # ── Frankfurter — Exchange Rates (Free, No Key) ────────────────────────────
@@ -73,7 +61,7 @@ def fetch_forex_data(
         ForexData or None
     """
     cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return ForexData(**cached, cached=True)
 
@@ -121,7 +109,7 @@ def fetch_forex_data(
             change_1w=round(change_1w, 3),
         )
 
-        _cache_set(cache_k, {
+        _FREE_API_CACHE.set(cache_k, {
             "base_currency": base,
             "target_currency": target,
             "rate": current_rate,
@@ -164,7 +152,7 @@ def fetch_crypto_sentiment() -> CryptoSentiment | None:
         CryptoSentiment or None
     """
     cache_k = hashlib.md5(b"crypto:sentiment", usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return CryptoSentiment(**cached, cached=True)
 
@@ -222,7 +210,7 @@ def fetch_crypto_sentiment() -> CryptoSentiment | None:
             fear_greed_label=fear_greed_label,
         )
 
-        _cache_set(cache_k, {
+        _FREE_API_CACHE.set(cache_k, {
             "btc_price": result.btc_price,
             "btc_change_24h": result.btc_change_24h,
             "btc_change_7d": result.btc_change_7d,
@@ -274,7 +262,7 @@ def fetch_mandi_prices(
         List of MandiPrice or None
     """
     cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return [MandiPrice(**item) for item in cached.get("prices", [])]
 
@@ -313,7 +301,7 @@ def fetch_mandi_prices(
                 continue
 
         if prices:
-            _cache_set(cache_k, {"prices": [
+            _FREE_API_CACHE.set(cache_k, {"prices": [
                 {"commodity": p.commodity, "market": p.market, "state": p.state,
                  "price_min": p.price_min, "price_max": p.price_max,
                  "price_modal": p.price_modal, "unit": p.unit, "date": p.date}
@@ -351,7 +339,7 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | Non
         WallstreetBetsSentiment or None
     """
     cache_k = hashlib.md5(f"wsb:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return WallstreetBetsSentiment(**cached, cached=True)
 
@@ -411,7 +399,7 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | Non
             top_posts=top_posts,
         )
 
-        _cache_set(cache_k, {
+        _FREE_API_CACHE.set(cache_k, {
             "ticker": result.ticker,
             "mention_count": result.mention_count,
             "sentiment_score": result.sentiment_score,
@@ -453,7 +441,7 @@ def fetch_noozra_news(
         List of NoozraNews or None
     """
     cache_k = hashlib.md5(f"news:{query}:{max_items}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return [NoozraNews(**item) for item in cached.get("news", [])]
 
@@ -486,7 +474,7 @@ def fetch_noozra_news(
             ))
 
         if news:
-            _cache_set(cache_k, {"news": [
+            _FREE_API_CACHE.set(cache_k, {"news": [
                 {"title": n.title, "url": n.url, "source": n.source, "published": n.published}
                 for n in news
             ]})

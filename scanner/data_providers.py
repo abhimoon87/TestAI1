@@ -457,6 +457,7 @@ def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
         # Get basic financials
         url = f"https://finnhub.io/api/v1/stock/metric?symbol={finnhub_ticker}&metric=all&token={api_key}"
         resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
         data = resp.json()
 
         if not data or "metric" not in data:
@@ -476,6 +477,7 @@ def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
         try:
             earnings_url = f"https://finnhub.io/api/v1/stock/earnings?symbol={finnhub_ticker}&token={api_key}"
             earnings_resp = requests.get(earnings_url, timeout=10)
+            earnings_resp.raise_for_status()
             earnings_data = earnings_resp.json()
 
             if earnings_data and len(earnings_data) >= 2:
@@ -633,7 +635,7 @@ def _call_with_timeout(fn, timeout: float):
     def _run():
         try:
             box["value"] = fn()
-        except BaseException as e:  # noqa: BLE001 - surfaced to caller below
+        except Exception as e:
             box["error"] = e
 
     thread = threading.Thread(target=_run, daemon=True)

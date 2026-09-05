@@ -12,6 +12,7 @@ Tests cover:
 import numpy as np
 import pandas as pd
 
+from scanner import scoring
 from scanner.scoring import (
     _get_combined_rating,
     check_filter,
@@ -126,6 +127,41 @@ class TestToWeekly:
             index=[0],
         )
         assert to_weekly(df) is None
+
+    def test_result_is_cached_for_same_frame(self, synthetic_ohlcv):
+        first = to_weekly(synthetic_ohlcv)
+        second = to_weekly(synthetic_ohlcv)
+        assert first is not None and second is not None
+        assert first is second  # same object served from the per-frame cache
+
+    def test_stale_cache_entry_never_serves_foreign_frame(self):
+        """An id-keyed cache entry must not leak across DataFrames.
+
+        Regression: entries were keyed by ``id(df)`` without holding a
+        reference to the owner, so a recycled id could serve another frame's
+        stale weekly result — which made ``to_weekly(pd.DataFrame())``
+        intermittently return a cached frame instead of ``None`` under
+        full-suite memory churn.
+        """
+        empty = pd.DataFrame()
+        # 1) An entry owned by a *different* object must be rejected by the
+        #    identity check (this is the recycled-id scenario).
+        scoring._WEEKLY_CACHE[id(empty)] = (
+            object(),
+            pd.DataFrame({"x": [1]}),
+        )
+        try:
+            assert to_weekly(empty) is None
+        finally:
+            scoring._WEEKLY_CACHE.pop(id(empty), None)
+
+        # 2) Even an entry claiming this exact frame as owner must not win
+        #    over the empty-frame validation (checks run before the cache).
+        scoring._WEEKLY_CACHE[id(empty)] = (empty, pd.DataFrame({"x": [1]}))
+        try:
+            assert to_weekly(empty) is None
+        finally:
+            scoring._WEEKLY_CACHE.pop(id(empty), None)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

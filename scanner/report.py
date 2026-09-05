@@ -32,7 +32,10 @@ SENTIMENT_BAD = frozenset([
 
 def _sentiment(title: str, summary: str = "") -> str:
     """Simple keyword-based sentiment: Good / Bad / Neutral."""
-    words = set((title + " " + summary).lower().split())
+    text = (title + " " + summary).lower()
+    # Split on whitespace and hyphens to catch hyphenated words
+    import re
+    words = set(re.split(r'[\s\-]+', text))
     g = len(words & SENTIMENT_GOOD)
     b = len(words & SENTIMENT_BAD)
     if g > b:
@@ -102,19 +105,28 @@ def fetch_stock_news(ticker: str, max_items: int = 10,
 
 def _fetch_news_parallel(tickers: list[str], max_items: int = 10,
                          months_back: int = 2,
-                         max_workers: int = 8) -> dict[str, list]:
+                         max_workers: int = 8,
+                         fetch_fn=None) -> dict[str, list]:
     """
     Fetch news for multiple tickers in parallel.
 
+    Args:
+        tickers: Tickers to fetch news for.
+        max_items / months_back: Passed through to the per-ticker fetcher.
+        max_workers: Parallelism cap.
+        fetch_fn: Optional per-ticker callable ``(ticker, max_items,
+            months_back) -> list``; defaults to :func:`fetch_stock_news`.
+
     Returns:
-        Dict mapping ticker -> list of news item dicts.
+        Dict mapping ticker -> list of news item dicts (``[]`` on failure).
     """
+    fetch_fn = fetch_fn or fetch_stock_news
     news_map: dict[str, list] = {}
     if not tickers:
         return news_map
 
     def _fetch_one(ticker: str) -> tuple[str, list]:
-        return ticker, fetch_stock_news(ticker, max_items, months_back)
+        return ticker, fetch_fn(ticker, max_items, months_back)
 
     workers = min(max_workers, len(tickers))
     try:
@@ -132,9 +144,48 @@ def _fetch_news_parallel(tickers: list[str], max_items: int = 10,
         logger.debug("ThreadPoolExecutor failed: %s", e)
         # Fallback: sequential fetch
         for t in tickers:
-            news_map[t] = fetch_stock_news(t, max_items, months_back)
+            news_map[t] = fetch_fn(t, max_items, months_back)
 
     return news_map
+
+
+def fetch_news_for_ticker(ticker: str, max_items: int = 10,
+                          months_back: int = 2) -> list:
+    """News for one ticker in the results-panel shape, NSE then BSE fallback.
+
+    Tries the ``.NS`` suffix first (Indian primary listing); when that returns
+    no stories it retries ``.BO`` (BSE-only names). Items carry the
+    ``provider`` key the results panel reads (a copy of ``fetch_stock_news``
+    's ``publisher``). Never raises — returns ``[]`` on failure.
+    """
+    if any(ticker.upper().endswith(s) for s in (".NS", ".BO", ".NSE", ".BSE")):
+        candidates = [ticker]
+    else:
+        candidates = [f"{ticker}.NS", f"{ticker}.BO"]
+    for cand in candidates:
+        items = fetch_stock_news(cand, max_items, months_back)
+        if not items:
+            continue
+        for item in items:
+            # The GUI news panel reads ``provider`` (fetch_stock_news emits
+            # ``publisher`` for the HTML report template).
+            item["provider"] = item.pop("publisher", "")
+        return items
+    return []
+
+
+def fetch_news_batch(tickers: list[str], max_items: int = 10,
+                     months_back: int = 2,
+                     max_workers: int = 6) -> dict[str, list]:
+    """Parallel batch version of :func:`fetch_news_for_ticker`.
+
+    Returns a dict mapping each input ticker to its provider-keyed news list
+    (``[]`` when nothing was found or the fetch failed).
+    """
+    return _fetch_news_parallel(
+        tickers, max_items=max_items, months_back=months_back,
+        max_workers=max_workers, fetch_fn=fetch_news_for_ticker,
+    )
 
 
 def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
@@ -152,8 +203,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     Returns:
         Complete HTML string
     """
-    # Sort by total score descending
-    results.sort(key=lambda x: x["total"], reverse=True)
+    # Sort by total score descending (non-mutating)
+    results = sorted(results, key=lambda x: x["total"], reverse=True)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     passed = [r for r in results if r["total"] >= threshold]
@@ -348,15 +399,45 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
     :root {{
-        --bg: #080f0c; --surface: #0f271c; --surface2: #143323; --surface3: #1a3d2a;
-        --border: #1e4a2f; --border-light: #244a32; --text: #dff0e2; --text-dim: #6b9a7a; --text-faint: #4a6b54;
-        --green: #00e67a; --lime: #c8ff00; --orange: #ff9f1c; --red: #ff4d4d;
-        --blue: #3b9eff; --cyan: #22d3c4; --yellow: #ffd23f;
+        /* Aurora (GUI) dark-theme palette — keeps the exported report visually
+           identical to the app: same surfaces, borders and accent colors. */
+        --bg: #0f0f13; --surface: #16161b; --surface2: #1c1c22; --surface3: #24242c;
+        --border: #2b2b34; --border-light: #3a3a46; --text: #e9eaf0; --text-dim: #8e93a8; --text-faint: #5c6178;
+        --green: #34d399; --lime: #a3e635; --orange: #fb923c; --red: #f87171;
+        --blue: #60a5fa; --cyan: #22d3ee; --yellow: #facc15;
+        /* Theme-aware component tints (overridden for the light variant) */
+        --focus-ring: rgba(52,211,153,0.15); --row-hover: rgba(52,211,153,0.06);
+        --row-hl: rgba(52,211,153,0.10); --ticker-hover-bg: rgba(52,211,153,0.12);
+        --ticker-hover-c: #ffffff; --score-glow: 0 0 8px rgba(52,211,153,0.35);
+        --track: rgba(255,255,255,0.06); --row-line: rgba(43,43,52,0.6);
+        --news-line: rgba(43,43,52,0.5);
         --radius: 12px; --radius-sm: 8px;
     }}
+    /* Light variant (button in the header) mirrors the GUI Aurora light theme. */
+    body.light {{
+        --bg: #f0f5f1; --surface: #ffffff; --surface2: #eef5f0; --surface3: #e6efe8;
+        --border: #d1e3d6; --border-light: #e6efe8; --text: #0f2318; --text-dim: #5a7a65; --text-faint: #8aa89a;
+        --green: #059669; --lime: #65a30d; --orange: #d97706; --red: #dc2626;
+        --blue: #0284c7; --cyan: #0e7490; --yellow: #ca8a04;
+        --focus-ring: rgba(5,150,105,0.18); --row-hover: rgba(5,150,105,0.07);
+        --row-hl: rgba(5,150,105,0.11); --ticker-hover-bg: rgba(5,150,105,0.10);
+        --ticker-hover-c: #065f46; --score-glow: none;
+        --track: rgba(15,35,24,0.08); --row-line: rgba(209,227,214,0.9);
+        --news-line: rgba(209,227,214,0.85);
+        background: radial-gradient(1200px 600px at 0% -10%, #dcefe3 0%, var(--bg) 55%), var(--bg);
+    }}
+    .theme-toggle {{
+        margin-left: auto; background: var(--surface); color: var(--text);
+        border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px;
+        font-size: 0.8em; font-weight: 600; cursor: pointer;
+        font-family: 'Inter', sans-serif;
+        transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }}
+    .theme-toggle:hover {{ border-color: var(--green); color: var(--green); }}
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(1200px 600px at 0% -10%, #0a2a1c 0%, var(--bg) 55%), var(--bg); color: var(--text); padding: 24px; line-height: 1.5; min-height: 100vh; }}
-    h1 {{ font-family: 'Inter', sans-serif; color: var(--green); font-size: 1.6em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }}
+    body {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(1200px 600px at 0% -10%, #1b2f4d 0%, var(--bg) 55%), var(--bg); color: var(--text); padding: 24px; line-height: 1.5; min-height: 100vh; }}
+    h1 {{ font-family: 'Inter', sans-serif; font-size: 1.6em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px;
+         background: linear-gradient(90deg, #38bdf8, #a78bfa); -webkit-background-clip: text; background-clip: text; color: transparent; }}
     .subtitle {{ color: var(--text-dim); font-size: 0.9em; margin-bottom: 6px; }}
     .meta {{ color: var(--text-faint); font-size: 0.8em; margin-bottom: 18px; display: flex; gap: 12px; flex-wrap: wrap; }}
     .meta span {{ background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 20px; }}
@@ -372,7 +453,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         background: var(--bg); border: 1px solid var(--border); color: var(--text);
         padding: 8px 14px; border-radius: 8px; font-family: 'Inter', sans-serif; font-size: 0.85em; transition: border-color 0.2s, box-shadow 0.2s;
     }}
-    .filters input:focus, .filters select:focus {{ outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(0,230,122,0.15); }}
+    .filters input:focus, .filters select:focus {{ outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--focus-ring); }}
     .filters input {{ width: 280px; }}
     .table-wrap {{ background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; overflow-x: auto; }}
     table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8em; min-width: 1100px; }}
@@ -381,14 +462,14 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     th:hover {{ color: var(--green); background: var(--surface3); }}
     th.sorted-asc::after {{ content: " ▲"; color: var(--green); }}
     th.sorted-desc::after {{ content: " ▼"; color: var(--green); }}
-    td {{ padding: 9px 8px; border-bottom: 1px solid rgba(30,74,47,0.6); vertical-align: middle; }}
+    td {{ padding: 9px 8px; border-bottom: 1px solid var(--row-line); vertical-align: middle; }}
     tbody tr {{ transition: background 0.15s; }}
-    tbody tr:hover {{ background: rgba(0,230,122,0.06); }}
-    tbody tr.highlight {{ background: rgba(0,230,122,0.1) !important; box-shadow: inset 3px 0 0 var(--green); }}
+    tbody tr:hover {{ background: var(--row-hover); }}
+    tbody tr.highlight {{ background: var(--row-hl) !important; box-shadow: inset 3px 0 0 var(--green); }}
     .ticker {{ color: var(--green); font-weight: 700; cursor: pointer; font-family: 'JetBrains Mono', monospace; }}
-    .ticker:hover {{ color: #fff; text-decoration: none; background: rgba(0,230,122,0.12); padding: 2px 6px; border-radius: 4px; margin: -2px -6px; }}
+    .ticker:hover {{ color: var(--ticker-hover-c); text-decoration: none; background: var(--ticker-hover-bg); padding: 2px 6px; border-radius: 4px; margin: -2px -6px; }}
     .score {{ font-family: 'JetBrains Mono', monospace; font-size: 1.15em; font-weight: 700; }}
-    .score-excellent {{ color: var(--green); text-shadow: 0 0 8px rgba(0,230,122,0.3); }}
+    .score-excellent {{ color: var(--green); text-shadow: var(--score-glow); }}
     .score-good {{ color: var(--lime); }}
     .score-moderate {{ color: var(--orange); }}
     .score-poor {{ color: var(--red); }}
@@ -396,12 +477,12 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .bull {{ color: var(--green); font-weight: 600; }}
     .bear {{ color: var(--red); font-weight: 600; }}
     .bar-cell {{ white-space: nowrap; }}
-    .bar-container {{ display: inline-block; width: 52px; height: 6px; background: rgba(255,255,255,0.06);
+    .bar-container {{ display: inline-block; width: 52px; height: 6px; background: var(--track);
                       border-radius: 99px; vertical-align: middle; margin-right: 6px; overflow: hidden; }}
     .bar {{ height: 100%; border-radius: 99px; background: var(--green); transition: width 0.4s cubic-bezier(0.22,1,0.36,1); }}
     .bar.mom {{ background: var(--cyan); }}
     .bar.rsi {{ background: var(--blue); }}
-    .bar.macd {{ background: #aa88ff; }}
+    .bar.macd {{ background: #a78bfa; }}
     .bar.vol {{ background: var(--orange); }}
     .bar.rs {{ background: var(--lime); }}
     .bar.fund {{ background: #ffe600; }}
@@ -409,18 +490,18 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .trending {{ color: var(--green); font-weight: bold; }}
     .bar-val {{ color: var(--text-dim); font-size: 0.9em; }}
     .badge {{ padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid transparent; }}
-    .badge.excellent {{ background: rgba(0,230,122,0.15); color: var(--green); border-color: rgba(0,230,122,0.25); }}
-    .badge.good {{ background: rgba(200,255,0,0.12); color: var(--lime); border-color: rgba(200,255,0,0.2); }}
-    .badge.moderate {{ background: rgba(255,159,28,0.12); color: var(--orange); border-color: rgba(255,159,28,0.2); }}
-    .badge.poor {{ background: rgba(255,77,77,0.1); color: var(--red); border-color: rgba(255,77,77,0.18); }}
-    .ma-cross {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
-    .ma-bull {{ color: #aaff00; font-weight: bold; font-size: 0.9em; }}
-    .ma-bear {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
-    .poc-above {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
-    .poc-below {{ color: #ff4444; font-weight: bold; font-size: 0.9em; }}
-    .bothma-yes {{ color: #00ff88; font-weight: bold; font-size: 0.9em; }}
-    .bothma-no {{ color: #6a8a6a; font-size: 0.9em; }}
-    .fresh {{ color: #00ff88; }}
+    .badge.excellent {{ background: rgba(52,211,153,0.15); color: var(--green); border-color: rgba(52,211,153,0.25); }}
+    .badge.good {{ background: rgba(163,230,53,0.12); color: var(--lime); border-color: rgba(163,230,53,0.2); }}
+    .badge.moderate {{ background: rgba(251,146,60,0.12); color: var(--orange); border-color: rgba(251,146,60,0.2); }}
+    .badge.poor {{ background: rgba(248,113,113,0.1); color: var(--red); border-color: rgba(248,113,113,0.18); }}
+    .ma-cross {{ color: var(--green); font-weight: bold; font-size: 0.9em; }}
+    .ma-bull {{ color: var(--lime); font-weight: bold; font-size: 0.9em; }}
+    .ma-bear {{ color: var(--red); font-weight: bold; font-size: 0.9em; }}
+    .poc-above {{ color: var(--green); font-weight: bold; font-size: 0.9em; }}
+    .poc-below {{ color: var(--red); font-weight: bold; font-size: 0.9em; }}
+    .bothma-yes {{ color: var(--green); font-weight: bold; font-size: 0.9em; }}
+    .bothma-no {{ color: var(--text-dim); font-size: 0.9em; }}
+    .fresh {{ color: var(--green); }}
     .stale {{ color: var(--text-dim); }}
     .footer {{ margin-top: 20px; color: var(--text-dim); font-size: 0.75em; text-align: center; }}
 
@@ -442,7 +523,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     }}
     .news-item {{
         padding: 6px 0;
-        border-bottom: 1px solid rgba(26,74,42,0.5);
+        border-bottom: 1px solid var(--news-line);
     }}
     .news-item:last-child {{ border-bottom: none; }}
     .news-sentiment {{
@@ -470,6 +551,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     <h1 style="margin:0;">{_html.escape(title)}</h1>
     <div class="subtitle">HMA × EMA Swing System — 10-factor score · Volume Profile · News Sentiment</div>
   </div>
+  <div style="flex:1"></div>
+  <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark theme">☾ Light</button>
 </div>
 <div class="meta"><span>⏱ {now}</span><span>🎯 Threshold {threshold}+</span><span>📦 {len(results)} total</span><span>⚡ Generated locally</span></div>
 
@@ -563,6 +646,23 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 </div>
 
 <script>
+const THEME_KEY = "hmareport-theme";
+
+function applyTheme(light) {{
+    document.body.classList.toggle("light", light);
+    const btn = document.getElementById("themeToggle");
+    if (btn) btn.textContent = light ? "☀ Dark" : "☾ Light";
+}}
+
+function toggleTheme() {{
+    const light = document.body.classList.contains("light");
+    applyTheme(!light);
+    try {{ localStorage.setItem(THEME_KEY, light ? "dark" : "light"); }} catch (e) {{}}
+}}
+
+// Restore the saved preference (survives closing the report).
+try {{ if (localStorage.getItem(THEME_KEY) === "light") applyTheme(true); }} catch (e) {{}}
+
 let sortDir = {{}};
 function sortTable(col) {{
     const table = document.getElementById("stockTable");

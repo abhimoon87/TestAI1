@@ -41,12 +41,15 @@ def _margin_only(left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -
     return ft.Margin(left=left, top=top, right=right, bottom=bottom)
 
 
-# Column definitions for the results grid: (header, width).
+# Column definitions for the results grid: (header, width). The trailing
+# "1M" column draws a mini sparkline of the last ~20 closes (see px_tail on
+# each result row); "1M%" stays the numeric one-month change.
 RESULT_COLS = [
-    ("#", 35), ("Ticker", 100), ("Score", 50), ("Rating", 78), ("ENTRY", 55),
-    ("Price", 80), ("MA", 62), ("T/15", 40), ("M/15", 40), ("R/8", 35),
-    ("V/7", 35), ("Vol/10", 42), ("RS/10", 42), ("F/20", 42),
-    ("1M", 55), ("Dir", 58), ("ADX", 40), ("Chop", 42),
+    ("#", 30), ("Ticker", 92), ("Score", 46), ("Rating", 66), ("ENTRY", 50),
+    ("Price", 72), ("MA", 58), ("T/15", 40), ("M/15", 40), ("R/8", 34),
+    ("V/7", 34), ("Vol/10", 40), ("RS/10", 40), ("F/20", 40),
+    ("1M%", 50), ("Dir", 50), ("ADX", 38), ("Chop", 40),
+    ("1M", 56),
 ]
 
 

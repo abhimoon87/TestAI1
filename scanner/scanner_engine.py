@@ -51,6 +51,11 @@ STALE_MEMBER_MAX_AGE_DAYS = 45
 LARGE_UNIVERSE_THRESHOLD = 500
 ENRICH_TOP_N = 200
 
+# Recent closes carried on each result row for the grid's mini price
+# sparkline (~1 month of daily bars). Kept tiny on purpose: a plain list of
+# floats survives JSON/CSV export and locks, unlike a DataFrame.
+SPARK_BARS = 20
+
 
 def _find_stale_members(batch_data: dict, max_age_days: float | None = None):
     """Universe members whose latest bar is older than ``max_age_days``.
@@ -166,6 +171,17 @@ def _score_ticker(
         scores["ticker"] = ticker
         scores["trend_dir"] = direction
         scores["trend_color"] = direction.lower()
+        # Mini sparkline data — the last ~1 month of closes on the scan's
+        # timeframe. Attached once here; the fast-mode re-score path only
+        # updates existing keys, so the tail survives the top-200 pass.
+        try:
+            if "close" in df.columns:
+                closes = df["close"].dropna()
+                px = [float(x) for x in closes.tail(SPARK_BARS)]
+                if len(px) >= 2:
+                    scores["px_tail"] = px
+        except (TypeError, ValueError):
+            pass
         # Keep enrichment keys for later if not large
         if not is_large:
             for k, v in enriched.items():
@@ -252,12 +268,6 @@ def _enrich_rows_in_place(
     reset_enrichment_cache_counts()
     executor = ThreadPoolExecutor(max_workers=8)
     future_to_row = {executor.submit(_enrich_one, r): r for r in rows}
-    try:
-        # Daemon threads: on cancel we don't join in-flight provider calls.
-        for t in executor._threads:
-            t.daemon = True
-    except Exception:
-        pass
     cancelled = False
     pending = set(future_to_row)
     while pending:
@@ -582,7 +592,7 @@ class ScannerEngine:
             from .social_sentiment import fetch_social_sentiment
             return fetch_social_sentiment(
                 ticker,
-                twitter_api_key=get_api_key("HF_API_KEY", api_config),
+                twitter_api_key=get_api_key("TWITTER_API_KEY", api_config),
             )
 
         def _fetch_indian_market():
@@ -595,7 +605,11 @@ class ScannerEngine:
 
         def _fetch_insider():
             from .insider_data import fetch_insider_data
-            return fetch_insider_data(ticker)
+            return fetch_insider_data(
+                ticker,
+                aletheia_key=get_api_key("ALETHEIA_API_KEY", api_config),
+                congress_key=get_api_key("CONGRESS_API_KEY", api_config),
+            )
 
         # Launch all 5 providers in parallel
         futures = {}
@@ -751,11 +765,6 @@ class ScannerEngine:
                 self._log(f"Parallel scoring {total} stocks with {max_workers} workers...")
                 executor = ThreadPoolExecutor(max_workers=max_workers)
                 future_to_ticker = {executor.submit(_score_one, item): item[0] for item in batch_data.items()}
-                try:
-                    for t in executor._threads:
-                        t.daemon = True
-                except Exception:
-                    pass
                 cancelled_loop = False
                 pending = set(future_to_ticker)
                 done = 0
@@ -834,8 +843,9 @@ class ScannerEngine:
             )
 
         except Exception as e:
-            result.error = str(e)
-            self._log(f"\nERROR: {e!s}")
+            result.error = f"{type(e).__name__}: {e}"
+            self._log(f"\nERROR: {type(e).__name__}: {e}")
+            logger.exception("Scan failed")
 
         # A user stop can land while the batch download winds down without
         # another ticker/chunk to iterate (the generator stops cleanly before
@@ -935,11 +945,6 @@ class ScannerEngine:
                     max_w = min(4, (len(chunk_data) // 25) + 1)
                     ex = ThreadPoolExecutor(max_workers=max_w)
                     futs = {ex.submit(_score_one, item): item[0] for item in chunk_data.items()}
-                    try:
-                        for t in ex._threads:
-                            t.daemon = True
-                    except Exception:
-                        pass
                     cancelled_loop = False
                     pending = set(futs)
                     while pending:
@@ -1024,8 +1029,9 @@ class ScannerEngine:
             )
 
         except Exception as e:
-            result.error = str(e)
-            self._log(f"\nERROR: {e!s}")
+            result.error = f"{type(e).__name__}: {e}"
+            self._log(f"\nERROR: {type(e).__name__}: {e}")
+            logger.exception("Stream scan failed")
 
         # Same wind-down guarantee as scan(): if the user cancelled while the
         # stream was between/inside batches (loop exited via generator stop,

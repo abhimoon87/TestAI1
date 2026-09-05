@@ -65,6 +65,7 @@ __all__ = [
 ]
 
 import math
+import threading
 
 import numpy as np
 import pandas as pd
@@ -114,7 +115,9 @@ def get_ma(ma_type: str, src: pd.Series, length: int,
 # WEEKLY RESAMPLE
 # ══════════════════════════════════════════════════════════════════════════════
 
-_WEEKLY_CACHE: dict[int, pd.DataFrame] = {}
+_WEEKLY_CACHE: dict[int, tuple[pd.DataFrame, pd.DataFrame]] = {}
+_WEEKLY_CACHE_MAX = 2048
+_WEEKLY_CACHE_LOCK = threading.Lock()
 
 
 def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
@@ -125,19 +128,27 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
     independently of the analysis timeframe of the scan. If the data is
     already weekly (or cannot be resampled), it is returned as-is / None.
 
-    The result is cached by DataFrame id so repeated calls on the same
+    The result is cached per caller DataFrame so repeated calls on the same
     object (e.g. Phase-1 and Phase-2 scoring) skip the expensive
-    copy-resample.
+    copy-resample.  The cache key is ``id(df)`` but each entry also holds a
+    strong reference to its owner DataFrame and the hit is verified with an
+    identity check — without that, a garbage-collected frame's recycled id
+    could serve another frame's stale result (e.g. an empty frame returning
+    a cached weekly table).  The cache is bounded; when full it is cleared
+    and recomputed on demand.
     """
-    cached = _WEEKLY_CACHE.get(id(df))
-    if cached is not None:
-        return cached
-
     if df is None or df.empty or "close" not in df.columns:
         return None
-    d = df.copy()
-    if not isinstance(d.index, pd.DatetimeIndex):
+    if not isinstance(df.index, pd.DatetimeIndex):
         return None
+
+    key = id(df)
+    with _WEEKLY_CACHE_LOCK:
+        entry = _WEEKLY_CACHE.get(key)
+    if entry is not None and entry[0] is df:
+        return entry[1]
+
+    d = df.copy()
     if d.index.tz is not None:
         d.index = d.index.tz_convert("Asia/Kolkata").tz_localize(None)
     agg = {}
@@ -151,7 +162,10 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
     resampled = d.resample("W").agg(agg).dropna()
     result = resampled if not resampled.empty else None
     if result is not None:
-        _WEEKLY_CACHE[id(df)] = result
+        with _WEEKLY_CACHE_LOCK:
+            if len(_WEEKLY_CACHE) >= _WEEKLY_CACHE_MAX:
+                _WEEKLY_CACHE.clear()
+            _WEEKLY_CACHE[key] = (df, result)
     return result
 
 
@@ -425,7 +439,8 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     chop_sum = atr1.rolling(chop_len).sum()
     chop_range = high.rolling(chop_len).max() - low.rolling(chop_len).min()
     chop_safe_range = chop_range.replace(0, np.nan)
-    chop_val = 100 * np.log10(chop_sum / chop_safe_range) / math.log10(chop_len)
+    chop_log_len = math.log10(max(chop_len, 2))
+    chop_val = 100 * np.log10(chop_sum / chop_safe_range) / chop_log_len
     is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
 
     # Slope filter

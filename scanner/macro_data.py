@@ -6,29 +6,17 @@ Fetches FRED + EconPulse data for market regime detection.
 import hashlib
 import logging
 import os
-import time
 from dataclasses import dataclass, field
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_MACRO_CACHE: dict[str, tuple[dict, float]] = {}
-_MACRO_CACHE_TTL = 6 * 3600  # 6 hours (macro data changes slowly)
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _MACRO_CACHE:
-        result, ts = _MACRO_CACHE[key]
-        if time.time() - ts < _MACRO_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _MACRO_CACHE[key] = (value, time.time())
+_MACRO_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="macro_data")
 
 
 # ── FRED Provider ──────────────────────────────────────────────────────────
@@ -65,7 +53,7 @@ def fetch_fred_data(api_key: str | None = None) -> FredData | None:
         return None
 
     cache_k = hashlib.md5(b"fred:indicators", usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _MACRO_CACHE.get(cache_k)
     if cached:
         return FredData(**cached, cached=True)
 
@@ -109,7 +97,7 @@ def fetch_fred_data(api_key: str | None = None) -> FredData | None:
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         fred = FredData(**result)
-        _cache_set(cache_k, result)
+        _MACRO_CACHE.set(cache_k, result)
         return fred
 
     except (requests.RequestException, KeyError, ValueError) as e:
@@ -149,7 +137,7 @@ def fetch_econpulse_data(api_key: str | None = None) -> EconPulseData | None:
         return None
 
     cache_k = hashlib.md5(b"econpulse:indicators", usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _MACRO_CACHE.get(cache_k)
     if cached:
         return EconPulseData(**cached, cached=True)
 
@@ -171,7 +159,7 @@ def fetch_econpulse_data(api_key: str | None = None) -> EconPulseData | None:
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         ep = EconPulseData(**result)
-        _cache_set(cache_k, result)
+        _MACRO_CACHE.set(cache_k, result)
         return ep
 
     except (requests.RequestException, KeyError, ValueError) as e:
@@ -210,7 +198,7 @@ def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
         return None
 
     cache_k = hashlib.md5(b"econdb:global", usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _MACRO_CACHE.get(cache_k)
     if cached:
         return EcondbData(**cached, cached=True)
 
@@ -245,7 +233,7 @@ def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         edb = EcondbData(**result)
-        _cache_set(cache_k, result)
+        _MACRO_CACHE.set(cache_k, result)
         return edb
 
     except (requests.RequestException, KeyError, ValueError) as e:
@@ -278,7 +266,7 @@ def fetch_yahoo_macro_data() -> YahooMacroData | None:
         YahooMacroData or None
     """
     cache_k = hashlib.md5(b"yahoo:macro", usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _MACRO_CACHE.get(cache_k)
     if cached:
         return YahooMacroData(**cached, cached=True)
 
@@ -313,7 +301,7 @@ def fetch_yahoo_macro_data() -> YahooMacroData | None:
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         ym = YahooMacroData(**result)
-        _cache_set(cache_k, result)
+        _MACRO_CACHE.set(cache_k, result)
         return ym
 
     except Exception as e:

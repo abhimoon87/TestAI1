@@ -4,14 +4,14 @@ Combines MarketAux (ticker-tagged sentiment) + NewsAPI/GNews (headlines)
 for news-based sentiment scoring.
 """
 
-import hashlib
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass, field
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -43,24 +43,11 @@ NEGATIVE_WORDS = {
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_SENTIMENT_CACHE: dict[str, tuple[dict, float]] = {}
-_SENTIMENT_CACHE_TTL = 4 * 3600  # 4 hours
+_SENTIMENT_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="market_sentiment")
 
 
 def _cache_key(ticker: str, source: str) -> str:
-    return hashlib.md5(f"{ticker}:{source}".encode(), usedforsecurity=False).hexdigest()
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _SENTIMENT_CACHE:
-        result, ts = _SENTIMENT_CACHE[key]
-        if time.time() - ts < _SENTIMENT_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _SENTIMENT_CACHE[key] = (value, time.time())
+    return _SENTIMENT_CACHE.make_key(ticker, source)
 
 
 # ── Simple Keyword Sentiment ───────────────────────────────────────────────
@@ -113,7 +100,7 @@ def fetch_marketaux_sentiment(
 
     # Check cache
     cache_k = _cache_key(ticker, "marketaux")
-    cached = _cache_get(cache_k)
+    cached = _SENTIMENT_CACHE.get(cache_k)
     if cached:
         return MarketAuxSentiment(**cached, cached=True)
 
@@ -180,7 +167,7 @@ def fetch_marketaux_sentiment(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _SENTIMENT_CACHE.set(cache_k, {
             "ticker": ticker,
             "sentiment_score": result.sentiment_score,
             "article_count": result.article_count,
@@ -228,7 +215,7 @@ def fetch_newsapi_sentiment(
         return None
 
     cache_k = _cache_key(ticker, "newsapi")
-    cached = _cache_get(cache_k)
+    cached = _SENTIMENT_CACHE.get(cache_k)
     if cached:
         return NewsAPISentiment(**cached, cached=True)
 
@@ -278,7 +265,7 @@ def fetch_newsapi_sentiment(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _SENTIMENT_CACHE.set(cache_k, {
             "ticker": ticker,
             "sentiment_score": result.sentiment_score,
             "article_count": result.article_count,
@@ -325,7 +312,7 @@ def fetch_gnews_sentiment(
         return None
 
     cache_k = _cache_key(ticker, "gnews")
-    cached = _cache_get(cache_k)
+    cached = _SENTIMENT_CACHE.get(cache_k)
     if cached:
         return GNewsSentiment(**cached, cached=True)
 
@@ -370,7 +357,7 @@ def fetch_gnews_sentiment(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _SENTIMENT_CACHE.set(cache_k, {
             "ticker": ticker,
             "sentiment_score": result.sentiment_score,
             "article_count": result.article_count,
@@ -406,7 +393,7 @@ def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
         YFinanceNewsSentiment or None
     """
     cache_k = _cache_key(ticker, "yfinance_news")
-    cached = _cache_get(cache_k)
+    cached = _SENTIMENT_CACHE.get(cache_k)
     if cached:
         return YFinanceNewsSentiment(**cached, cached=True)
 
@@ -447,7 +434,7 @@ def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _SENTIMENT_CACHE.set(cache_k, {
             "ticker": ticker,
             "sentiment_score": result.sentiment_score,
             "article_count": result.article_count,

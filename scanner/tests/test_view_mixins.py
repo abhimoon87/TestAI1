@@ -42,6 +42,7 @@ class _FakePage:
 
 def _make_app():
     """Un-initialized ScannerApp with the state view builders read."""
+    import threading
     app = ScannerApp.__new__(ScannerApp)
     app.page = _FakePage()
     app.current_theme = "dark"
@@ -49,6 +50,8 @@ def _make_app():
     app.settings = dict(app_mod.DEFAULT_SETTINGS)
     app.active_view = "dashboard"
     app.scanning = False
+    app._scan_lock = threading.Lock()
+    app._scan_epoch = 0
     app.logged = []
     app._log = app.logged.append
     return app
@@ -531,7 +534,7 @@ class TestHeroWarningRendering:
         assert ns.hero_sub.color == ns.theme_colors["orange"]
         assert ns.hero_sub.size == 11
 
-    def test_clean_scan_uses_dim_style(self):
+    def test_clean_scan_uses_hero_style(self):
         ns = self._hero_ns([])
 
         ResultsViewMixin._update_hero_status(
@@ -539,8 +542,116 @@ class TestHeroWarningRendering:
         )
 
         assert "⚠" not in ns.hero_sub.value
-        assert ns.hero_sub.color == ns.theme_colors["text_dim"]
+        # The status line sits on the gradient hero, so it uses the tinted
+        # hero_sub token (not the flat text_dim used elsewhere).
+        assert ns.hero_sub.color == ns.theme_colors["hero_sub"]
         assert ns.hero_sub.size == 12
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sentiment badge + table-view persistence
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestSentimentBadge:
+    def test_badge_shown_next_to_ticker_when_articles_exist(self):
+        """Rows with enrichment data get an arrow+count pill; ticker stays first."""
+        app = _make_app()
+        c = app.theme_colors
+        row = app._make_data_row(
+            _row(ticker="TCS", _article_count=4, _sentiment_score=0.6),
+            1, c, c["card"], 50,
+        )
+        content = row.content.controls[1].content
+        assert isinstance(content, ft.Row)
+        assert content.controls[0].value == "TCS"  # ticker text is first
+        badge = content.controls[1]
+        assert badge.content.controls[1].value == "4"
+        assert badge.content.controls[0].value == "↑"  # positive tone
+        assert "positive" in badge.tooltip
+
+    def test_no_badge_without_article_count(self):
+        """Keyless rows keep a plain ticker Text (existing layout preserved)."""
+        app = _make_app()
+        c = app.theme_colors
+        row = app._make_data_row(_row(ticker="TCS"), 1, c, c["card"], 50)
+        assert _cell(row, 1).value == "TCS"
+
+    def test_badge_negative_tone(self):
+        """Negative sentiment scores render a down arrow + red count."""
+        app = _make_app()
+        c = app.theme_colors
+        row = app._make_data_row(
+            _row(ticker="XYZ", _article_count=2, _sentiment_score=-0.8),
+            1, c, c["card"], 50,
+        )
+        content = row.content.controls[1].content
+        badge = content.controls[1]
+        assert badge.content.controls[0].value == "↓"
+        assert "negative" in badge.tooltip
+
+    def test_news_scanner_finds_ticker_behind_badge(self):
+        """_row_ticker_text resolves the ticker even when a badge Row wraps it."""
+        app = _make_app()
+        c = app.theme_colors
+        row = app._make_data_row(
+            _row(ticker="HDFC", _article_count=3, _sentiment_score=0.0),
+            1, c, c["card"], 50,
+        )
+        ticker_text = app._row_ticker_text(row.content.controls[1])
+        assert ticker_text.value == "HDFC"
+        assert app._row_ticker_text(row.content.controls[0]) is None  # rank cell
+
+
+class TestUiPrefsPersistence:
+    def _app_with_pref_controls(self):
+        app = _make_app()
+        app.page_size_options = ["50", "100", "200", "500"]
+        app.rating_filter_dd = type("DD", (), {"value": "All"})()
+        app.page_size_dd = type("DD", (), {"value": "100"})()
+        return app
+
+    def test_save_ui_prefs_writes_sort_size_and_rating(self, monkeypatch):
+        """Sort / page size / rating filter persist to settings.json."""
+        app = self._app_with_pref_controls()
+        app.sort_col = 18      # the 1M sparkline column
+        app.sort_reverse = True
+        app.page_size = 200
+        app.rating_filter_dd.value = "Good"
+        written = {}
+        monkeypatch.setattr(app_mod, "save_settings", lambda s: written.update(s))
+
+        app._save_ui_prefs()
+
+        assert written["ui_sort_col"] == 18
+        assert written["ui_sort_reverse"] is True
+        assert written["ui_page_size"] == 200
+        assert written["ui_rating_filter"] == "GOOD"
+
+    def test_load_ui_prefs_restores_saved_view(self):
+        """After a restart the saved sort/size/filter are re-applied."""
+        app = self._app_with_pref_controls()
+        app.settings = {**app_mod.DEFAULT_SETTINGS,
+                        "ui_sort_col": 18, "ui_sort_reverse": True,
+                        "ui_page_size": 200, "ui_rating_filter": "GOOD"}
+
+        app._load_ui_prefs()
+
+        assert app.sort_col == 18
+        assert app.sort_reverse is True
+        assert app.page_size == 200
+        assert app.page_size_dd.value == "200"
+        assert app.rating_filter_dd.value == "Good"
+
+    def test_load_ui_prefs_ignores_out_of_range_sort_col(self):
+        """A stale sort column (UI changed between versions) is not applied."""
+        app = self._app_with_pref_controls()
+        app.sort_col = None  # normally set by ScannerApp.__init__
+        app.settings = {**app_mod.DEFAULT_SETTINGS, "ui_sort_col": 999}
+
+        app._load_ui_prefs()
+
+        assert app.sort_col is None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -673,3 +784,277 @@ class TestErrorPaths:
         app._clear_enrichment_cache()
 
         assert any("Could not clear enrichment cache: enrich boom" in m for m in app.logged)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Ticker click → inline news panel (loading placeholder / replace / collapse)
+# ══════════════════════════════════════════════════════════════════════════════
+# Regression guard: the "Loading news & sentiment…" placeholder used to carry
+# the same ``_news_ticker`` marker as a real panel, so when a fetch finished
+# ``_show_news`` mistook it for an already-open panel and collapsed it — the
+# news (or the "No recent news found." message) never appeared.  Placeholders
+# are flagged ``_news_loading`` and must be replaced, never collapsed.
+
+
+class TestTickerNewsToggle:
+    class _NoopThread:
+        """Captures the fetch worker without running it (no network in tests)."""
+
+        def __init__(self, *a, **k):
+            self.target = k.get("target")
+
+        def start(self):
+            pass
+
+    @staticmethod
+    def _app_with_row(monkeypatch):
+        import scanner.views_results as vr_mod
+        monkeypatch.setattr(vr_mod.threading, "Thread", TestTickerNewsToggle._NoopThread)
+        app = _make_app()
+        app.table_column = ft.Column(spacing=0)
+        c = app.theme_colors
+        row = app._make_data_row(_row(ticker="TCS"), 1, c, c["card"], 50)
+        app.table_column.controls.append(row)
+        return app
+
+    @staticmethod
+    def _frames(app):
+        return [x for x in app.table_column.controls if hasattr(x, "_news_ticker")]
+
+    @staticmethod
+    def _body_text(frame):
+        """Concatenate the text values inside a news/loading frame."""
+        out = []
+        stack = [frame]
+        seen = set()
+        while stack:
+            node = stack.pop()
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            if isinstance(node, ft.Text):
+                out.append(node.value or "")
+            children = getattr(node, "content", None)
+            if isinstance(children, (list, tuple)):
+                stack.extend(children)
+            elif children is not None:
+                stack.append(children)
+            stack.extend(getattr(node, "controls", None) or [])
+        return " ".join(out)
+
+    def test_click_inserts_loading_placeholder(self, monkeypatch):
+        """First click shows the "fetching…" placeholder under the row."""
+        app = self._app_with_row(monkeypatch)
+
+        app._toggle_stock_news("TCS")
+
+        frames = self._frames(app)
+        assert len(frames) == 1
+        assert getattr(frames[0], "_news_loading", False) is True
+        assert "Loading news & sentiment" in self._body_text(frames[0])
+
+    def test_duplicate_clicks_while_loading_are_ignored(self, monkeypatch):
+        """Clicking again while a fetch is in flight adds no second placeholder."""
+        app = self._app_with_row(monkeypatch)
+
+        app._toggle_stock_news("TCS")
+        app._toggle_stock_news("TCS")
+
+        assert len(self._frames(app)) == 1
+
+    def test_finished_fetch_replaces_loading_with_news_panel(self, monkeypatch):
+        """The completed fetch swaps the placeholder for the real news panel
+        (previously it collapsed the placeholder and showed nothing)."""
+        app = self._app_with_row(monkeypatch)
+        app._toggle_stock_news("TCS")
+
+        app._show_news("TCS", [{"title": "TCS beats estimates", "summary": "",
+                                 "date": "2026-08-01", "provider": "Reuters",
+                                 "sentiment": "Good"}])
+
+        frames = self._frames(app)
+        assert len(frames) == 1
+        assert getattr(frames[0], "_news_loading", False) is False
+        body = self._body_text(frames[0])
+        assert "TCS beats estimates" in body
+        assert "1 Good" in body and "0 Bad" in body
+        assert "Loading news" not in body
+
+    def test_empty_fetch_shows_no_news_message(self, monkeypatch):
+        """A fetch that returns nothing shows the empty message (not nothing)."""
+        app = self._app_with_row(monkeypatch)
+        app._toggle_stock_news("TCS")
+
+        app._show_news("TCS", [])
+
+        frames = self._frames(app)
+        assert len(frames) == 1
+        assert "No recent news found" in self._body_text(frames[0])
+        assert getattr(frames[0], "_news_loading", False) is False
+
+    def test_second_click_on_open_panel_collapses_it(self, monkeypatch):
+        """Clicking a ticker whose panel is open closes it again (no re-fetch)."""
+        app = self._app_with_row(monkeypatch)
+        app._show_news("TCS", [{"title": "T", "summary": "", "date": "",
+                                 "provider": "", "sentiment": "Neutral"}])
+        assert len(self._frames(app)) == 1
+
+        app._toggle_stock_news("TCS")
+
+        assert self._frames(app) == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scan-time news prefetch (top-50 attach) + instant click-to-read rows
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestNewsPrefetch:
+    """app._prefetch_row_news attaches prefetched stories to the top rows."""
+
+    @staticmethod
+    def _app(rows):
+        import threading
+        app = _make_app()
+        app._results_lock = threading.Lock()
+        app.all_results = [dict(r) for r in rows]
+        app.results = list(app.all_results)
+        app._scan_epoch = 1
+        app._scan_cancelled = False
+        app._deferred = []
+        app._safe_update = app._deferred.append  # record UI ops (never run them)
+        return app
+
+    @staticmethod
+    def _sample_items(n=2):
+        return [{"title": f"Story {i}", "summary": "", "date": "2026-08-01",
+                 "provider": "Reuters", "sentiment": "Good"} for i in range(n)]
+
+    def test_attaches_news_and_badge_fields_to_top_rows(self, monkeypatch):
+        rows = [_row(ticker="A", total=90), _row(ticker="B", total=80),
+                _row(ticker="C", total=20)]
+        app = self._app(rows)
+        def _mock_fetch(tickers, **_k):
+            return {t: ([] if t == "C" else self._sample_items())
+                    for t in tickers}
+        monkeypatch.setattr(app_mod, "fetch_news_batch", _mock_fetch)
+
+        app._prefetch_row_news()
+
+        by_t = {r["ticker"]: r for r in app.all_results}
+        assert len(by_t["A"]["_news_items"]) == 2
+        assert by_t["A"]["_article_count"] == 2
+        assert by_t["A"]["_sentiment_score"] == 1.0  # all Good
+        assert len(by_t["B"]["_news_items"]) == 2
+        assert by_t["C"]["_news_items"] == []  # attached even when empty
+        assert "_article_count" not in by_t["C"]
+        # The flush that repaints badges was scheduled on the UI thread.
+        assert any(fn == app._flush_news_badges for fn in app._deferred)
+        assert any("News prefetched for 3/3 top stocks" in m for m in app.logged)
+
+    def test_keeps_existing_enrichment_counts(self, monkeypatch):
+        row = _row(ticker="A", total=90, _article_count=7, _sentiment_score=0.5)
+        app = self._app([row])
+        monkeypatch.setattr(app_mod, "fetch_news_batch",
+                            lambda tickers, **_k: {"A": self._sample_items()})
+
+        app._prefetch_row_news()
+
+        got = app.all_results[0]
+        assert got["_article_count"] == 7      # provider enrichment wins
+        assert got["_sentiment_score"] == 0.5
+        assert len(got["_news_items"]) == 2    # stories still attached
+
+    def test_skips_rows_that_already_have_stories(self, monkeypatch):
+        row = _row(ticker="A", total=90)
+        row["_news_items"] = []
+        app = self._app([row])
+        called = []
+        monkeypatch.setattr(app_mod, "fetch_news_batch",
+                            lambda *a, **k: called.append(1) or {})
+
+        app._prefetch_row_news()
+
+        assert called == []  # nothing left to prefetch — no fetch started
+
+    def test_attach_dropped_when_newer_scan_started(self, monkeypatch):
+        app = self._app([_row(ticker="A", total=90)])
+
+        def _bump_epoch(tickers, **_k):
+            app._scan_epoch = 2  # a new scan took over while we were fetching
+            return {"A": self._sample_items()}
+        monkeypatch.setattr(app_mod, "fetch_news_batch", _bump_epoch)
+
+        app._prefetch_row_news()
+
+        assert "_news_items" not in app.all_results[0]
+
+    def test_attach_skipped_when_scan_cancelled(self, monkeypatch):
+        app = self._app([_row(ticker="A", total=90)])
+        app._scan_cancelled = True
+        monkeypatch.setattr(app_mod, "fetch_news_batch",
+                            lambda tickers, **_k: {"A": self._sample_items()})
+
+        app._prefetch_row_news()
+
+        assert "_news_items" not in app.all_results[0]
+
+
+class TestPrefetchedRowClick:
+    """Rows carrying prefetched _news_items open instantly, no fetch thread."""
+
+    class _BoomThread:
+        def __init__(self, *a, **k):
+            raise AssertionError("prefetched rows must not start a fetch thread")
+
+    @staticmethod
+    def _app_with_prefetch(monkeypatch, items, **stats):
+        app = _make_app()
+        row = _row(ticker="TCS", **stats)
+        row["_news_items"] = items
+        app.all_results = [row]
+        app.table_column = ft.Column(spacing=0)
+        c = app.theme_colors
+        app.table_column.controls.append(
+            app._make_data_row(dict(row), 1, c, c["card"], 50)
+        )
+        import scanner.views_results as vr_mod
+        monkeypatch.setattr(vr_mod.threading, "Thread",
+                            TestPrefetchedRowClick._BoomThread)
+        return app
+
+    def _open_panel(self, monkeypatch, items, **stats):
+        app = self._app_with_prefetch(monkeypatch, items, **stats)
+        app._toggle_stock_news("TCS")
+        frames = [x for x in app.table_column.controls
+                  if hasattr(x, "_news_ticker")]
+        assert len(frames) == 1
+        return frames[0]
+
+    def test_stories_render_instantly(self, monkeypatch):
+        frame = self._open_panel(
+            monkeypatch,
+            [{"title": "TCS profit beat", "summary": "", "date": "2026-08-01",
+              "provider": "Reuters", "sentiment": "Good"}],
+        )
+        body = TestTickerNewsToggle._body_text(frame)
+        assert "TCS profit beat" in body
+        assert "1 Good" in body and "0 Bad" in body
+        assert "Loading news" not in body
+
+    def test_stats_chips_in_panel_header(self, monkeypatch):
+        frame = self._open_panel(
+            monkeypatch,
+            [{"title": "T", "summary": "", "date": "2026-08-01",
+              "provider": "", "sentiment": "Neutral"}],
+            close=2450.0, rsi=62.0, pc1m=4.2,
+        )
+        body = TestTickerNewsToggle._body_text(frame)
+        assert "2,450" in body
+        assert "RSI 62" in body
+        assert "1M +4.2%" in body
+
+    def test_no_stories_shows_empty_message_instantly(self, monkeypatch):
+        frame = self._open_panel(monkeypatch, [])
+        assert "No recent news found" in TestTickerNewsToggle._body_text(frame)
+        assert getattr(frame, "_news_loading", False) is False

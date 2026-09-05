@@ -133,7 +133,7 @@ FNO_STOCKS = [
 ]
 
 # ── CASH MARKET (High liquidity NSE stocks) ────────────────────────────────
-CASH_MARKET = list(set(
+CASH_MARKET = sorted(set(
     NIFTY_50 + BANK_NIFTY + NIFTY_NEXT_50 + FNO_STOCKS
 ))
 

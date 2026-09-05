@@ -7,10 +7,11 @@ import hashlib
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass, field
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +33,7 @@ SOCIAL_NEGATIVE = {
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_SOCIAL_CACHE: dict[str, tuple[dict, float]] = {}
-_SOCIAL_CACHE_TTL = 4 * 3600  # 4 hours
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _SOCIAL_CACHE:
-        result, ts = _SOCIAL_CACHE[key]
-        if time.time() - ts < _SOCIAL_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _SOCIAL_CACHE[key] = (value, time.time())
+_SOCIAL_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="social_sentiment")
 
 
 def _social_sentiment(text: str) -> float:
@@ -105,7 +93,7 @@ def fetch_reddit_sentiment(
     symbol = ticker.replace(".NS", "").replace(".BO", "")
 
     cache_k = hashlib.md5(f"reddit:{symbol}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _SOCIAL_CACHE.get(cache_k)
     if cached:
         return RedditSentiment(**cached, cached=True)
 
@@ -197,7 +185,7 @@ def fetch_reddit_sentiment(
         cached=False,
     )
 
-    _cache_set(cache_k, {
+    _SOCIAL_CACHE.set(cache_k, {
         "ticker": ticker,
         "mention_count": result.mention_count,
         "sentiment_score": result.sentiment_score,
@@ -249,7 +237,7 @@ def fetch_twitter_sentiment(
     symbol = ticker.replace(".NS", "").replace(".BO", "")
 
     cache_k = hashlib.md5(f"twitter:{symbol}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _SOCIAL_CACHE.get(cache_k)
     if cached:
         return TwitterSentiment(**cached, cached=True)
 
@@ -311,7 +299,7 @@ def fetch_twitter_sentiment(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _SOCIAL_CACHE.set(cache_k, {
             "ticker": ticker,
             "mention_count": result.mention_count,
             "sentiment_score": result.sentiment_score,

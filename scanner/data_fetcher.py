@@ -225,8 +225,8 @@ def _negative_cache_load() -> dict[str, float]:
                     if isinstance(ts, (int, float))
                     and now - ts < _negative_cache_ttl_hours * 3600
                 }
-            except Exception:
-                logger.debug("Negative cache load failed (missing/corrupt file)", exc_info=True)
+            except (OSError, ValueError, KeyError) as e:
+                logger.debug("Negative cache load failed: %s", e)
             _negative_cache = cache
         return _negative_cache
 

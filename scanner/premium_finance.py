@@ -15,29 +15,17 @@ Providers:
 
 import hashlib
 import logging
-import time
 from dataclasses import dataclass, field
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_PREMIUM_CACHE: dict[str, tuple[dict, float]] = {}
-_PREMIUM_CACHE_TTL = 6 * 3600  # 6 hours
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _PREMIUM_CACHE:
-        result, ts = _PREMIUM_CACHE[key]
-        if time.time() - ts < _PREMIUM_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _PREMIUM_CACHE[key] = (value, time.time())
+_PREMIUM_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="premium_finance")
 
 
 # ── Marketstack — Real-Time Market Data ─────────────────────────────────────
@@ -75,7 +63,7 @@ def fetch_marketstack_data(
         return None
 
     cache_k = hashlib.md5(f"marketstack:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return MarketstackData(**cached, cached=True)
 
@@ -107,7 +95,7 @@ def fetch_marketstack_data(
             timestamp=entry.get("date", ""),
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "current_price": result.current_price,
             "open_price": result.open_price,
@@ -159,7 +147,7 @@ def fetch_eod_data(
         return None
 
     cache_k = hashlib.md5(f"eod:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return EODData(**cached, cached=True)
 
@@ -184,7 +172,7 @@ def fetch_eod_data(
             current_price=last.get("adjusted_close", last.get("close", 0)),
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "current_price": result.current_price,
             "pe_ratio": result.pe_ratio,
@@ -239,7 +227,7 @@ def fetch_fmp_data(
         return None
 
     cache_k = hashlib.md5(f"fmp:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return FMPData(**cached, cached=True)
 
@@ -264,7 +252,7 @@ def fetch_fmp_data(
             market_cap=profile.get("mktCap"),
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "pe_ratio": result.pe_ratio,
             "pb_ratio": result.pb_ratio,
@@ -316,7 +304,7 @@ def fetch_iex_data(
         return None
 
     cache_k = hashlib.md5(f"iex:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return IEXData(**cached, cached=True)
 
@@ -341,7 +329,7 @@ def fetch_iex_data(
             week52_low=data.get("week52Low"),
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "current_price": result.current_price,
             "previous_close": result.previous_close,
@@ -396,7 +384,7 @@ def fetch_polygon_data(
         return None
 
     cache_k = hashlib.md5(f"polygon:{ticker}:{days}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return [PolygonData(**item) for item in cached.get("bars", [])]
 
@@ -426,7 +414,7 @@ def fetch_polygon_data(
             ))
 
         if results:
-            _cache_set(cache_k, {"bars": [
+            _PREMIUM_CACHE.set(cache_k, {"bars": [
                 {"ticker": r.ticker, "open": r.open, "high": r.high,
                  "low": r.low, "close": r.close, "volume": r.volume,
                  "timestamp": r.timestamp}
@@ -470,7 +458,7 @@ def fetch_stockdata_news(
         return None
 
     cache_k = hashlib.md5(f"stockdata:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return StockDataNews(**cached, cached=True)
 
@@ -497,7 +485,7 @@ def fetch_stockdata_news(
             top_headlines=headlines[:5],
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "sentiment_score": result.sentiment_score,
             "article_count": result.article_count,
@@ -541,7 +529,7 @@ def fetch_styvio_data(
         return None
 
     cache_k = hashlib.md5(f"styvio:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return StyvioData(**cached, cached=True)
 
@@ -560,7 +548,7 @@ def fetch_styvio_data(
             confidence=data.get("confidence", 0.5),
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "sentiment_score": result.sentiment_score,
             "sentiment_label": result.sentiment_label,
@@ -605,7 +593,7 @@ def fetch_shariah_data(
         return None
 
     cache_k = hashlib.md5(f"shariah:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return ShariahData(**cached, cached=True)
 
@@ -625,7 +613,7 @@ def fetch_shariah_data(
             zakat_amount=data.get("zakat_amount"),
         )
 
-        _cache_set(cache_k, {
+        _PREMIUM_CACHE.set(cache_k, {
             "ticker": ticker,
             "is_shariah_compliant": result.is_shariah_compliant,
             "screening_method": result.screening_method,

@@ -130,10 +130,6 @@ def generate_html_report(engine: BacktestEngine, metrics: dict,
         print("  No trades to report in HTML.")
         return
 
-    # --- Equity curve data ---
-    [d.strftime("%Y-%m-%d") for d, _ in engine.equity_curve]
-    [round(v, 0) for _, v in engine.equity_curve]
-
     # --- Build stock data dict for trade charts ---
     stock_data_for_charts = {}
     for stock in engine.stocks:

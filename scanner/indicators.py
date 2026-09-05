@@ -157,8 +157,9 @@ def stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
     """Stochastic %K."""
     lowest = low.rolling(k_length).min()
     highest = high.rolling(k_length).max()
-    k = 100 * (close - lowest) / (highest - lowest)
-    return k.rolling(d_length).mean()
+    denom = highest - lowest
+    k = np.where(denom != 0, 100 * (close - lowest) / denom, 50.0)
+    return pd.Series(k, index=close.index).rolling(d_length).mean()
 
 
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
@@ -197,8 +198,12 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> 
     plus_di = 100 * pd.Series(plus_dm, index=high.index).ewm(alpha=1 / length, min_periods=length).mean() / atr_val
     minus_di = 100 * pd.Series(minus_dm, index=high.index).ewm(alpha=1 / length, min_periods=length).mean() / atr_val
 
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
-    return dx.ewm(alpha=1 / length, min_periods=length).mean()
+    dx = np.where(
+        (plus_di + minus_di) != 0,
+        100 * (plus_di - minus_di).abs() / (plus_di + minus_di),
+        0.0
+    )
+    return pd.Series(dx, index=high.index).ewm(alpha=1 / length, min_periods=length).mean()
 
 
 # ── Derived Metrics ─────────────────────────────────────────────────────────

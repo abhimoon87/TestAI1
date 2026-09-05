@@ -22,8 +22,14 @@ from .ui_kit import (
     _card_shadow,
     _glass_bg,
     _glass_border,
+    _margin_only,
     _padding_only,
 )
+
+# Scoreboard column widths shared by the header and every metric row so the
+# numbers stay aligned; colors carry the meaning (green/red returns, red
+# drawdowns) instead of monospace alignment gymnastics.
+_WF_COLS = {"run": 172, "trades": 54, "ret": 96, "win": 62, "pf": 62, "dd": 88}
 
 # Scanner keys mirrored into the backtest engine so the simulation validates
 # the settings the user is about to save (engine defaults cover the rest).
@@ -90,16 +96,111 @@ class BacktestViewMixin:
             border_radius=14, shadow=_card_shadow(), padding=14,
         )
 
-    def _wf_metric_line(self, label, m):
-        if not m:
-            return ft.Text(f"{label:<16} no trades", size=11, font_family="monospace",
-                           color=self.theme_colors["text_dim"], selectable=True)
+    # -- walk-forward results scoreboard --------------------------------
+
+    def _wf_cell(self, text, width, color, align=ft.TextAlign.LEFT, bold=False, size=11):
         return ft.Text(
-            f"{label:<16} {m['total_trades']:>3} trades   "
-            f"{m['total_return_pct']:+7.2f}%   WR {m['win_rate']:5.1f}%   "
-            f"PF {m['profit_factor']:5.2f}   DD {m['max_drawdown_pct']:4.1f}%",
-            size=11, font_family="monospace", color=self.theme_colors["text"], selectable=True,
+            text, width=width, size=size, color=color,
+            weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
+            text_align=align, selectable=True,
         )
+
+    def _wf_chip(self, text, color):
+        return ft.Container(
+            content=ft.Text(text, size=10, weight=ft.FontWeight.BOLD, color=color),
+            bgcolor=_glass_bg(), border=_glass_border(), border_radius=8,
+            padding=_padding_only(left=9, right=9, top=3, bottom=3),
+        )
+
+    def _wf_metric_row(self, label, m, c, emphasize=False):
+        """One scoreboard row; dim dashes when a pass produced no trades."""
+        w = _WF_COLS
+        if not m:
+            cells = [
+                self._wf_cell(label, w["run"], c["text"], bold=emphasize),
+                self._wf_cell("no trades", w["trades"] + w["ret"] + w["win"] + w["pf"] + w["dd"],
+                              c["text_dim"]),
+            ]
+        else:
+            ret = m["total_return_pct"]
+            dd = m["max_drawdown_pct"]
+            cells = [
+                self._wf_cell(label, w["run"], c["green"] if emphasize else c["text"],
+                              bold=emphasize),
+                self._wf_cell(f"{m['total_trades']}", w["trades"], c["text"],
+                              ft.TextAlign.RIGHT),
+                self._wf_cell(f"{ret:+.2f}%", w["ret"],
+                              c["green"] if ret >= 0 else c["red"],
+                              ft.TextAlign.RIGHT, bold=True),
+                self._wf_cell(f"{m['win_rate']:.1f}%", w["win"], c["text"],
+                              ft.TextAlign.RIGHT),
+                self._wf_cell(f"{m['profit_factor']:.2f}", w["pf"],
+                              c["lime"] if m["profit_factor"] >= 1 else c["text"],
+                              ft.TextAlign.RIGHT),
+                self._wf_cell(f"{dd:.1f}%", w["dd"],
+                              c["red"] if dd < 0 else c["text_dim"],
+                              ft.TextAlign.RIGHT),
+            ]
+        row = ft.Row(cells, spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        if emphasize:
+            return ft.Container(
+                content=row,
+                bgcolor=ft.Colors.with_opacity(0.14, c["green"]),
+                border_radius=8,
+                padding=_padding_only(left=4, right=4, top=2, bottom=2),
+                margin=_margin_only(top=2, bottom=2),
+            )
+        return row
+
+    def _wf_score_grid(self, res):
+        """Visual scoreboard rows for a completed walk-forward result dict."""
+        c = self.theme_colors
+        w = _WF_COLS
+        p = res.get("params", {})
+        chips = [
+            self._wf_chip(f"Split {res.get('split_date')}", c["cyan"]),
+            self._wf_chip(f"Risk S{p.get('stop', 0):g} / T{p.get('target', 0):g}", c["pink"]),
+            self._wf_chip(f"{res.get('n_stocks', 0)} stocks", c["lime"]),
+        ]
+        header = ft.Row([
+            self._wf_cell("RUN", w["run"], c["text_faint"], bold=True, size=9),
+            self._wf_cell("TRADES", w["trades"], c["text_faint"],
+                          ft.TextAlign.RIGHT, bold=True, size=9),
+            self._wf_cell("RETURN", w["ret"], c["text_faint"],
+                          ft.TextAlign.RIGHT, bold=True, size=9),
+            self._wf_cell("WIN", w["win"], c["text_faint"],
+                          ft.TextAlign.RIGHT, bold=True, size=9),
+            self._wf_cell("P.F.", w["pf"], c["text_faint"],
+                          ft.TextAlign.RIGHT, bold=True, size=9),
+            self._wf_cell("MAX DD", w["dd"], c["text_faint"],
+                          ft.TextAlign.RIGHT, bold=True, size=9),
+        ], spacing=0)
+        controls = [
+            ft.Row(chips, spacing=6, scroll=ft.ScrollMode.AUTO),
+            ft.Divider(height=1, color=c["border"]),
+            header,
+            self._wf_metric_row("FULL (in-sample)", res.get("full"), c),
+        ]
+        for adx, m in sorted((res.get("train_by_adx") or {}).items()):
+            controls.append(self._wf_metric_row(f"TRAIN — ADX ≥ {adx:g}", m, c))
+        chosen = res.get("chosen_adx")
+        controls.append(ft.Row([
+            ft.Icon(ft.Icons.ARROW_FORWARD, size=12, color=c["orange"]),
+            ft.Text(f"TRAIN picked min ADX = {chosen:g} — applied to TEST",
+                    size=10, weight=ft.FontWeight.BOLD, color=c["orange"], selectable=True),
+        ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        controls.append(self._wf_metric_row("TEST — no gate", res.get("test_no_gate"), c))
+        controls.append(self._wf_metric_row(
+            f"★ TEST — ADX ≥ {chosen:g}  (OOS)", res.get("test_chosen"), c, emphasize=True))
+        verdict = _wf_verdict(res)
+        if verdict:
+            controls.append(ft.Text(
+                verdict, size=11,
+                weight=ft.FontWeight.BOLD,
+                color=c["green"] if "positive" in verdict else c["text"],
+                selectable=True,
+            ))
+        return ft.Column(controls, spacing=3, expand=True)
 
     # -- the page ---------------------------------------------------------
     def _build_backtest_view(self):
@@ -185,7 +286,7 @@ class BacktestViewMixin:
                                   color=c["green"] if not state.get("error") else c["red"])
         self._wf_btn = ft.Button(
             content=ft.Text("Run Walk-forward" if not busy else "Running…", size=13),
-            bgcolor=c["green"], color="#052e16", disabled=busy,
+            bgcolor=c["green"], color=c["on_accent"], disabled=busy,
             on_click=None if busy else lambda e: self._run_wf(),
         )
         self._wf_btn_label = ft.Text(
@@ -228,7 +329,7 @@ class BacktestViewMixin:
         )
 
     def _wf_result_controls(self, state):
-        """Text rows describing a completed walk-forward result dict."""
+        """Scoreboard (or placeholder) describing a walk-forward result."""
         c = self.theme_colors
         res = state.get("result") or {}
         err = state.get("error")
@@ -238,26 +339,7 @@ class BacktestViewMixin:
             if state.get("status", "").startswith("Running"):
                 return [ft.Text("Running… results appear here when done.", size=11, color=c["text_dim"])]
             return []
-        lines = []
-        p = res.get("params", {})
-        lines.append(ft.Text(
-            f"Split {res.get('split_date')}  |  risk S{p.get('stop', 0):g}/T{p.get('target', 0):g}  |  "
-            f"{res.get('n_stocks', 0)} stocks", size=11, font_family="monospace",
-            color=c["text_dim"], selectable=True))
-        lines.append(self._wf_metric_line("FULL (in-sample)", res.get("full")))
-        for adx, m in sorted((res.get("train_by_adx") or {}).items()):
-            lines.append(self._wf_metric_line(f"TRAIN adx>={adx:g}", m))
-        chosen = res.get("chosen_adx")
-        lines.append(ft.Text(f"-> TRAIN picks min ADX = {chosen:g}",
-                             size=11, font_family="monospace", color=c["orange"], selectable=True))
-        lines.append(self._wf_metric_line("TEST no gate", res.get("test_no_gate")))
-        lines.append(self._wf_metric_line(f"TEST adx>={chosen:g} (OOS)", res.get("test_chosen")))
-        verdict = _wf_verdict(res)
-        if verdict:
-            color = c["green"] if "positive" in verdict else c["text"]
-            lines.append(ft.Text(verdict, size=11, weight=ft.FontWeight.BOLD,
-                                 color=color, selectable=True))
-        return lines
+        return self._wf_score_grid(res).controls
 
     # -- run flow ---------------------------------------------------------
     def _run_wf(self, e=None):

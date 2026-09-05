@@ -17,7 +17,6 @@ from collections.abc import Callable
 from datetime import datetime
 
 import flet as ft
-from flet.controls.alignment import Alignment
 
 from .trace import setup_trace
 
@@ -28,9 +27,10 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-from .report import generate_html_report, save_report
+from .report import fetch_news_batch, generate_html_report, save_report
 from .settings_store import DEFAULT_SETTINGS  # noqa: E402 — canonical single source
 from .themes import THEMES
+from .ui_kit import _score_of
 from .universes import UNIVERSES
 from .views_backtest import BacktestViewMixin
 from .views_layout import LayoutViewMixin
@@ -42,6 +42,7 @@ SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12
 LOG_MAX_LINES = 500
+_NEWS_PREFETCH_TOP = 50  # top-scored rows whose news is prefetched after a scan
 
 
 def load_settings() -> dict:
@@ -77,7 +78,9 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.filtered_results = []
         self._results_lock = threading.Lock()
         self._ui_lock = threading.Lock()
+        self._scan_lock = threading.Lock()
         self.scanning = False
+        self._scan_epoch = 0
         self.filter_text = ""
         self.last_warnings: list[str] = []
         self.active_view = "dashboard"
@@ -95,6 +98,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
 
         self._build_ui()
         self._load_settings_to_ui()
+        self._load_ui_prefs()
         self._refresh_neg_cache_ui()
         self._refresh_enrich_cache_ui()
         self._refresh_price_cache_ui()
@@ -110,6 +114,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             except Exception:
                 pass
         threading.Thread(target=_warm_symbols, daemon=True).start()
+        threading.Thread(target=self._warm_market, daemon=True).start()
 
     def _apply_cache_settings(self):
         try:
@@ -205,6 +210,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
     def _on_rating_change(self, e):
         if self.all_results:
             self._display_results(self.all_results)
+        self._save_ui_prefs()
 
     def _on_universe_change(self, e):
         choice = self.universe_dd.value or "NIFTY 50"
@@ -292,14 +298,15 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             self._start_scan()
 
     def _start_scan(self, e=None):
-        if self.scanning:
-            return
+        with self._scan_lock:
+            if self.scanning:
+                return
+            self.scanning = True
 
         self.settings = self._collect_settings()
         save_settings(self.settings)
         self._apply_cache_settings()
 
-        self.scanning = True
         self._scan_cancelled = False
         self._stop_requested = False
         c = self.theme_colors
@@ -316,17 +323,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.filtered_results = []
 
         self.table_column.controls.clear()
-        self.table_column.controls.append(
-            ft.Container(
-                content=ft.Column([
-                    ft.Icon(ft.Icons.SHOW_CHART, size=48, color=c["green"]),
-                    ft.Text("Scanning — fetching batches…", size=12, weight=ft.FontWeight.BOLD, color=c["green"]),
-                    ft.Text("First results appear after ~1 batch (~20s)", size=11, color=c["text_dim"]),
-                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=6),
-                alignment=Alignment.CENTER,
-                padding=30,
-            )
-        )
+        self.table_column.controls.append(self._make_scan_placeholder())
         self.page.update()
 
         threading.Thread(target=self._run_scan, daemon=True).start()
@@ -344,6 +341,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             self._log("Stop requested — finishing the current batch, then stopping...")
 
     def _run_scan(self):
+        # Bump the scan epoch so background passes from an older scan (e.g.
+        # a news prefetch) can detect they no longer own the results.
+        with self._scan_lock:
+            self._scan_epoch += 1
         try:
             from .scanner_engine import ScannerEngine
 
@@ -380,10 +381,13 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 final_results = result.results
                 if not final_results and self.all_results:
                     final_results = self.all_results
-                self.results = final_results
-                self.all_results = list(final_results)
-                self.filtered_results = [r for r in final_results if self._row_matches_filters(r)]
+                with self._results_lock:
+                    self.results = final_results
+                    self.all_results = list(final_results)
+                    self.filtered_results = [r for r in final_results if self._row_matches_filters(r)]
                 self.last_warnings = list(getattr(result, "warnings", []) or [])
+                # _render_current_page acquires _results_lock internally, so
+                # call it outside the lock to avoid deadlock on non-reentrant Lock.
                 self._render_current_page()
                 if result.cancelled:
                     self._log(f"Scan stopped — showing {len(final_results)} partial results.")
@@ -427,7 +431,8 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self._safe_update(lambda: self._render_current_page())
 
     def _scan_complete(self):
-        self.scanning = False
+        with self._scan_lock:
+            self.scanning = False
         c = self.theme_colors
         self.action_btn.disabled = False
         self.action_btn_label.value = "▶  RUN SCAN"
@@ -443,8 +448,85 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             self.html_btn.disabled = False
             self.csv_btn.disabled = False
             self.clear_btn.disabled = False
-        self._update_hero_status(self.results)
-        self.page.update()
+        # Re-render the full page now that scanning=False, so the hero
+        # subtitle shows the final count and the table reflects the
+        # definitive result set (not the last streaming batch snapshot).
+        self._render_current_page()
+        # The scan just re-fetched NIFTY through the provider chain — refresh
+        # the hero readout from that cache (fast, mostly disk reads).
+        threading.Thread(target=self._warm_market, daemon=True).start()
+        # Prefetch the top-scored rows' news in the background so clicking a
+        # row opens its stories instantly (no per-click yfinance round-trip).
+        if self.results and not self._scan_cancelled:
+            threading.Thread(target=self._prefetch_row_news, daemon=True).start()
+
+    def _prefetch_row_news(self):
+        """Fetch news for the top ``_NEWS_PREFETCH_TOP`` scored rows.
+
+        Runs off the UI thread after a scan completes. Each targeted row dict
+        gains ``_news_items`` (provider-keyed story dicts) plus
+        ``_article_count`` / ``_sentiment_score`` when stories were found — so
+        clicking a ticker renders instantly and the row badge lights up even
+        without provider API keys. Rows that already carry stories (provider
+        enrichment or an earlier prefetch) are left untouched, and the attach
+        is dropped if a newer scan has started meanwhile.
+        """
+        epoch = getattr(self, "_scan_epoch", 0)
+        try:
+            with self._results_lock:
+                pool = list(self.all_results)
+            by_ticker = {r.get("ticker"): r for r in pool if r.get("ticker")}
+            if not by_ticker:
+                return
+            targets = [r for r in sorted(by_ticker.values(), key=_score_of,
+                                         reverse=True)[:_NEWS_PREFETCH_TOP]
+                       if "_news_items" not in r]
+            if not targets:
+                return
+            self._safe_update(
+                lambda: setattr(self.progress_label, "value", "Prefetching top-50 news…")
+            )
+            news_map = fetch_news_batch([r["ticker"] for r in targets])
+            if not news_map:
+                return
+            attached = 0
+            with self._results_lock:
+                if epoch != getattr(self, "_scan_epoch", epoch) or self._scan_cancelled:
+                    return  # a newer scan owns the results now
+                live = {r.get("ticker"): r for r in self.all_results if r.get("ticker")}
+                for ticker, items in news_map.items():
+                    row = live.get(ticker)
+                    if row is None or "_news_items" in row:
+                        continue
+                    row["_news_items"] = items
+                    n = len(items)
+                    if n:
+                        # Light the row badge only when the scan's own provider
+                        # enrichment did not already attach counts.
+                        row.setdefault("_article_count", n)
+                        if "_sentiment_score" not in row:
+                            tone = {"Good": 1.0, "Bad": -1.0}
+                            row["_sentiment_score"] = sum(
+                                tone.get(i.get("sentiment", "Neutral"), 0.0)
+                                for i in items
+                            ) / n
+                    attached += 1
+            if attached:
+                self._safe_update(self._flush_news_badges)
+                self._log(f"News prefetched for {attached}/{len(targets)} top stocks")
+            if epoch == getattr(self, "_scan_epoch", epoch) and not self._scan_cancelled:
+                self._safe_update(lambda: setattr(self.progress_label, "value", "Done"))
+        except Exception as e:
+            self._log(f"News prefetch failed: {e!s}")
+
+    def _flush_news_badges(self):
+        """Repaint the visible table so prefetched news badges appear."""
+        try:
+            if not self.scanning:
+                self._render_current_page()
+                self.page.update()
+        except Exception:
+            pass
 
     def _safe_update(self, fn: Callable[[], None]) -> None:
         """Run a UI mutation, then push it to the page — on Flet's UI thread.
@@ -809,27 +891,41 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         if not self.results:
             return
         import csv
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"scanner_results_{timestamp}.csv"
-        filepath = os.path.join(SCANNER_DIR, filename)
-        with open(filepath, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Rank", "Ticker", "Score", "Rating", "Price", "Trend", "Momentum",
-                             "RSI", "MACD", "Stoch", "OBV", "Volume", "RelStrength", "Volatility",
-                             "Fundamentals", "Direction", "RSI_Val", "ADX", "Sideways",
-                             "1M_Change", "3M_Change"])
-            for i, r in enumerate(self.results, 1):
-                sideways_reasons = ", ".join(r.get("sideways_reasons", []))
-                writer.writerow([
-                    i, r.get("ticker", ""), r.get("total", 0) or 0, r.get("combined_rating", "POOR"),
-                    r.get("close"), r.get("trend"), r.get("momentum"), r.get("rsi"), r.get("macd"),
-                    r.get("stoch"), r.get("obv"), r.get("volume"), r.get("rel_str"), r.get("volatility"),
-                    r.get("fundamentals", 0), r.get("trend_dir", ""), r.get("rsi_val"), r.get("adx_val"),
-                    ("Yes" + (f" ({sideways_reasons})" if sideways_reasons else "")) if r.get("is_sideways") else "No",
-                    r.get("pc1m"), r.get("pc3m"),
-                ])
-        self._log(f"CSV saved: {filename}")
-        self.page.update()
+
+        def _bg():
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"scanner_results_{timestamp}.csv"
+                filepath = os.path.join(SCANNER_DIR, filename)
+                with open(filepath, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Rank", "Ticker", "Score", "Rating", "Price", "MA_Signal", "POC",
+                                     "Both_MA", "Trend", "Momentum", "RSI", "MACD", "Volume",
+                                     "RelStrength", "Fundamentals", "Direction", "RSI_Val", "ADX",
+                                     "1M_Change", "Volatility_Stat", "Sideways"])
+                    for i, r in enumerate(self.results, 1):
+                        sideways_reasons = ", ".join(r.get("sideways_reasons", []))
+                        ma_signal = "Bull" if r.get("ma_bullish") else "Bear"
+                        if r.get("ma_crossed_above"):
+                            bars = r.get("crossover_bars_ago")
+                            ma_signal += f" (x{bars}b)" if bars is not None else " (x)"
+                        poc = f"Above ({r.get('vp_poc', '—')})" if r.get("above_poc") else f"Below ({r.get('vp_poc', '—')})"
+                        both_ma = "Yes" if r.get("close_above_both_ma") else "No"
+                        writer.writerow([
+                            i, r.get("ticker", ""), r.get("total", 0) or 0, r.get("combined_rating", "POOR"),
+                            r.get("close"), ma_signal, poc, both_ma,
+                            r.get("trend"), r.get("momentum"), r.get("rsi"), r.get("macd"),
+                            r.get("volume"), r.get("rel_str"),
+                            r.get("fundamentals", 0), r.get("trend_dir", ""), r.get("rsi_val"), r.get("adx_val"),
+                            r.get("pc1m"), r.get("volat_stat", ""),
+                            ("Yes" + (f" ({sideways_reasons})" if sideways_reasons else "")) if r.get("is_sideways") else "No",
+                        ])
+                self._safe_update(lambda: self._log(f"CSV saved: {filename}"))
+            except Exception as exc:
+                err = str(exc)
+                self._safe_update(lambda: self._log(f"CSV export failed: {err}"))
+
+        threading.Thread(target=_bg, daemon=True).start()
 
     # ── Utilities ───────────────────────────────────────────────────────
 
@@ -869,6 +965,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self._set_log_lines(saved_log)
         if had_results:
             self._display_results(self.results)
+        # The rebuild resets the hero's market readout — repaint it from the
+        # snapshot cached before the switch (no network round-trip).
+        if getattr(self, "_last_market", None) is not None:
+            self._render_market(self._last_market)
         self._log(f"Theme switched to {new_theme}")
         self.page.update()
 
@@ -954,7 +1054,8 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             if os.path.exists(LOG_FILE):
                 age_hours = (datetime.now().timestamp() - os.path.getmtime(LOG_FILE)) / 3600
                 if age_hours >= LOG_ROTATE_HOURS:
-                    open(LOG_FILE, "w").close()
+                    with open(LOG_FILE, "w") as f:
+                        f.truncate(0)
         except Exception:
             pass
 

@@ -6,29 +6,15 @@ All data is fetched without API keys using nselib or direct NSE API calls.
 
 import hashlib
 import logging
-import time
 from dataclasses import dataclass
 
-import requests
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_INDIA_CACHE: dict[str, tuple[dict, float]] = {}
-_INDIA_CACHE_TTL = 4 * 3600  # 4 hours
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _INDIA_CACHE:
-        result, ts = _INDIA_CACHE[key]
-        if time.time() - ts < _INDIA_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _INDIA_CACHE[key] = (value, time.time())
+_INDIA_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="indian_market")
 
 
 # ── Delivery Volume Data ───────────────────────────────────────────────────
@@ -59,7 +45,7 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
         DeliveryData or None
     """
     cache_k = hashlib.md5(f"delivery:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return DeliveryData(**cached, cached=True)
 
@@ -128,7 +114,7 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INDIA_CACHE.set(cache_k, {
             "ticker": ticker,
             "delivery_pct": result.delivery_pct,
             "delivery_volume": result.delivery_volume,
@@ -172,7 +158,7 @@ def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
         FIIDIIActivity or None
     """
     cache_k = hashlib.md5(b"fii_dii:activity", usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return FIIDIIActivity(**cached, cached=True)
 
@@ -216,7 +202,7 @@ def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INDIA_CACHE.set(cache_k, {
             "date": date_str,
             "fii_buy": result.fii_buy,
             "fii_sell": result.fii_sell,
@@ -265,7 +251,7 @@ def fetch_52week_data(ticker: str) -> Week52Data | None:
         Week52Data or None
     """
     cache_k = hashlib.md5(f"52week:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return Week52Data(**cached, cached=True)
 
@@ -316,7 +302,7 @@ def fetch_52week_data(ticker: str) -> Week52Data | None:
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INDIA_CACHE.set(cache_k, {
             "ticker": ticker,
             "current_price": result.current_price,
             "week52_high": result.week52_high,
@@ -362,7 +348,7 @@ def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
         IndustryPEData or None
     """
     cache_k = hashlib.md5(f"industry_pe:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return IndustryPEData(**cached, cached=True)
 
@@ -401,7 +387,7 @@ def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INDIA_CACHE.set(cache_k, {
             "ticker": ticker,
             "stock_pe": result.stock_pe,
             "industry_pe": result.industry_pe,
@@ -414,104 +400,6 @@ def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
 
     except Exception as e:
         logger.debug("Industry PE fetch failed for %s: %s", ticker, e)
-        return None
-
-
-# ── Indian Mandi Prices — Commodity Data (Free, No Key) ────────────────────
-
-@dataclass
-class MandiPrice:
-    """Commodity price from Indian mandi (wholesale market)."""
-    commodity: str
-    market: str
-    state: str
-    price_min: float
-    price_max: float
-    price_modal: float
-    unit: str
-    date: str
-    cached: bool = False
-
-
-def fetch_mandi_prices(
-    commodity: str | None = None,
-    state: str | None = None,
-) -> list[MandiPrice] | None:
-    """
-    Fetch commodity prices from Indian mandi (free, no key).
-    Useful for agri-sector stocks (sugar, cotton, spices, etc.).
-    
-    Args:
-        commodity: Filter by commodity name (e.g., "Wheat", "Cotton")
-        state: Filter by state (e.g., "Maharashtra", "Punjab")
-    
-    Returns:
-        List of MandiPrice or None
-    """
-    cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode(), usedforsecurity=False).hexdigest()
-    cached = _INDIA_CACHE.get(cache_k)
-    if cached:
-        result, ts = cached
-        if time.time() - ts < _INDIA_CACHE_TTL:
-            return [MandiPrice(**item) for item in result.get("prices", [])]
-
-    try:
-        # Try data.gov.in API (Indian government open data)
-        # This API can be slow, use longer timeout
-        url = "https://api.data.gov.in/resource/359846c8-0eae-4f53-a69b-8d5dd13057f0"
-        params = {
-            "format": "json",
-            "limit": 20,
-        }
-        if commodity:
-            params["filters[commodity]"] = commodity
-        if state:
-            params["filters[state]"] = state
-
-        # Retry up to 2 times with increasing timeout
-        for attempt in range(2):
-            try:
-                resp = requests.get(url, params=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-                break
-            except requests.exceptions.Timeout:
-                if attempt < 1:
-                    time.sleep(2)
-                    continue
-                raise
-        else:
-            return None
-
-        prices = []
-        records = data.get("records", [])
-        for rec in records[:20]:
-            try:
-                prices.append(MandiPrice(
-                    commodity=rec.get("commodity", ""),
-                    market=rec.get("market", ""),
-                    state=rec.get("state", ""),
-                    price_min=float(rec.get("min_price", 0) or 0),
-                    price_max=float(rec.get("max_price", 0) or 0),
-                    price_modal=float(rec.get("modal_price", 0) or 0),
-                    unit=rec.get("unit", "Quintal"),
-                    date=rec.get("date", ""),
-                ))
-            except (ValueError, TypeError):
-                continue
-
-        if prices:
-            _INDIA_CACHE[cache_k] = ({"prices": [
-                {"commodity": p.commodity, "market": p.market, "state": p.state,
-                 "price_min": p.price_min, "price_max": p.price_max,
-                 "price_modal": p.price_modal, "unit": p.unit, "date": p.date}
-                for p in prices
-            ]}, time.time())
-
-        return prices if prices else None
-
-    except Exception as e:
-        logger.debug("Mandi prices fetch failed: %s", e)
         return None
 
 

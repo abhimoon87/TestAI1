@@ -134,7 +134,10 @@ class SettingsViewMixin:
         self._settings_error = ft.Text("", size=11, color=c["red"])
         header = ft.Container(
             content=ft.Column([
-                ft.Text("⚙  Scanner Settings", size=18, weight=ft.FontWeight.BOLD, color=c["text"]),
+                ft.Row([
+                    ft.Icon(ft.Icons.TUNE, size=18, color=c["cyan"]),
+                    ft.Text("Scanner Settings", size=18, weight=ft.FontWeight.BOLD, color=c["text"]),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Text("Indicator parameters consumed by the HMA×EMA engine — applied on Save.",
                         size=11, color=c["text_dim"]),
             ], spacing=2),
@@ -162,7 +165,7 @@ class SettingsViewMixin:
             ft.TextButton(content=ft.Text("Cancel", size=13),
                           on_click=lambda e: self._show_view("dashboard")),
             ft.Button(content=ft.Text("Save Settings", size=13),
-                               bgcolor=c["green"], color="#052e16",
+                               bgcolor=c["green"], color=c["on_accent"],
                                on_click=lambda e: self._save_settings_page()),
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
         return ft.Column(

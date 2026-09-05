@@ -19,6 +19,8 @@ from scanner.report import (
     _parse_date,
     _score_class,
     _sentiment,
+    fetch_news_batch,
+    fetch_news_for_ticker,
     fetch_stock_news,
     generate_html_report,
     save_report,
@@ -422,5 +424,85 @@ class TestFetchStockNews:
 
     def test_import_error_returns_empty(self):
         with patch.dict("sys.modules", {"yfinance": None}):
-            result = fetch_stock_news("RELIANCE")
+            fetch_stock_news("RELIANCE")  # must not raise when yfinance is absent
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# fetch_news_for_ticker / fetch_news_batch (NSE→BSE fallback, provider key)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFetchNewsForTicker:
+    def _mock_yf(self, news_by_ticker):
+        mock_yf = MagicMock()
+
+        def _ticker(t):
+            m = MagicMock()
+            m.news = news_by_ticker.get(t, [])
+            return m
+        mock_yf.Ticker.side_effect = _ticker
+        return mock_yf
+
+    def _item(self, title="Story"):
+        now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        return {"content": {"title": title, "summary": "",
+                             "pubDate": now,
+                             "provider": {"displayName": "Reuters"}}}
+
+    def test_returns_provider_keyed_items_from_ns(self):
+        mock_yf = self._mock_yf({"TCS.NS": [self._item("NSE story")]})
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = fetch_news_for_ticker("TCS")
+
+        assert len(result) == 1
+        assert result[0]["title"] == "NSE story"
+        assert result[0]["provider"] == "Reuters"  # GUI panel key
+        assert "publisher" not in result[0]
+
+    def test_falls_back_to_bo_when_ns_empty(self):
+        mock_yf = self._mock_yf({"TCS.NS": [], "TCS.BO": [self._item("BSE story")]})
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = fetch_news_for_ticker("TCS")
+
+        assert len(result) == 1
+        assert result[0]["title"] == "BSE story"
+
+    def test_returns_empty_when_both_suffixes_silent(self):
+        mock_yf = self._mock_yf({})
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = fetch_news_for_ticker("TCS")
         assert result == []
+
+    def test_explicit_suffix_is_kept(self):
+        mock_yf = self._mock_yf({"TCS.BO": [self._item()]})
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = fetch_news_for_ticker("TCS.BO")
+        assert len(result) == 1
+        mock_yf.Ticker.assert_called_once_with("TCS.BO")
+
+    def test_fetch_failure_returns_empty(self):
+        mock_yf = MagicMock()
+        mock_yf.Ticker.side_effect = Exception("network error")
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = fetch_news_for_ticker("TCS")
+        assert result == []
+
+
+class TestFetchNewsBatch:
+    def test_maps_every_ticker_to_its_news(self):
+        def _fake(t, max_items=10, months_back=2):
+            if t in ("A", "B"):
+                return [{"title": f"{t} story", "summary": "", "date": "2026-08-01",
+                         "provider": "Reuters", "sentiment": "Good"}]
+            return []
+
+        with patch("scanner.report.fetch_news_for_ticker", side_effect=_fake):
+            news_map = fetch_news_batch(["A", "B", "C"])
+
+        assert set(news_map) == {"A", "B", "C"}
+        assert news_map["A"][0]["title"] == "A story"
+        assert news_map["A"][0]["provider"] == "Reuters"
+        assert news_map["C"] == []
+
+    def test_empty_input_returns_empty_map(self):
+        assert fetch_news_batch([]) == {}

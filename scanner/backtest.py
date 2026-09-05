@@ -192,12 +192,13 @@ class BacktestEngine:
         signals_taken = 0
         signals_blocked = 0
         signals_boosted = 0
+        stock_map = {s.ticker: s for s in self.stocks}
 
         for day in backtest_dates:
             # 1. Check exits on open positions
             closed_today = []
             for pos in self.positions:
-                stock = next((s for s in self.stocks if s.ticker == pos.ticker), None)
+                stock = stock_map.get(pos.ticker)
                 if stock is None or day not in stock.df.index:
                     continue
                 bar_idx = stock.df.index.get_loc(day)
@@ -358,9 +359,9 @@ class BacktestEngine:
                     # Calculate current portfolio value for position sizing
                     current_portfolio = cash
                     for p in self.positions:
-                        s = next((x for x in self.stocks if x.ticker == p.ticker), None)
-                        if s and day in s.df.index:
-                            current_portfolio += s.df.loc[day, "close"] * p.shares
+                        stock_data = stock_map.get(p.ticker)
+                        if stock_data and day in stock_data.df.index:
+                            current_portfolio += stock_data.df.loc[day, "close"] * p.shares
                         else:
                             current_portfolio += p.entry_price * p.shares
 
@@ -373,6 +374,8 @@ class BacktestEngine:
                     max_risk_pct = settings.get("max_risk_per_trade", 0.02)
                     total_risk = risk_per_share * shares
                     if total_risk > current_portfolio * max_risk_pct:
+                        if risk_per_share <= 0:
+                            continue
                         max_shares = int(current_portfolio * max_risk_pct / risk_per_share)
                         shares = max_shares
                         if shares <= 0:
@@ -404,7 +407,7 @@ class BacktestEngine:
             # 3. Record equity curve
             portfolio_value = cash
             for pos in self.positions:
-                stock = next((s for s in self.stocks if s.ticker == pos.ticker), None)
+                stock = stock_map.get(pos.ticker)
                 if stock and day in stock.df.index:
                     current_price = stock.df.loc[day, "close"]
                     portfolio_value += current_price * pos.shares
@@ -416,7 +419,7 @@ class BacktestEngine:
         # Close any remaining positions at the end of the simulated window
         sim_last = backtest_dates[-1] if backtest_dates else None
         for pos in self.positions:
-            stock = next((s for s in self.stocks if s.ticker == pos.ticker), None)
+            stock = stock_map.get(pos.ticker)
             if stock is None:
                 continue
             if sim_last is not None and sim_last in stock.df.index:

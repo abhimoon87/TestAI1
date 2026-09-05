@@ -58,6 +58,16 @@ THEMES = {
         "chip_neutral": "#23232b",
         # Hero gradient — neon blue into violet, dissolving to charcoal
         "hero_grad": ["#0ea5e9", "#6366f1", "#3b2d8f", "#17171c"],
+        "hero_title": "#ffffff",
+        "hero_sub": "#d8e8ff",
+        # Soft top-left radial wash over the main area
+        "bg_radial": "#1b2f4d",
+        # Text sitting on an accent (green) button
+        "on_accent": "#052e16",
+        # Right-panel profile avatar
+        "avatar_bg": "#12331f",
+        "avatar_text": "#8dffc4",
+        "avatar_border": "#22d3ee",
         "shadow": "#00000066",
         # Flet theme mode
         "flet_mode": "dark",
@@ -104,7 +114,19 @@ THEMES = {
         "chip_good": "#d7f2e2",
         "chip_bad": "#fbdfdf",
         "chip_neutral": "#eef5f0",
-        "hero_grad": ["#10b981", "#0ea5a5", "#0284c7", "#075985"],
+        # Hero gradient — deep emerald/teal (kept rich so white hero text
+        # stays readable over the whole band, even in the light theme)
+        "hero_grad": ["#0f9d7b", "#0d9488", "#0e7490", "#134e4a"],
+        "hero_title": "#ffffff",
+        "hero_sub": "#d3f9ee",
+        # Soft top-left radial wash over the main area
+        "bg_radial": "#dcefe3",
+        # Text sitting on an accent (green) button
+        "on_accent": "#ffffff",
+        # Right-panel profile avatar
+        "avatar_bg": "#d7f2e2",
+        "avatar_text": "#047857",
+        "avatar_border": "#0e7490",
         "shadow": "#00000014",
         "flet_mode": "light",
     },

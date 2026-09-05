@@ -65,7 +65,7 @@ class TTLCache(Generic[T]):
             for k in list(self._store.keys()):
                 _, ts = self._store[k]
                 if now - ts >= self.ttl:
-                    del self._store[k]
+                    self._store.pop(k, None)
                     removed += 1
         return removed
 

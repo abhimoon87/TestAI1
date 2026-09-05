@@ -138,6 +138,12 @@ API_KEY_REGISTRY = {
         "url": "https://console.groq.com/keys",
         "category": "nlp",
     },
+    "TWITTER_API_KEY": {
+        "description": "GetXAPI — Twitter/X posts for social sentiment",
+        "free_tier": "Paid (trial available)",
+        "url": "https://getxapi.com/",
+        "category": "nlp",
+    },
     # Premium finance
     "EOD_API_KEY": {
         "description": "EOD Historical Data — 150+ exchanges, fundamentals",

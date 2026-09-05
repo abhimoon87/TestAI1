@@ -6,29 +6,17 @@ Free Indian market data providers — fundamentals, peer comparison, technicals.
 import hashlib
 import logging
 import re
-import time
 from dataclasses import dataclass
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_FUND_CACHE: dict[str, tuple[dict, float]] = {}
-_FUND_CACHE_TTL = 6 * 3600  # 6 hours
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _FUND_CACHE:
-        result, ts = _FUND_CACHE[key]
-        if time.time() - ts < _FUND_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _FUND_CACHE[key] = (value, time.time())
+_FUND_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="indian_fundamentals")
 
 
 # ── Trendlyne Fundamentals (Free, No Key) ──────────────────────────────────
@@ -63,7 +51,7 @@ def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
         TrendlyneFundamentals or None
     """
     cache_k = hashlib.md5(f"trendlyne:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FUND_CACHE.get(cache_k)
     if cached:
         return TrendlyneFundamentals(**cached, cached=True)
 
@@ -100,7 +88,7 @@ def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
             return None
 
         fund = TrendlyneFundamentals(ticker=ticker, **result)
-        _cache_set(cache_k, {"ticker": ticker, **result})
+        _FUND_CACHE.set(cache_k, {"ticker": ticker, **result})
         return fund
 
     except Exception as e:
@@ -137,7 +125,7 @@ def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
         PeerComparison or None
     """
     cache_k = hashlib.md5(f"screener:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FUND_CACHE.get(cache_k)
     if cached:
         return PeerComparison(**cached, cached=True)
 
@@ -184,7 +172,7 @@ def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
             result["is_quality"] = result["stock_roe"] > 15.0
 
         peer = PeerComparison(ticker=ticker, **result)
-        _cache_set(cache_k, {"ticker": ticker, **result})
+        _FUND_CACHE.set(cache_k, {"ticker": ticker, **result})
         return peer
 
     except Exception as e:
@@ -222,7 +210,7 @@ def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
         YahooValuation or None
     """
     cache_k = hashlib.md5(f"yahoo_val:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _FUND_CACHE.get(cache_k)
     if cached:
         return YahooValuation(**cached, cached=True)
 
@@ -270,7 +258,7 @@ def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
             return None
 
         val = YahooValuation(ticker=ticker, **result)
-        _cache_set(cache_k, {"ticker": ticker, **result})
+        _FUND_CACHE.set(cache_k, {"ticker": ticker, **result})
         return val
 
     except Exception as e:

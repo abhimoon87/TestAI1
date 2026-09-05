@@ -6,29 +6,17 @@ Fetches insider trading + institutional activity from Aletheia + CongressInvests
 import hashlib
 import logging
 import os
-import time
 from dataclasses import dataclass, field
 
 import requests
+
+from .cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
-_INSIDER_CACHE: dict[str, tuple[dict, float]] = {}
-_INSIDER_CACHE_TTL = 6 * 3600  # 6 hours
-
-
-def _cache_get(key: str) -> dict | None:
-    if key in _INSIDER_CACHE:
-        result, ts = _INSIDER_CACHE[key]
-        if time.time() - ts < _INSIDER_CACHE_TTL:
-            return result
-    return None
-
-
-def _cache_set(key: str, value: dict):
-    _INSIDER_CACHE[key] = (value, time.time())
+_INSIDER_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="insider_data")
 
 
 # ── Aletheia Provider ──────────────────────────────────────────────────────
@@ -82,7 +70,7 @@ def fetch_aletheia_insider(
         return None
 
     cache_k = hashlib.md5(f"aletheia:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INSIDER_CACHE.get(cache_k)
     if cached:
         return AletheiaInsider(**cached, cached=True)
 
@@ -150,7 +138,7 @@ def fetch_aletheia_insider(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INSIDER_CACHE.set(cache_k, {
             "ticker": ticker,
             "net_insider_activity": result.net_insider_activity,
             "total_buys": result.total_buys,
@@ -216,18 +204,18 @@ def fetch_congress_invests(
     
     Args:
         ticker: Stock ticker
-        api_key: CongressInvests API key (or env CONGRESSINVESTS_API_KEY)
+        api_key: CongressInvests API key (or env CONGRESS_API_KEY)
     
     Returns:
         CongressInvestsData or None
     """
-    api_key = api_key or os.environ.get("CONGRESSINVESTS_API_KEY")
+    api_key = api_key or os.environ.get("CONGRESS_API_KEY")
     if not api_key:
         logger.debug("CongressInvests: no API key, skipping")
         return None
 
     cache_k = hashlib.md5(f"congress:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INSIDER_CACHE.get(cache_k)
     if cached:
         return CongressInvestsData(**cached, cached=True)
 
@@ -281,7 +269,7 @@ def fetch_congress_invests(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INSIDER_CACHE.set(cache_k, {
             "ticker": ticker,
             "recent_trades": [
                 {
@@ -350,7 +338,7 @@ def fetch_sec_edgar(
         SECEdgData or None
     """
     cache_k = hashlib.md5(f"sec_edgar:{ticker}".encode(), usedforsecurity=False).hexdigest()
-    cached = _cache_get(cache_k)
+    cached = _INSIDER_CACHE.get(cache_k)
     if cached:
         return SECEdgData(**cached, cached=True)
 
@@ -443,7 +431,7 @@ def fetch_sec_edgar(
             cached=False,
         )
 
-        _cache_set(cache_k, {
+        _INSIDER_CACHE.set(cache_k, {
             "ticker": ticker,
             "cik": cik,
             "recent_filings": [

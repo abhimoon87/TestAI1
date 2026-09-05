@@ -199,7 +199,7 @@ class LayoutViewMixin:
         self.action_btn_label = ft.Text("▶  RUN SCAN", size=14, weight=ft.FontWeight.BOLD)
         self.action_btn = ft.Button(
             content=self.action_btn_label, expand=True, height=46,
-            bgcolor=c["green"], color="#052e16",
+            bgcolor=c["green"], color=c["on_accent"],
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
             on_click=self._on_action_click,
         )
@@ -288,12 +288,13 @@ class LayoutViewMixin:
         c = self.theme_colors
 
         self.search_entry = ft.TextField(
-            hint_text="🔍  Filter by ticker…",
+            hint_text="Filter by ticker…",
             width=240, height=34, text_size=12,
             bgcolor=c["card"], color=c["text"],
             border_color=c["border"], border_width=1,
             border_radius=17,
-            content_padding=_padding_only(left=12, top=4, bottom=4),
+            prefix_icon=ft.Icons.SEARCH,
+            content_padding=_padding_only(left=10, top=4, bottom=4),
             on_change=self._on_search_change,
         )
 
@@ -333,15 +334,57 @@ class LayoutViewMixin:
 
         self.hero_text = ft.Text(
             "Find Your Next Swing Trade",
-            size=21, weight=ft.FontWeight.BOLD, color="white",
+            size=21, weight=ft.FontWeight.BOLD, color=c["hero_title"],
         )
         self.hero_sub = ft.Text(
             "Set your universe on the left, then RUN SCAN — HMA×EMA crossover • 10-factor score • news sentiment",
-            size=11, color="#d8ffe8",
+            size=11, color=c["hero_sub"],
         )
+        # Live market readout (NIFTY level / day change) — hidden until data
+        # arrives from the provider chain (see _render_market/_warm_market).
+        self.market_label = ft.Text("NIFTY 50", size=9, weight=ft.FontWeight.BOLD,
+                                    color=ft.Colors.with_opacity(0.65, c["hero_sub"]))
+        self.market_value = ft.Text("—", size=23, weight=ft.FontWeight.BOLD,
+                                    color=c["hero_title"], selectable=True)
+        self.market_change = ft.Text("", size=10, color=c["hero_sub"], selectable=True)
+        self.market_box = ft.Container(
+            content=ft.Column(
+                controls=[self.market_label, self.market_value, self.market_change],
+                spacing=0,
+                horizontal_alignment=ft.CrossAxisAlignment.END,
+            ),
+            border_radius=12,
+            border=ft.Border(
+                top=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+                bottom=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+                left=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+                right=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+            ),
+            bgcolor=c.get("card2", "#24242c"),
+            padding=_padding_only(left=16, right=16, top=8, bottom=8),
+            margin=_margin_only(left=16),
+            visible=False,
+        )
+        # Secondary index readouts (BANK NIFTY / SENSEX / NIFTY IT) — a slim
+        # ticker strip at the bottom of the hero; hidden until data arrives.
+        self.market_strip = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, visible=False)
         hero = ft.Container(
             content=ft.Column(
-                controls=[self.hero_text, ft.Container(height=16), self.hero_sub],
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Column(
+                                controls=[self.hero_text, ft.Container(height=14), self.hero_sub],
+                                spacing=0,
+                                expand=True,
+                            ),
+                            self.market_box,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Container(height=10),
+                    self.market_strip,
+                ],
                 spacing=0,
             ),
             gradient=ft.LinearGradient(
@@ -350,8 +393,7 @@ class LayoutViewMixin:
             ),
             border_radius=14,
             shadow=_card_shadow(),
-            height=104,
-            padding=_padding_only(left=26, top=24),
+            padding=_padding_only(left=26, right=18, top=14, bottom=12),
             margin=_margin_only(bottom=8),
         )
 
@@ -436,9 +478,14 @@ class LayoutViewMixin:
         )
 
         self.empty_label = ft.Container(
-            content=ft.Text(
-                "\nNo results yet — hit ▶ RUN SCAN\n",
-                size=13, color=c["text_dim"], text_align=ft.TextAlign.CENTER,
+            content=ft.Column(
+                controls=[
+                    ft.Icon(ft.Icons.SEARCH_OFF, size=42, color=c["text_faint"]),
+                    ft.Text("No results yet", size=14, weight=ft.FontWeight.BOLD, color=c["text"]),
+                    ft.Text("Choose a universe and hit RUN SCAN", size=11, color=c["text_dim"]),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=6,
             ),
             alignment=Alignment.CENTER,
             padding=40,
@@ -473,22 +520,24 @@ class LayoutViewMixin:
             bgcolor=c["main_bg"],
             gradient=ft.RadialGradient(
                 center=Alignment(x=-1.0, y=-1.0),
-                colors=["#1b2f4d", c["main_bg"]],
+                colors=[c["bg_radial"], c["main_bg"]],
             ),
         )
         return self.main_area_box
 
     def _build_summary_row(self) -> ft.Row:
         c = self.theme_colors
+        # Stat-card icons are Material icons (not unicode glyphs) so they
+        # render identically on every platform/font stack.
         stats = [
-            ("TOTAL", "total", c["cyan"], "◈"),
-            ("PASSED", "passed", c["green"], "✓"),
-            ("ENTRY", "entry", c["pink"], "★"),
-            ("AVG", "avg", c["lime"], "⌀"),
-            ("HIGH", "high", c["green"], "▲"),
-            ("BULL", "bull", c["green"], "↗"),
-            ("BEAR", "bear", c["red"], "↘"),
-            ("DEAD-SKIP", "dead_skip", c["orange"], "∅"),
+            ("TOTAL", "total", c["cyan"], ft.Icons.DONUT_SMALL),
+            ("PASSED", "passed", c["green"], ft.Icons.CHECK_CIRCLE_OUTLINE),
+            ("ENTRY", "entry", c["pink"], ft.Icons.STAR_OUTLINE),
+            ("AVG", "avg", c["lime"], ft.Icons.SPEED),
+            ("HIGH", "high", c["green"], ft.Icons.TRENDING_UP),
+            ("BULL", "bull", c["green"], ft.Icons.NORTH_EAST),
+            ("BEAR", "bear", c["red"], ft.Icons.SOUTH_EAST),
+            ("DEAD-SKIP", "dead_skip", c["orange"], ft.Icons.BLOCK),
         ]
         cards = []
         for label, key, color, icon in stats:
@@ -499,7 +548,7 @@ class LayoutViewMixin:
                     controls=[
                         ft.Container(height=2, bgcolor=color, border_radius=1),
                         ft.Row([
-                            ft.Text(icon, size=10, color=color),
+                            ft.Icon(icon, size=10, color=color),
                             ft.Text(label, size=8, weight=ft.FontWeight.BOLD, color=c["text_faint"]),
                         ], spacing=4),
                         val_label,
@@ -521,10 +570,11 @@ class LayoutViewMixin:
         c = self.theme_colors
 
         avatar = ft.Container(
-            content=ft.Text("ABHI", size=13, weight=ft.FontWeight.BOLD, color="#8dffc4"),
+            content=ft.Text("ABHI", size=13, weight=ft.FontWeight.BOLD,
+                            color=c["avatar_text"]),
             width=52, height=52, border_radius=26,
-            bgcolor="#12331f",
-            border=_border_all(2, c["cyan"]),
+            bgcolor=c["avatar_bg"],
+            border=_border_all(2, c["avatar_border"]),
             alignment=Alignment.CENTER,
         )
 
@@ -645,3 +695,122 @@ class LayoutViewMixin:
                 margin=_margin_only(bottom=3),
             )
             self.topicks_column.controls.append(card)
+
+    # ── Market readout (hero card) ────────────────────────────────────────
+    # The hero shows the latest NIFTY 50 level / day change plus a strip of
+    # secondary indices, fetched through the same provider chain the scan
+    # engine uses (4 h disk cache, so this never duplicates a scan's download
+    # and quietly no-ops offline). Extra indices are each capped at 8 s so an
+    # offline launch cannot stall the daemon warm-up for long.
+    _EXTRA_INDICES = (("^NSEBANK", "BANK NIFTY"), ("^BSESN", "SENSEX"),
+                      ("^CNXIT", "NIFTY IT"))
+    _INDEX_FETCH_TIMEOUT = 8.0
+
+    @staticmethod
+    def _quote_from_df(df) -> dict | None:
+        """{level, change, pct} from an OHLCV frame's close column."""
+        try:
+            if df is None or "close" not in df.columns:
+                return None
+            closes = df["close"].dropna()
+            if len(closes) < 2:
+                return None
+            last = float(closes.iloc[-1])
+            prev = float(closes.iloc[-2])
+            if not last or not prev:
+                return None
+            return {"level": last, "change": last - prev,
+                    "pct": (last - prev) / prev * 100.0}
+        except Exception:
+            return None
+
+    @staticmethod
+    def _fetch_index_bounded(symbol: str, period: str = "1y",
+                             timeout: float = 8.0):
+        """fetch_index_data capped at ``timeout`` s (daemon thread join)."""
+        import threading
+        box: dict = {}
+
+        def _run():
+            try:
+                from .data_fetcher import fetch_index_data
+                box["v"] = fetch_index_data(symbol, period=period)
+            except Exception:
+                box["v"] = None
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            return None
+        return box.get("v")
+
+    def _market_snapshot(self) -> dict | None:
+        """NIFTY quote + secondary-index quotes (worker thread only)."""
+        info = self._quote_from_df(self._fetch_index_bounded("^NSEI"))
+        quotes = []
+        for symbol, label in self._EXTRA_INDICES:
+            q = self._quote_from_df(self._fetch_index_bounded(symbol))
+            if q is not None:
+                quotes.append({"label": label, **q})
+        out = dict(info or {})
+        out["quotes"] = quotes
+        return out if "level" in out else None
+
+    def _market_chip(self, q: dict) -> ft.Container:
+        """One compact index readout chip for the hero ticker strip."""
+        c = self.theme_colors
+        up = q["change"] >= 0
+        move_color = c["green"] if up else c["red"]
+        return ft.Container(
+            content=ft.Row([
+                ft.Text(q["label"], size=9, weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.with_opacity(0.85, c["hero_sub"])),
+                ft.Text(f"{q['level']:,.1f}", size=13, weight=ft.FontWeight.BOLD,
+                        color=c["hero_title"]),
+                ft.Text(f"{'▲' if up else '▼'} {q['pct']:+.2f}%", size=10,
+                        weight=ft.FontWeight.BOLD, color=move_color),
+            ], spacing=7, vertical_alignment=ft.CrossAxisAlignment.BASELINE),
+            bgcolor=c.get("chip_neutral", "#23232b"),
+            border_radius=9,
+            border=ft.Border(
+                top=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+                bottom=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+                left=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+                right=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
+            ),
+            padding=_padding_only(left=12, right=12, top=6, bottom=6),
+            tooltip=f"{q['label']} · day change",
+        )
+
+    def _render_market(self, info: dict | None):
+        """Apply a market snapshot to the hero readout + strip (UI thread)."""
+        box = getattr(self, "market_box", None)
+        self._last_market = info or None
+        if box is None:
+            return
+        if not info:
+            box.visible = False
+            if getattr(self, "market_strip", None) is not None:
+                self.market_strip.visible = False
+            return
+        c = self.theme_colors
+        up = info["change"] >= 0
+        self.market_value.value = f"{info['level']:,.1f}"
+        self.market_change.value = (
+            f"{'▲' if up else '▼'} {abs(info['change']):,.1f} ({info['pct']:+.2f}%)"
+        )
+        self.market_change.color = c["green"] if up else c["red"]
+        self.market_value.color = c["green"] if up else c["red"]
+        box.visible = True
+        strip = getattr(self, "market_strip", None)
+        if strip is not None:
+            chips = [self._market_chip(q) for q in info.get("quotes", [])]
+            strip.controls = chips
+            strip.visible = bool(chips)
+
+    def _warm_market(self):
+        """Refresh the hero readout from disk cache / providers (daemon)."""
+        info = self._market_snapshot()
+        if info is not None:
+            self._safe_update(lambda: self._render_market(info))

@@ -119,6 +119,8 @@ def setup_trace(
     # Currently we leave scan.log to app.py's _log() file writes.
 
     # ── Uncaught exception hook ────────────────────────────────────────────
+    _prev_excepthook = sys.excepthook
+
     def _excepthook(exc_type, exc_value, exc_tb):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_tb)
@@ -126,6 +128,9 @@ def setup_trace(
         logging.getLogger("unhandled").critical(
             "Uncaught exception", exc_info=(exc_type, exc_value, exc_tb)
         )
+        # Chain to previous hook (e.g. pytest, Sentry)
+        if _prev_excepthook is not sys.__excepthook__:
+            _prev_excepthook(exc_type, exc_value, exc_tb)
 
     sys.excepthook = _excepthook
 
