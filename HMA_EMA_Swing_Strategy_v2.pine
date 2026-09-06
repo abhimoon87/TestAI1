@@ -2,7 +2,7 @@
 // © YourUsername
 
 //@version=6
-indicator("HMAxEMA Swing Trading System", overlay=true, max_labels_count=500, max_boxes_count=200, max_lines_count=100, shorttitle="SWING")
+indicator("HMAxEMA_VP Swing Trading System ", overlay=true, max_labels_count=500, max_boxes_count=200, max_lines_count=100, max_bars_back=5000, shorttitle="HMAxEMA_VP")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. INPUT PARAMETERS
@@ -42,14 +42,15 @@ volumeMALength = input.int(20, "Volume MA Length", minval=1, group="Technical An
 atrLength     = input.int(14, "ATR Length", minval=1, group="Technical Analysis")
 
 // ── Sideways Filter ──────────────────────────────────────────────────────────
-adxLen        = input.int(14, "ADX Length", group="Sideways Filter")
+adxLen        = input.int(14, "ADX Length", minval=1, group="Sideways Filter")
 adxThreshold  = input.float(20.0, "ADX Sideways Threshold (Below = Chop)", group="Sideways Filter")
-chopLen       = input.int(14, "Choppiness Length", group="Sideways Filter")
+chopLen       = input.int(14, "Choppiness Length", minval=2, group="Sideways Filter")
 chopThreshold = input.float(61.8, "Chop Threshold (Above = Chop)", group="Sideways Filter")
 maType        = input.string("EMA", "MA Type for Slope", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Sideways Filter")
 maLen         = input.int(50, "Slope MA Length", minval=1, group="Sideways Filter")
 slopeLookback = input.int(10, "Slope Lookback (Bars)", minval=1, group="Sideways Filter")
 flatThreshold = input.float(0.5, "Flatness Threshold (%)", step=0.1, group="Sideways Filter")
+showSidewaysStatus = input.bool(true, "Show Sideways Status", group="Sideways Filter")
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 showDash    = input.bool(true, "Show Dashboard", group="Dashboard")
@@ -77,6 +78,7 @@ extendM4   = input.string("Both", "Extend:", ["Both", "Right"], inline="p4", gro
 ptColorSup = input.color(color.rgb(30, 214, 125), "Support Color", group="Pivot Levels")
 ptColorRes = input.color(#eb7c14, "Resistance Color", group="Pivot Levels")
 ptColorAct = input.color(color.rgb(27, 133, 255), "Active Color", group="Pivot Levels")
+showPivotFill = input.bool(true, "Show Pivot Zone Fill", group="Pivot Levels")
 
 // ── Step Channel Momentum ─────────────────────────────────────────────────
 showSCMid    = input.bool(false, "Show MidLine", group="Step Channel")
@@ -125,6 +127,23 @@ get_ma(type, src, len) =>
         ma := ta.vwma(src, len)
     ma
 
+// Auto-adapting history guard for series-index offsets.
+// Built-in indicator *lengths* (ta.atr, ta.sma, ta.rsi, ta.highest, ta.dmi,
+// math.sum, ta.pivothigh, for-loop bounds) require a `simple int` — they CANNOT
+// be derived from bar_index at runtime, so they keep their static inputs. Those
+// are covered by the fixed max_bars_back=5000 ceiling in the indicator
+// declaration. `safe()` is used only on the main-chart series offsets
+// (high[n], low[n], bar_index[n]) used by the pivot ladder; it clamps them to
+// the bars actually loaded so sparse symbols never request readahead past the
+// buffer while long-history symbols keep full depth. Offsets inside
+// request.security() (MTF momentum/RS) intentionally stay static.
+barsAvail() =>
+    // bar_index on the last bar ~= total loaded bars - 1
+    bar_index
+
+safe(n) =>
+    math.max(1, math.min(n, math.max(barsAvail() - 1, 1)))
+
 // ══════════════════════════════════════════════════════════════════════════════
 // 3. MTF DATA & CROSSOVER SIGNALS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -138,8 +157,6 @@ get_mtf_data() =>
     mtf_rsi = ta.rsi(close, rsiLength)
     mtf_volMA = ta.sma(volume, volumeMALength)
     mtf_atr = ta.atr(atrLength)
-    mtf_hh = ta.highest(high, 50)
-    mtf_ll = ta.lowest(low, 50)
     mtf_pc1 = ((close - close[21]) / close[21]) * 100
     mtf_pc3 = ((close - close[63]) / close[63]) * 100
     mtf_volT = ta.sma(volume, 50)
@@ -150,11 +167,11 @@ get_mtf_data() =>
     // OBV
     mtf_obv = ta.obv
     mtf_obvMA = ta.sma(mtf_obv, 20)
-    // ADX
+    // ADX (fixed 14-period for scoring consistency)
     [_, _, mtf_adx] = ta.dmi(14, 14)
-    [mtf_fast_ma, mtf_slow_ma, mtf_bullishCross, mtf_bearishCross, mtf_stockRS, mtf_rsi, mtf_volMA, mtf_atr, mtf_hh, mtf_ll, mtf_pc1, mtf_pc3, mtf_volT, mtf_macdHist, mtf_stochK, mtf_obv, mtf_obvMA, mtf_adx, close, volume]
+    [mtf_fast_ma, mtf_slow_ma, mtf_bullishCross, mtf_bearishCross, mtf_stockRS, mtf_rsi, mtf_volMA, mtf_atr, mtf_pc1, mtf_pc3, mtf_volT, mtf_macdHist, mtf_stochK, mtf_obv, mtf_obvMA, mtf_adx, close, volume]
 
-[fast_ma, slow_ma, bx, sx, stockRS, rsi, volMA, atr, hh50, ll50, pc1M, pc3M, volT, macdHist, stochK, obv, obvMA, mtf_adx, tf_close, tf_volume] = request.security(syminfo.tickerid, tf, get_mtf_data())
+[fast_ma, slow_ma, bx, sx, stockRS, rsi, volMA, atr, pc1M, pc3M, volT, macdHist, stochK, obv, obvMA, mtf_adx, tf_close, tf_volume] = request.security(syminfo.tickerid, tf, get_mtf_data())
 
 // NOTE: `and not bx[1]` is needed for MTF — request.security carries the boolean
 // forward across all intra-period lower-TF bars, so deduplication collapses
@@ -163,23 +180,13 @@ buyCross = bx and not bx[1]
 sellCross = sx and not sx[1]
 
 // Plot MAs
-plot(showMAs ? fast_ma : na, "Fast MA", fastMAColor, 2)
-plot(showMAs ? slow_ma : na, "Slow MA", slowMAColor, 2)
+pFast = plot(showMAs ? fast_ma : na, "Fast MA", fastMAColor, 2)
+pSlow = plot(showMAs ? slow_ma : na, "Slow MA", slowMAColor, 2)
+fill(pFast, pSlow, color=fast_ma > slow_ma ? color.new(color.green, 85) : color.new(color.red, 85), title="MA Fill")
 
 // Crossover signals
 plotshape(not hideOldSignals and buyCross, "All Buy", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white)
 plotshape(not hideOldSignals and sellCross, "All Sell", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white)
-
-var label activeBuy = na
-var label activeSell = na
-
-if hideOldSignals and buyCross
-    label.delete(activeBuy)
-    activeBuy := label.new(bar_index, low, "BUY", color=color.green, textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar)
-
-if hideOldSignals and sellCross
-    label.delete(activeSell)
-    activeSell := label.new(bar_index, high, "SELL", color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 4. RELATIVE STRENGTH & SCORING ENGINE
@@ -197,20 +204,22 @@ rsNft = stockRS - nftRS
 rsNftStat = rsNft > 0 ? "Outperforming" : "Underperforming"
 rsNftCol = rsNft > 0 ? color.green : color.red
 
-// ── Fundamental Data ────────────────────────────────────────────────────────
-float peRatio     = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM")
-float epsCurrent  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "TTM")
-float epsPrev     = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "FY")
-float revCurrent  = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "TTM")
-float revPrev     = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "FY")
-float netIncome   = request.financial(syminfo.tickerid, "NET_INCOME", "TTM")
-float equity      = request.financial(syminfo.tickerid, "COMMON_EQUITY_TOTAL", "FQ")
+// ── Fundamental Data (unconditional calls so stocks work; ignore_invalid_symbol keeps Forex/Index/Crypto from erroring) ──
+bool hasFund = syminfo.type == "stock"
+string assetType = hasFund ? "" : syminfo.type == "forex" ? "Forex" : syminfo.type == "crypto" ? "Crypto" : syminfo.type == "index" ? "Index" : syminfo.type == "commodity" ? "Commodity" : syminfo.type == "futures" ? "Futures" : str.upper(syminfo.type)
+float epsBasic    = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", barmerge.gaps_off, true)
+float epsCurrent  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "TTM", barmerge.gaps_off, true)
+float epsPrev     = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "FY", barmerge.gaps_off, true)
+float revCurrent  = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "TTM", barmerge.gaps_off, true)
+float revPrev     = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "FY", barmerge.gaps_off, true)
+float netIncome   = request.financial(syminfo.tickerid, "NET_INCOME", "TTM", barmerge.gaps_off, true)
+float equity      = request.financial(syminfo.tickerid, "COMMON_EQUITY_TOTAL", "FQ", barmerge.gaps_off, true)
 
-// Derived fundamental metrics
-float calcPE       = peRatio != 0 ? close / peRatio : na
-float epsGrowth    = epsPrev != 0 and not na(epsPrev) ? ((epsCurrent - epsPrev) / math.abs(epsPrev)) * 100 : na
-float revGrowth    = revPrev != 0 and not na(revPrev) ? ((revCurrent - revPrev) / math.abs(revPrev)) * 100 : na
-float roe          = equity != 0 and not na(equity) ? (netIncome / equity) * 100 : na
+// Derived fundamental metrics (only meaningful when hasFund; otherwise stay na via guards below)
+float calcPE       = not na(epsBasic) and epsBasic != 0 ? close / epsBasic : na
+float epsGrowth    = not na(epsCurrent) and not na(epsPrev) and epsPrev != 0 ? ((epsCurrent - epsPrev) / math.abs(epsPrev)) * 100 : na
+float revGrowth    = not na(revCurrent) and not na(revPrev) and revPrev != 0 ? ((revCurrent - revPrev) / math.abs(revPrev)) * 100 : na
+float roe          = not na(netIncome) and not na(equity) and equity != 0 ? (netIncome / equity) * 100 : na
 
 // Scoring — Status labels
 rsiStat = rsi > 70 ? "Overbought" : rsi < 30 ? "Oversold" : "Neutral"
@@ -228,8 +237,9 @@ liqStat = tf_volume > volT ? "Good" : "Poor"
 
 // ── Category 1: TREND (max 15 pts) ──────────────────────────────────────────
 float trendScore = 0.0
-trendScore += tf_close > slow_ma and fast_ma > slow_ma ? 10.0 : tf_close > slow_ma ? 5.0 : 0.0
-trendScore += fast_ma > slow_ma ? 5.0 : 0.0
+if not na(slow_ma) and not na(fast_ma)
+    trendScore += tf_close > slow_ma and fast_ma > slow_ma ? 10.0 : tf_close > slow_ma ? 5.0 : 0.0
+    trendScore += fast_ma > slow_ma ? 5.0 : 0.0
 trendScore += not na(mtf_adx) and mtf_adx > 25 ? 2.0 : 0.0  // ADX confirms trend strength
 trendScore := math.min(trendScore, 15.0)
 
@@ -271,32 +281,36 @@ obvScore := math.min(obvScore, 5.0)
 
 // ── Category 7: VOLUME (max 10 pts) ─────────────────────────────────────────
 float volScore2 = 0.0
-volScore2 += tf_volume > volMA ? 5.0 : 0.0
-volScore2 += tf_volume > volMA * 1.2 ? 3.0 : 0.0  // Above average bonus
+if not na(volMA)
+    volScore2 += tf_volume > volMA ? 5.0 : 0.0
+    volScore2 += tf_volume > volMA * 1.2 ? 3.0 : 0.0  // Above average bonus
 volScore2 += liqStat == "Good" ? 2.0 : 0.0
 volScore2 := math.min(volScore2, 10.0)
 
 // ── Category 8: RELATIVE STRENGTH (max 10 pts) ──────────────────────────────
 float rsScore = 0.0
-rsScore += rsIdx > 0 ? 5.0 : 0.0
-rsScore += rsNft > 0 ? 5.0 : 0.0
+if not na(rsIdx)
+    rsScore += rsIdx > 0 ? 5.0 : 0.0
+if not na(rsNft)
+    rsScore += rsNft > 0 ? 5.0 : 0.0
 rsScore := math.min(rsScore, 10.0)
 
 // ── Category 9: VOLATILITY (max 5 pts) ──────────────────────────────────────
 float volatScore = 0.0
 volatScore := volatStat == "Medium" or volatStat == "Low" ? 5.0 : 0.0
 
-// ── Category 10: FUNDAMENTALS (max 20 pts) ──────────────────────────────────
+// ── Category 10: FUNDAMENTALS (max 20 pts) — stock symbols only ─────────────
 float fundScore = 0.0
-// P/E: Lower is better (within reason)
-fundScore += not na(calcPE) and calcPE > 0 and calcPE < 15 ? 5.0 : not na(calcPE) and calcPE < 25 ? 3.0 : 0.0
-// EPS Growth: Higher is better
-fundScore += not na(epsGrowth) and epsGrowth > 20 ? 5.0 : not na(epsGrowth) and epsGrowth > 0 ? 3.0 : 0.0
-// Revenue Growth: Higher is better
-fundScore += not na(revGrowth) and revGrowth > 15 ? 5.0 : not na(revGrowth) and revGrowth > 0 ? 3.0 : 0.0
-// ROE: Higher is better
-fundScore += not na(roe) and roe > 20 ? 5.0 : not na(roe) and roe > 10 ? 3.0 : 0.0
-fundScore := math.min(fundScore, 20.0)
+if hasFund
+    // P/E: Lower is better (within reason)
+    fundScore += not na(calcPE) and calcPE > 0 and calcPE < 15 ? 5.0 : not na(calcPE) and calcPE < 25 ? 3.0 : 0.0
+    // EPS Growth: Higher is better
+    fundScore += not na(epsGrowth) and epsGrowth > 20 ? 5.0 : not na(epsGrowth) and epsGrowth > 0 ? 3.0 : 0.0
+    // Revenue Growth: Higher is better
+    fundScore += not na(revGrowth) and revGrowth > 15 ? 5.0 : not na(revGrowth) and revGrowth > 0 ? 3.0 : 0.0
+    // ROE: Higher is better
+    fundScore += not na(roe) and roe > 20 ? 5.0 : not na(roe) and roe > 10 ? 3.0 : 0.0
+    fundScore := math.min(fundScore, 20.0)
 
 // ── TOTAL SCORE ─────────────────────────────────────────────────────────────
 float score = trendScore + momScore + rsiScore + macdScore + stochScore + obvScore + volScore2 + rsScore + volatScore + fundScore
@@ -312,6 +326,20 @@ string fundComp  = str.tostring(math.round(fundScore)) + "/20"
 
 recStr = score >= 70 ? "EXCELLENT" : score >= 50 ? "GOOD" : score >= 30 ? "MODERATE" : "POOR"
 recCol = score >= 70 ? color.green : score >= 50 ? color.lime : score >= 30 ? color.orange : color.red
+
+// Active signal labels (placed after scoring engine to access score)
+var label activeBuy = na
+var label activeSell = na
+
+if hideOldSignals and buyCross
+    label.delete(activeBuy)
+    string sigSize = score >= 70 ? size.large : score >= 50 ? size.normal : size.small
+    activeBuy := label.new(bar_index, low, "BUY " + str.tostring(math.round(score)), color=color.green, textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=sigSize)
+
+if hideOldSignals and sellCross
+    label.delete(activeSell)
+    string sigSize = score >= 70 ? size.large : score >= 50 ? size.normal : size.small
+    activeSell := label.new(bar_index, high, "SELL " + str.tostring(math.round(score)), color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=sigSize)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 5. VOLUME PROFILE
@@ -341,11 +369,13 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
         float b_v = volume[i]
 
         if b_h == b_l
-            int idx = int((b_h - vp_ll) / rowSize)
+            int idx = int(math.round((b_h - vp_ll) / rowSize))
             idx := int(math.max(0, math.min(vpRows - 1, idx)))
             array.set(a_vol, idx, array.get(a_vol, idx) + b_v)
         else
-            for r = 0 to vpRows - 1
+            int startBin = int(math.max(0, math.floor((b_l - vp_ll) / rowSize)))
+            int endBin = int(math.min(vpRows - 1, math.ceil((b_h - vp_ll) / rowSize) - 1))
+            for r = startBin to endBin
                 float binBot = vp_ll + (r * rowSize)
                 float binTop = vp_ll + ((r + 1) * rowSize)
                 float overlap = math.max(0, math.min(b_h, binTop) - math.max(b_l, binBot))
@@ -359,6 +389,7 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
     int startBar = int(math.max(0, bar_index - vpLookback))
 
     if showProfile
+        int maxDistFromPOC = math.max(pocIdx, vpRows - 1 - pocIdx)
         for r = 0 to vpRows - 1
             float binVol = array.get(a_vol, r)
             if binVol > 0
@@ -369,8 +400,11 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
                 int leftBoundary = vpAlignment == "Left" ? startBar : bar_index - widthBars
                 int rightBoundary = vpAlignment == "Left" ? startBar + widthBars : bar_index
 
-                color boxBg = fillProfile ? ((r == pocIdx) ? pocColor : vpColor) : na
-                color boxBo = fillProfile ? na : ((r == pocIdx) ? pocColor : vpColor)
+                int distFromPOC = math.abs(r - pocIdx)
+                float opacity = maxDistFromPOC > 0 ? 50 + (distFromPOC / maxDistFromPOC) * 40 : 50
+                color vpGrad = r == pocIdx ? pocColor : color.new(vpColor, int(opacity))
+                color boxBg = fillProfile ? vpGrad : na
+                color boxBo = fillProfile ? na : ((r == pocIdx) ? pocColor : color.new(vpColor, int(opacity)))
 
                 b = box.new(left=leftBoundary, top=binTop, right=rightBoundary, bottom=binBot, border_color=boxBo, bgcolor=boxBg, text="")
                 array.push(vpBoxes, b)
@@ -381,25 +415,36 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
 string clean_ticker = syminfo.prefix + ":" + syminfo.ticker
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 7. STEP CHANNEL MOMENTUM
+// 6. STEP CHANNEL MOMENTUM
 // ══════════════════════════════════════════════════════════════════════════════
 
 var float sc_pH = na
 var float sc_pL = na
 var bool  sc_trend = false
 var bool  sc_trendSet = false
+var label[] scLabels = array.new_label()
 
 sc_ph = ta.pivothigh(scLen, scLen)
 sc_pl = ta.pivotlow(scLen, scLen)
 
+pushSClabel(px, py) =>
+    array.push(scLabels, label.new(px, py, "⬥", style=label.style_label_center, textcolor=chart.fg_color, size=size.normal, color=color(na)))
+    while array.size(scLabels) > 50
+        label.delete(array.shift(scLabels))
+
+if not showSCLabels and array.size(scLabels) > 0
+    for lb in scLabels
+        label.delete(lb)
+    array.clear(scLabels)
+
 if not na(sc_ph)
     sc_pH := sc_ph
     if showSCLabels
-        label.new(bar_index - scLen, sc_ph, "⬥", style=label.style_label_center, textcolor=chart.fg_color, size=size.normal, color=color(na))
+        pushSClabel(bar_index - scLen, sc_ph)
 if not na(sc_pl)
     sc_pL := sc_pl
     if showSCLabels
-        label.new(bar_index - scLen, sc_pl, "⬥", style=label.style_label_center, textcolor=chart.fg_color, size=size.normal, color=color(na))
+        pushSClabel(bar_index - scLen, sc_pl)
 
 sc_avg = math.avg(sc_pH, sc_pL)
 sc_atr = ta.atr(200) * scMult
@@ -429,18 +474,36 @@ plotcandle(showMomCandles ? open : na, high, low, close, title="Momentum Candles
 
 
 // ══════════════════════════════════════════════════════════════════════════════
+// 7. SIDeways / TREND FILTER (variables — display table stays after dashboard)
+// ══════════════════════════════════════════════════════════════════════════════
+
+[_, _, adxSide] = ta.dmi(adxLen, adxLen)
+isSidewaysADX = adxSide < adxThreshold
+
+chopSum = math.sum(ta.atr(1), chopLen)
+chopRange = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
+chop = 100 * math.log10(chopSum / (chopRange == 0 ? syminfo.mintick : chopRange)) / math.log10(chopLen)
+isSidewaysChop = chop > chopThreshold
+
+selectedMA = get_ma(maType, close, maLen)
+maSlopePct = selectedMA[slopeLookback] != 0 ? math.abs((selectedMA - selectedMA[slopeLookback]) / selectedMA[slopeLookback]) * 100 : 0.0
+isSidewaysSlope = maSlopePct < flatThreshold
+
+isSideways = isSidewaysADX or isSidewaysChop or isSidewaysSlope
+
+// ══════════════════════════════════════════════════════════════════════════════
 // 8. DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════════
 
-string trdStat2 = tf_close > slow_ma ? "Bullish" : "Bearish"
-color  trdCol2  = tf_close > slow_ma ? color.green : color.red
-string trdStr   = trdStat2 == "Bullish" ? "▲ Bull" : "▼ Bear"
+string trdStat2 = not na(slow_ma) and tf_close > slow_ma ? "Bullish" : not na(slow_ma) ? "Bearish" : "—"
+color  trdCol2  = not na(slow_ma) and tf_close > slow_ma ? color.green : not na(slow_ma) ? color.red : color.gray
+string trdStr   = trdStat2 == "Bullish" ? "▲ Bull" : trdStat2 == "Bearish" ? "▼ Bear" : "—"
 
 color  hdr_bg  = color.rgb(10,  35,  25,  10)
 color  alt_bg  = color.rgb(8,   28,  20,  10)
 color  odd_bg  = dash_bg
 color  lbl_col = color.rgb(130, 150, 120, 0)
-int    dash_rows = compactMode ? 5 : 9
+int    dash_rows = compactMode ? 8 : 14
 var table dash = table.new(dashPos == "Top Left" ? position.top_left : dashPos == "Top Right" ? position.top_right : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right, 2, dash_rows, border_width=1, border_color=color.rgb(10,55,40,20), frame_width=1, frame_color=color.rgb(15,65,50,10))
 
 if showDash and barstate.islast
@@ -455,55 +518,81 @@ if showDash and barstate.islast
         table.cell(dash, 1, 3, str.tostring(rsi, "#.#") + " " + rsiStat, text_color=rsiCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 4, "Momentum",   text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 4, sc_mktState,   text_color=sc_color, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 0, 5, "Vol",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 5, volStat,       text_color=volCol,   bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string cAtrStr = str.tostring(atrPct, "#.##") + "%"
+        color  cAtrCol = volatStat == "High" ? color.red : volatStat == "Low" ? color.green : color.orange
+        table.cell(dash, 0, 6, "ATR",        text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 6, cAtrStr,       text_color=cAtrCol,  bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string cSigStr = buyCross ? "▲ BUY" : sellCross ? "▼ SELL" : "— None"
+        color  cSigCol = buyCross ? color.green : sellCross ? color.red : color.gray
+        table.cell(dash, 0, 7, "Signal",     text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 7, cSigStr,       text_color=cSigCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
     else
+        int filled = int(math.round(score / 10))
+        string scoreBar = ""
+        for i = 0 to 9
+            scoreBar += i < filled ? "█" : "░"
+        color trendRowCol = trendScore >= 10.5 ? color.green : trendScore >= 6 ? color.orange : color.red
+        color rsiRowCol   = rsiScore >= 5.6 ? color.green : rsiScore >= 3.2 ? color.orange : color.red
+        color macdRowCol  = macdScore >= 4.9 ? color.green : macdScore >= 2.8 ? color.orange : color.red
+        color momRowCol   = momScore >= 10.5 ? color.green : momScore >= 6 ? color.orange : color.red
+        color volRowCol   = volScore2 >= 7 ? color.green : volScore2 >= 4 ? color.orange : color.red
+        color rsRowCol    = rsScore >= 7 ? color.green : rsScore >= 4 ? color.orange : color.red
+        color fundRowCol  = hasFund ? (fundScore >= 14 ? color.green : fundScore >= 8 ? color.orange : color.red) : color.gray
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 1, str.tostring(score, "#") + "/100 - " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 1, str.tostring(score, "#") + "/100 " + scoreBar + " " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 2, "Trend",      text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 2, trdStr + "  " + trendComp, text_color=trdCol2, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 2, trdStr + "  " + trendComp, text_color=trendRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 3, "RSI",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 3, str.tostring(rsi, "#.#") + " " + rsiStat + "  " + rsiComp, text_color=rsiCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 4, "MACD",       text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 4, (not na(macdHist) and macdHist > 0 ? "▲" : not na(macdHist) ? "▼" : "—") + "  " + macdComp, text_color=not na(macdHist) and macdHist > 0 ? color.green : not na(macdHist) ? color.red : color.gray, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 4, (not na(macdHist) and macdHist > 0 ? "▲" : not na(macdHist) ? "▼" : "—") + "  " + macdComp, text_color=macdRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 5, "Momentum",   text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 5, sc_mktState,   text_color=sc_color, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 5, sc_mktState + "  " + str.tostring(math.round(momScore)) + "/15", text_color=momRowCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 6, "Vol",        text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 6, volStat + "  " + volComp2, text_color=volCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 6, volStat + "  " + volComp2, text_color=volRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 7, "RS",         text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 7, rsNftStat + "  " + rsComp, text_color=rsNftCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 8, "Fund",       text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 8, fundComp,      text_color=color.rgb(255,230,0), bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 8, hasFund ? fundComp : assetType, text_color=fundRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string activeSignal = buyCross ? "▲ BUY" : sellCross ? "▼ SELL" : "— None"
+        color  signalCol    = buyCross ? color.green : sellCross ? color.red : color.gray
+        table.cell(dash, 0, 9, "Signal",     text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 9, activeSignal,  text_color=signalCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string sideStr = isSideways ? "⚠ Sideways" : "✓ Trending"
+        color  sideCol = isSideways ? color.orange : color.green
+        table.cell(dash, 0, 10, "Sideways",   text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 10, sideStr,       text_color=sideCol,  bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string atrStr = str.tostring(atr, "#.##") + " (" + str.tostring(atrPct, "#.##") + "%) " + volatStat
+        color  atrCol = volatStat == "High" ? color.red : volatStat == "Low" ? color.green : color.orange
+        table.cell(dash, 0, 11, "ATR",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 11, atrStr,        text_color=atrCol,   bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string stochStat = stochK > 80 ? "Overbought" : stochK < 20 ? "Oversold" : "Neutral"
+        color  stochCol  = stochK > 80 ? color.red : stochK < 20 ? color.green : color.gray
+        table.cell(dash, 0, 12, "Stoch",      text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 12, str.tostring(stochK, "#.#") + " " + stochStat, text_color=stochCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        string obvStr = not na(obv) and not na(obvMA) ? (obv > obvMA ? "▲ Accumulation" : "▼ Distribution") : "—"
+        color  obvCol  = not na(obv) and not na(obvMA) ? (obv > obvMA ? color.green : color.red) : color.gray
+        table.cell(dash, 0, 13, "OBV",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 13, obvStr,        text_color=obvCol,   bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 10. SIDEWAYS / TREND FILTER
+// 9. SIDEWAYS / TREND FILTER (display table)
 // ══════════════════════════════════════════════════════════════════════════════
-
-// ADX Trend Strength
-[_, _, adx] = ta.dmi(adxLen, adxLen)
-isSidewaysADX = adx < adxThreshold
-
-// Choppiness Index
-chopSum = math.sum(ta.atr(1), chopLen)
-chopRange = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
-chop = 100 * math.log10(chopSum / (chopRange == 0 ? syminfo.mintick : chopRange)) / math.log10(chopLen)
-isSidewaysChop = chop > chopThreshold
-
-// MA Slope Flatness
-selectedMA = get_ma(maType, close, maLen)
-maSlopePct = selectedMA[slopeLookback] != 0 ? math.abs((selectedMA - selectedMA[slopeLookback]) / selectedMA[slopeLookback]) * 100 : 0.0
-isSidewaysSlope = maSlopePct < flatThreshold
-
-// Combined
-isSideways = isSidewaysADX or isSidewaysChop or isSidewaysSlope
 
 var table statusTable = table.new(position.bottom_center, 1, 1, border_width=2, border_color=color.new(color.black, 100))
 
 if barstate.islast
-    string displayTxt = isSideways ? "⚠️ " + syminfo.ticker + " IS IN SIDEWAYS (" + maType + ")" : "✅ " + syminfo.ticker + " IS TRENDING (" + maType + ")"
-    color  lblBgColor = isSideways ? color.new(color.orange, 10) : color.new(color.teal, 10)
-    table.cell(statusTable, 0, 0, text=displayTxt, text_color=color.white, bgcolor=lblBgColor, text_size=size.normal)
+    if showSidewaysStatus
+        string displayTxt = isSideways ? "⚠️ " + syminfo.ticker + " IS IN SIDEWAYS (" + maType + ")" : "✅ " + syminfo.ticker + " IS TRENDING (" + maType + ")"
+        color  lblBgColor = isSideways ? color.new(color.orange, 10) : color.new(color.teal, 10)
+        table.cell(statusTable, 0, 0, text=displayTxt, text_color=color.white, bgcolor=lblBgColor, text_size=size.normal)
+    else
+        table.cell(statusTable, 0, 0, text="", bgcolor=color.new(color.black, 100))
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 11. PIVOT LEVELS
+// 9. PIVOT LEVELS
 // ══════════════════════════════════════════════════════════════════════════════
 
 type PivotLevel
@@ -520,6 +609,7 @@ type PivotLevel
 
 var pivotLines  = array.new<line>()
 var pivotLabels = array.new<label>()
+var pivotBoxes  = array.new<box>()
 
 ph1 = ta.pivothigh(len1, len1)
 pl1 = ta.pivotlow(len1, len1)
@@ -532,33 +622,49 @@ pl4 = ta.pivotlow(len4, len4)
 
 float ptAtr = ta.atr(200) * 1.5
 
+// safeLen* clamps the series-index history offsets (high[len], low[len],
+// bar_index[len]) to the bars actually available on the chart. The volume-sum
+// window math.sum(volume, len*2) keeps its static simple-int length — it is
+// covered by the declaration-level max_bars_back ceiling.
+safeLen1 = safe(len1)
+safeLen2 = safe(len2)
+safeLen3 = safe(len3)
+safeLen4 = safe(len4)
+
 array<PivotLevel> pivotLevels = array.from(
-    PivotLevel.new(len1, ta.valuewhen(not na(ph1), high[len1], 0), ta.valuewhen(not na(pl1), low[len1], 0), pivot1, style1, ta.valuewhen(not na(ph1), bar_index[len1], 0), ta.valuewhen(not na(pl1), bar_index[len1], 0), extendM1, ta.valuewhen(not na(ph1), math.sum(volume, len1*2), 0), ta.valuewhen(not na(pl1), math.sum(volume, len1*2), 0)),
-    PivotLevel.new(len2, ta.valuewhen(not na(ph2), high[len2], 0), ta.valuewhen(not na(pl2), low[len2], 0), pivot2, style2, ta.valuewhen(not na(ph2), bar_index[len2], 0), ta.valuewhen(not na(pl2), bar_index[len2], 0), extendM2, ta.valuewhen(not na(ph2), math.sum(volume, len2*2), 0), ta.valuewhen(not na(pl2), math.sum(volume, len2*2), 0)),
-    PivotLevel.new(len3, ta.valuewhen(not na(ph3), high[len3], 0), ta.valuewhen(not na(pl3), low[len3], 0), pivot3, style3, ta.valuewhen(not na(ph3), bar_index[len3], 0), ta.valuewhen(not na(pl3), bar_index[len3], 0), extendM3, ta.valuewhen(not na(ph3), math.sum(volume, len3*2), 0), ta.valuewhen(not na(pl3), math.sum(volume, len3*2), 0)),
-    PivotLevel.new(len4, ta.valuewhen(not na(ph4), high[len4], 0), ta.valuewhen(not na(pl4), low[len4], 0), pivot4, style4, ta.valuewhen(not na(ph4), bar_index[len4], 0), ta.valuewhen(not na(pl4), bar_index[len4], 0), extendM4, ta.valuewhen(not na(ph4), math.sum(volume, len4*2), 0), ta.valuewhen(not na(pl4), math.sum(volume, len4*2), 0))
+    PivotLevel.new(len1, ta.valuewhen(not na(ph1), high[safeLen1], 0), ta.valuewhen(not na(pl1), low[safeLen1], 0), pivot1, style1, ta.valuewhen(not na(ph1), bar_index[safeLen1], 0), ta.valuewhen(not na(pl1), bar_index[safeLen1], 0), extendM1, ta.valuewhen(not na(ph1), math.sum(volume, len1*2), 0), ta.valuewhen(not na(pl1), math.sum(volume, len1*2), 0)),
+    PivotLevel.new(len2, ta.valuewhen(not na(ph2), high[safeLen2], 0), ta.valuewhen(not na(pl2), low[safeLen2], 0), pivot2, style2, ta.valuewhen(not na(ph2), bar_index[safeLen2], 0), ta.valuewhen(not na(pl2), bar_index[safeLen2], 0), extendM2, ta.valuewhen(not na(ph2), math.sum(volume, len2*2), 0), ta.valuewhen(not na(pl2), math.sum(volume, len2*2), 0)),
+    PivotLevel.new(len3, ta.valuewhen(not na(ph3), high[safeLen3], 0), ta.valuewhen(not na(pl3), low[safeLen3], 0), pivot3, style3, ta.valuewhen(not na(ph3), bar_index[safeLen3], 0), ta.valuewhen(not na(pl3), bar_index[safeLen3], 0), extendM3, ta.valuewhen(not na(ph3), math.sum(volume, len3*2), 0), ta.valuewhen(not na(pl3), math.sum(volume, len3*2), 0)),
+    PivotLevel.new(len4, ta.valuewhen(not na(ph4), high[safeLen4], 0), ta.valuewhen(not na(pl4), low[safeLen4], 0), pivot4, style4, ta.valuewhen(not na(ph4), bar_index[safeLen4], 0), ta.valuewhen(not na(pl4), bar_index[safeLen4], 0), extendM4, ta.valuewhen(not na(ph4), math.sum(volume, len4*2), 0), ta.valuewhen(not na(pl4), math.sum(volume, len4*2), 0))
 )
 
 drawPivotLevel(H, L, len, style_, startH, startL, extendM, volH, volL, tot) =>
-    if barstate.islast
-        ptStyle = style_ == "--" ? line.style_dashed : style_ == "-" ? line.style_solid : style_ == ".." ? line.style_dotted : line.style_solid
-        ptWidth1 = len == len1 ? 1 : len == len2 ? 2 : len == len3 ? 3 : 4
-        ptWidth2 = len == len1 ? 3 : len == len2 ? 7 : len == len3 ? 10 : 15
-        color ptColor1 = low > H + ptAtr ? ptColorSup : high < H - ptAtr ? ptColorRes : ptColorAct
-        color ptColor2 = low > L + ptAtr ? ptColorSup : high < L - ptAtr ? ptColorRes : ptColorAct
-        ptExtnd = extendM ? extend.both : extend.right
-        pivotLines.push(line.new(startH, H, bar_index, H, color=ptColor1, extend=ptExtnd, style=ptStyle, width=ptWidth1))
-        pivotLines.push(line.new(startL, L, bar_index, L, color=ptColor2, extend=ptExtnd, style=ptStyle, width=ptWidth1))
-        pivotLines.push(line.new(startH, H, bar_index, H, color=color.new(ptColor1, 80), extend=ptExtnd, width=ptWidth2))
-        pivotLines.push(line.new(startL, L, bar_index, L, color=color.new(ptColor2, 80), extend=ptExtnd, width=ptWidth2))
-        pivotLabels.push(label.new(bar_index + 15, H, str.tostring(H) + " | " + str.tostring(volH, format.volume) + " | " + str.tostring(volH / tot * 100, format.percent), textcolor=ptColor1, color=chart.bg_color, style=label.style_label_center, tooltip="Price | Volume | Volume Distribution %"))
-        pivotLabels.push(label.new(bar_index + 15, L, str.tostring(L) + " | " + str.tostring(volL, format.volume) + " | " + str.tostring(volL / tot * 100, format.percent), textcolor=ptColor2, color=chart.bg_color, style=label.style_label_center, tooltip="Price | Volume | Volume Distribution %"))
+    // Called only from a barstate.islast block — no inner guard needed
+    ptStyle = style_ == "--" ? line.style_dashed : style_ == "-" ? line.style_solid : style_ == ".." ? line.style_dotted : line.style_solid
+    ptWidth1 = len == len1 ? 1 : len == len2 ? 2 : len == len3 ? 3 : 4
+    ptWidth2 = len == len1 ? 3 : len == len2 ? 7 : len == len3 ? 10 : 15
+    color ptColor1 = low > H + ptAtr ? ptColorSup : high < H - ptAtr ? ptColorRes : ptColorAct
+    color ptColor2 = low > L + ptAtr ? ptColorSup : high < L - ptAtr ? ptColorRes : ptColorAct
+    ptExtnd = extendM ? extend.both : extend.right
+    line lineH = line.new(startH, H, bar_index, H, color=ptColor1, extend=ptExtnd, style=ptStyle, width=ptWidth1)
+    line lineL = line.new(startL, L, bar_index, L, color=ptColor2, extend=ptExtnd, style=ptStyle, width=ptWidth1)
+    pivotLines.push(lineH)
+    pivotLines.push(lineL)
+    pivotLines.push(line.new(startH, H, bar_index, H, color=color.new(ptColor1, 80), extend=ptExtnd, width=ptWidth2))
+    pivotLines.push(line.new(startL, L, bar_index, L, color=color.new(ptColor2, 80), extend=ptExtnd, width=ptWidth2))
+    pivotLabels.push(label.new(bar_index + 15, H, str.tostring(H) + " | " + str.tostring(volH, format.volume) + " | " + str.tostring(tot != 0 ? volH / tot * 100 : 0.0, format.percent), textcolor=ptColor1, color=color(na), style=label.style_none, tooltip="Price | Volume | Volume Distribution %"))
+    pivotLabels.push(label.new(bar_index + 15, L, str.tostring(L) + " | " + str.tostring(volL, format.volume) + " | " + str.tostring(tot != 0 ? volL / tot * 100 : 0.0, format.percent), textcolor=ptColor2, color=color(na), style=label.style_none, tooltip="Price | Volume | Volume Distribution %"))
 
 if barstate.islast
     for pl in pivotLines
         pl.delete()
     for pl in pivotLabels
         pl.delete()
+    for pb in pivotBoxes
+        pb.delete()
+    array.clear(pivotLines)
+    array.clear(pivotLabels)
+    array.clear(pivotBoxes)
 
     float pivotTotal = 0.0
     for lv in pivotLevels
@@ -569,4 +675,9 @@ if barstate.islast
         if lv.display
             drawPivotLevel(lv.levelH, lv.levelL, lv.length, lv.style, lv.startH, lv.startL, lv.extend, lv.volH, lv.volL, pivotTotal)
 
-
+    // Draw pivot zone fills as transparent boxes between H/L levels
+    if showPivotFill
+        for lv in pivotLevels
+            if lv.display
+                color ptColor1 = low > lv.levelH + ptAtr ? ptColorSup : high < lv.levelH - ptAtr ? ptColorRes : ptColorAct
+                pivotBoxes.push(box.new(left=lv.startH, top=lv.levelH, right=bar_index, bottom=lv.levelL, border_color=color.new(ptColor1, 90), bgcolor=color.new(ptColor1, 95)))
