@@ -313,6 +313,17 @@ def get_universe(name: str) -> list:
             logger.debug("Full market live fetch failed, falling back to static list", exc_info=True)
         return UNIVERSES.get("FULL MARKET (NSE+BSE ~5,900)") or NIFTY_BROAD
 
+    if low in ("fno stocks", "fno"):
+        try:
+            from .symbol_fetcher import fetch_nse_fno
+            live = fetch_nse_fno()
+            if live and len(live) > 100:
+                UNIVERSES["FnO STOCKS"] = live
+                return live
+        except Exception:
+            logger.debug("F&O live fetch failed, falling back to static list", exc_info=True)
+        return UNIVERSES.get("FnO STOCKS") or FNO_STOCKS
+
     for key, value in UNIVERSES.items():
         if key.lower() == low:
             # If placeholder is still empty (e.g. NSE ALL before first fetch), fetch now
