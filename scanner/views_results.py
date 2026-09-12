@@ -465,7 +465,7 @@ class ResultsViewMixin:
             s["ui_page_size"] = self.page_size
             s["ui_rating_filter"] = self._rating_filter()
             # Late import: scanner.app imports this mixin at module load.
-            from .app import save_settings
+            from .settings_store import save_settings
             save_settings(s)
         except Exception:
             pass

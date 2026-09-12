@@ -52,7 +52,7 @@ Refactored into composable helpers:
   - detect_crossover() — shared MA crossover detection (used by filter & scorer)
   - _compute_indicators() — compute all core indicators at once
   - _compute_weekly_hma() — weekly higher-timeframe HMA crossover
-  - _compute_sideways() — ADX / Cholangirong / Slope sideways filter
+  - _compute_sideways() — ADX / Choppiness / Slope sideways filter
   - _score_trend .. _score_fundamentals — per-category scoring (10 total)
   - compute_scores() — orchestrator that composes the above
 """
@@ -399,7 +399,7 @@ def _compute_weekly_hma(df: pd.DataFrame) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SIDEWAYS FILTER (ADX + Cholangirong + Slope)
+# SIDEWAYS FILTER (ADX + Choppiness + Slope)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
@@ -434,7 +434,7 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     adx_last = adx_val.iloc[-1]
     is_sideways_adx = adx_last < adx_threshold if not np.isnan(adx_last) else False
 
-    # Cholangirong filter
+    # Choppiness filter
     atr1 = atr(high, low, close, 1)
     chop_sum = atr1.rolling(chop_len).sum()
     chop_range = high.rolling(chop_len).max() - low.rolling(chop_len).min()

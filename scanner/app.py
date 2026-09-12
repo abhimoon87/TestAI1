@@ -28,7 +28,11 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 from .report import fetch_news_batch, generate_html_report, save_report
-from .settings_store import DEFAULT_SETTINGS  # noqa: E402 — canonical single source
+from .settings_store import (  # noqa: F401 — re-exported for tests
+    DEFAULT_SETTINGS,
+    load_settings,
+    save_settings,
+)
 from .themes import THEMES
 from .ui_kit import _score_of
 from .universes import UNIVERSES
@@ -38,7 +42,6 @@ from .views_results import ResultsViewMixin
 from .views_settings import SettingsViewMixin
 
 SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12
 LOG_MAX_LINES = 500
@@ -48,29 +51,6 @@ _NEWS_PREFETCH_TOP = 50  # top-scored rows whose news is prefetched after a scan
 # open/close overhead on every _log() call.
 _log_file_handle = None
 _log_lock = threading.Lock()
-
-
-def load_settings() -> dict:
-    """Load settings, merging saved values over DEFAULT_SETTINGS."""
-    settings = DEFAULT_SETTINGS.copy()
-    if os.path.exists(SETTINGS_FILE):
-        try:
-            import json as _json
-            with open(SETTINGS_FILE, "r") as f:
-                settings.update(_json.load(f))
-        except Exception as e:
-            logger.debug("Failed to load settings: %s", e)
-    return settings
-
-
-def save_settings(settings: dict):
-    """Save settings to JSON file."""
-    try:
-        import json as _json
-        with open(SETTINGS_FILE, "w") as f:
-            _json.dump(settings, f, indent=2)
-    except Exception as e:
-        logger.debug("Failed to save settings: %s", e)
 
 
 class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestViewMixin):
@@ -145,7 +125,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
 
         self.page.controls.clear()
 
-        main_row = ft.Row(
+        self.main_row = ft.Row(
             controls=[
                 self._build_rail(),
                 self._build_sidebar(),
@@ -155,20 +135,38 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             spacing=0,
             expand=True,
         )
-        self.page.add(main_row)
+        self.page.add(self.main_row)
 
     # ── View switching ──────────────────────────────────────────────────
+
+    def _restore_main_area(self):
+        """Replace the main_area_box in the parent Row with a completely
+        fresh one built by ``_build_main_area``.
+
+        Flet tracks controls by identity.  When a subtree is detached (by
+        the settings or backtest view) and the *same* child objects are
+        re-parented into a new tree, Flet silently drops them from the
+        client widget tree.  Rebuilding the entire Container and all its
+        children avoids this.
+        """
+        old_box = self.main_area_box
+        idx = None
+        if hasattr(self, "main_row"):
+            for i, ctrl in enumerate(self.main_row.controls):
+                if ctrl is old_box:
+                    idx = i
+                    break
+        self._build_main_area()
+        if idx is not None:
+            self.main_row.controls[idx] = self.main_area_box
 
     def _show_view(self, name):
         self.active_view = name
         for vname, pill in self._rail_pills.items():
             pill.visible = (vname == name)
         if name == "dashboard":
-            box = getattr(self, "main_area_box", None)
-            dash = getattr(self, "dashboard_content", None)
-            if box is not None and dash is not None:
-                box.content = dash
-                self._render_current_page()
+            self._restore_main_area()
+            self._render_current_page()
         elif name == "backtest":
             box = getattr(self, "main_area_box", None)
             if box is not None:

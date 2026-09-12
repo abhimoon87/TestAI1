@@ -317,7 +317,7 @@ class LayoutViewMixin:
             disabled=True,
         )
 
-        topbar = ft.Container(
+        self.topbar = ft.Container(
             content=ft.Row(
                 controls=[
                     self.search_entry,
@@ -368,7 +368,7 @@ class LayoutViewMixin:
         # Secondary index readouts (BANK NIFTY / SENSEX / NIFTY IT) — a slim
         # ticker strip at the bottom of the hero; hidden until data arrives.
         self.market_strip = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, visible=False)
-        hero = ft.Container(
+        self.hero = ft.Container(
             content=ft.Column(
                 controls=[
                     ft.Row(
@@ -422,7 +422,7 @@ class LayoutViewMixin:
         )
 
         self.result_count_label = ft.Text("no scan yet", size=11, color=c["text_dim"])
-        section_header = ft.Container(
+        self.section_header = ft.Container(
             content=ft.Row(
                 controls=[
                     ft.Text("Scan Results", size=16, weight=ft.FontWeight.BOLD, color=c["text"]),
@@ -494,10 +494,10 @@ class LayoutViewMixin:
 
         self.main_scroll = ft.Column(
             controls=[
-                hero,
+                self.hero,
                 self.summary_row,
                 self.chart_card,
-                section_header,
+                self.section_header,
                 self.table_column,
             ],
             spacing=0,
@@ -507,7 +507,7 @@ class LayoutViewMixin:
 
         self.dashboard_content = ft.Column(
             controls=[
-                topbar,
+                self.topbar,
                 ft.Container(content=self.main_scroll, expand=True, padding=_padding_only(left=6, right=6, top=6)),
                 self.pagination_bar,
             ],

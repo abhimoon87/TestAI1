@@ -11,6 +11,7 @@ control trees — so the full dashboard/settings build runs without a window.
 import flet as ft
 
 import scanner.app as app_mod
+import scanner.settings_store as store_mod
 from scanner.app import ScannerApp
 from scanner.themes import THEMES
 from scanner.ui_kit import _score_of
@@ -619,7 +620,7 @@ class TestUiPrefsPersistence:
         app.page_size = 200
         app.rating_filter_dd.value = "Good"
         written = {}
-        monkeypatch.setattr(app_mod, "save_settings", lambda s: written.update(s))
+        monkeypatch.setattr(store_mod, "save_settings", lambda s: written.update(s))
 
         app._save_ui_prefs()
 

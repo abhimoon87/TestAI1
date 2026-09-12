@@ -206,7 +206,7 @@ class SettingsViewMixin:
         new_theme = self.settings.get("theme", self.current_theme)
         # Local import: scanner.app imports this mixin at module load, so the
         # module-level helper is only resolvable once app.py has finished.
-        from .app import save_settings
+        from .settings_store import save_settings
         save_settings(self.settings)
         self._apply_cache_settings()
         self._log("Settings saved")
