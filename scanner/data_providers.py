@@ -552,19 +552,19 @@ def _fetch_fundamentals_yfinance(ticker: str) -> dict | None:
 
         eps_growth = info.get("earningsGrowth")
         if eps_growth is not None:
-            eps_growth = eps_growth * 100 if abs(eps_growth) < 100 else eps_growth
+            eps_growth = eps_growth * 100 if abs(eps_growth) < 1 else eps_growth
         else:
             earnings_q = info.get("earningsQuarterlyGrowth")
             if earnings_q is not None:
-                eps_growth = earnings_q * 100 if abs(earnings_q) < 100 else earnings_q
+                eps_growth = earnings_q * 100 if abs(earnings_q) < 1 else earnings_q
 
         rev_growth = info.get("revenueGrowth")
         if rev_growth is not None:
-            rev_growth = rev_growth * 100 if abs(rev_growth) < 100 else rev_growth
+            rev_growth = rev_growth * 100 if abs(rev_growth) < 1 else rev_growth
 
         roe = info.get("returnOnEquity")
         if roe is not None:
-            roe = roe * 100 if abs(roe) < 100 else roe
+            roe = roe * 100 if abs(roe) < 1 else roe
 
         return {
             "pe_ratio": pe_ratio,
@@ -666,6 +666,9 @@ class DataProvider:
         self.use_cache = use_cache
 
         # Track which provider was last used (for UI display)
+        # Protected by _meta_lock since multiple threads may call fetch_stock.
+        import threading
+        self._meta_lock = threading.Lock()
         self.last_provider = None
         self.last_error = None
 
@@ -692,14 +695,16 @@ class DataProvider:
                   in the background as a daemon). Used by the batch fallback
                   so dead symbols fail fast instead of stalling a worker.
         """
-        self.last_provider = None
-        self.last_error = None
+        with self._meta_lock:
+            self.last_provider = None
+            self.last_error = None
 
         # Check cache first
         if self.use_cache:
             cached = _get_cached(ticker, period, "cache")
             if cached is not None:
-                self.last_provider = "cache"
+                with self._meta_lock:
+                    self.last_provider = "cache"
                 return cached
 
         # Provider chain
@@ -716,30 +721,36 @@ class DataProvider:
                 if provider_timeout:
                     df = _call_with_timeout(fetch_fn, provider_timeout)
                     if df is _TIMEOUT:
-                        self.last_error = f"{name}: timed out after {provider_timeout}s"
+                        with self._meta_lock:
+                            self.last_error = f"{name}: timed out after {provider_timeout}s"
                         continue
                 else:
                     df = fetch_fn()
                 if df is not None and not df.empty and len(df) >= 50:
-                    self.last_provider = name
+                    with self._meta_lock:
+                        self.last_provider = name
                     if self.use_cache:
                         _set_cached(ticker, period, "cache", df)
                     return df
             except Exception as e:
-                self.last_error = f"{name}: {e!s}"
+                with self._meta_lock:
+                    self.last_error = f"{name}: {e!s}"
                 continue
 
-        self.last_error = "All providers failed"
+        with self._meta_lock:
+            self.last_error = "All providers failed"
         return None
 
     def fetch_index(self, ticker: str, period: str = "1y") -> pd.DataFrame | None:
         """Fetch index data with provider fallback."""
-        self.last_provider = None
+        with self._meta_lock:
+            self.last_provider = None
 
         if self.use_cache:
             cached = _get_cached(ticker, period, "index_cache")
             if cached is not None:
-                self.last_provider = "cache"
+                with self._meta_lock:
+                    self.last_provider = "cache"
                 return cached
 
         providers = [
@@ -751,7 +762,8 @@ class DataProvider:
             try:
                 df = fetch_fn()
                 if df is not None and not df.empty:
-                    self.last_provider = name
+                    with self._meta_lock:
+                        self.last_provider = name
                     if self.use_cache:
                         _set_cached(ticker, period, "index_cache", df)
                     return df
@@ -771,7 +783,8 @@ class DataProvider:
           3. yfinance (detailed financial data)
           4. nselib (bulk P/E ratio)
         """
-        self.last_provider = None
+        with self._meta_lock:
+            self.last_provider = None
 
         providers = [
             ("finnhub", lambda: _fetch_fundamentals_finnhub(ticker)),
@@ -784,7 +797,8 @@ class DataProvider:
             try:
                 fund = fetch_fn()
                 if fund is not None:
-                    self.last_provider = name
+                    with self._meta_lock:
+                        self.last_provider = name
                     return fund
             except Exception as e:
                 logger.debug("Fundamentals provider %s failed for %s: %s", name, ticker, e)

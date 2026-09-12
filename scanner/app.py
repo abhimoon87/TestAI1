@@ -44,6 +44,11 @@ LOG_ROTATE_HOURS = 12
 LOG_MAX_LINES = 500
 _NEWS_PREFETCH_TOP = 50  # top-scored rows whose news is prefetched after a scan
 
+# Module-level log handle — opened lazily and kept open to avoid
+# open/close overhead on every _log() call.
+_log_file_handle = None
+_log_lock = threading.Lock()
+
 
 def load_settings() -> dict:
     """Load settings, merging saved values over DEFAULT_SETTINGS."""
@@ -163,6 +168,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             dash = getattr(self, "dashboard_content", None)
             if box is not None and dash is not None:
                 box.content = dash
+                self._render_current_page()
         elif name == "backtest":
             box = getattr(self, "main_area_box", None)
             if box is not None:
@@ -318,12 +324,14 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.html_btn.disabled = True
         self.csv_btn.disabled = True
         self.clear_btn.disabled = True
-        self.results = []
-        self.all_results = []
-        self.filtered_results = []
+        with self._results_lock:
+            self.results = []
+            self.all_results = []
+            self.filtered_results = []
 
-        self.table_column.controls.clear()
-        self.table_column.controls.append(self._make_scan_placeholder())
+        if self.active_view == "dashboard":
+            self.table_column.controls.clear()
+            self.table_column.controls.append(self._make_scan_placeholder())
         self.page.update()
 
         threading.Thread(target=self._run_scan, daemon=True).start()
@@ -494,22 +502,29 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 if epoch != getattr(self, "_scan_epoch", epoch) or self._scan_cancelled:
                     return  # a newer scan owns the results now
                 live = {r.get("ticker"): r for r in self.all_results if r.get("ticker")}
+                # Build all updates first, then apply in one batch per row
+                # to minimise the window where a reader sees partial state.
+                updates: dict[str, dict] = {}
                 for ticker, items in news_map.items():
                     row = live.get(ticker)
                     if row is None or "_news_items" in row:
                         continue
-                    row["_news_items"] = items
+                    u: dict = {"_news_items": items}
                     n = len(items)
                     if n:
-                        # Light the row badge only when the scan's own provider
-                        # enrichment did not already attach counts.
-                        row.setdefault("_article_count", n)
+                        if "_article_count" not in row:
+                            u["_article_count"] = n
                         if "_sentiment_score" not in row:
                             tone = {"Good": 1.0, "Bad": -1.0}
-                            row["_sentiment_score"] = sum(
+                            u["_sentiment_score"] = sum(
                                 tone.get(i.get("sentiment", "Neutral"), 0.0)
                                 for i in items
                             ) / n
+                    updates[ticker] = u
+                # Atomic-ish apply: each row gets all its new keys at once
+                for ticker, u in updates.items():
+                    row = live[ticker]
+                    row.update(u)
                     attached += 1
             if attached:
                 self._safe_update(self._flush_news_badges)
@@ -959,6 +974,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.settings["theme"] = new_theme
         save_settings(self.settings)
         had_results = bool(self.results)
+        was_scanning = self.scanning
         saved_log = self._get_log_lines()
         self._build_ui()
         self._load_settings_to_ui()
@@ -969,6 +985,17 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         # snapshot cached before the switch (no network round-trip).
         if getattr(self, "_last_market", None) is not None:
             self._render_market(self._last_market)
+        # If a scan was running, rebind its progress/log callbacks to the
+        # freshly-created UI controls so streaming updates continue to land.
+        if was_scanning:
+            engine = getattr(self, "_scan_engine", None)
+            if engine is not None:
+                engine.set_progress_callback(
+                    lambda p, m: self._safe_update(lambda: self._set_progress(p, m))
+                )
+                engine.set_log_callback(
+                    lambda m: self._safe_update(lambda: self._log(m))
+                )
         self._log(f"Theme switched to {new_theme}")
         self.page.update()
 
@@ -1021,11 +1048,15 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         )
 
     def _log(self, msg):
+        global _log_file_handle
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {msg}\n"
         try:
-            with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(line)
+            with _log_lock:
+                if _log_file_handle is None or _log_file_handle.closed:
+                    _log_file_handle = open(LOG_FILE, "a", encoding="utf-8")
+                _log_file_handle.write(line)
+                _log_file_handle.flush()
         except Exception:
             logger.debug("Failed to write to log file", exc_info=True)
 
@@ -1050,12 +1081,17 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
             self.status_label.value = f"Status: {text}"
 
     def _rotate_log(self):
+        global _log_file_handle
         try:
             if os.path.exists(LOG_FILE):
                 age_hours = (datetime.now().timestamp() - os.path.getmtime(LOG_FILE)) / 3600
                 if age_hours >= LOG_ROTATE_HOURS:
-                    with open(LOG_FILE, "w") as f:
-                        f.truncate(0)
+                    with _log_lock:
+                        if _log_file_handle and not _log_file_handle.closed:
+                            _log_file_handle.close()
+                        with open(LOG_FILE, "w") as f:
+                            f.truncate(0)
+                        _log_file_handle = None
         except Exception:
             pass
 

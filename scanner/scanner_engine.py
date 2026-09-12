@@ -80,7 +80,8 @@ def _find_stale_members(batch_data: dict, max_age_days: float | None = None):
                 last = pd.Timestamp(last)
             if last.date() < cutoff:
                 stale.append((str(t), last.date().isoformat()))
-        except Exception:
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug("Stale check failed for %s: %s", t, e)
             continue
     return sorted(stale, key=lambda x: x[1])
 
@@ -218,6 +219,7 @@ def _enrich_rows_in_place(
 
     def _enrich_one(r):
         ticker = r["ticker"]
+        provider_keys: dict = {}
         try:
             # Provider results barely change intraday — replay the disk
             # cache on repeat scans instead of re-running the 5 parallel

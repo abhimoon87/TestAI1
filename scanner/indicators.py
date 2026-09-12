@@ -79,7 +79,8 @@ def sma(series: pd.Series, length: int) -> pd.Series:
 
 def vwma(series: pd.Series, volume: pd.Series, length: int) -> pd.Series:
     """Volume Weighted Moving Average."""
-    return (series * volume).rolling(length).sum() / volume.rolling(length).sum()
+    vol_sum = volume.rolling(length).sum()
+    return (series * volume).rolling(length).sum() / vol_sum.replace(0, np.nan)
 
 
 def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int = 30) -> pd.Series:

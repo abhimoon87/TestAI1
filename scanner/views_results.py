@@ -43,8 +43,11 @@ class ResultsViewMixin:
             self.filtered_results = [r for r in results if self._row_matches_filters(r)]
         self.current_page = 0
         self._render_current_page()
+        self.page.update()
 
     def _render_current_page(self):
+        if self.active_view != "dashboard":
+            return
         c = self.theme_colors
         with self._results_lock:
             results = list(self.all_results)
@@ -123,7 +126,6 @@ class ResultsViewMixin:
         self._update_hero_status(results)
         self._render_topicks(results[:5])
         self._render_chart(results)
-        self.page.update()
 
     def _make_header_row(self, c):
         headers = []
@@ -325,8 +327,11 @@ class ResultsViewMixin:
     def _on_row_hover(self, container, base_bg, e):
         """Highlight the hovered result row (desktop mouse feedback)."""
         try:
-            container.bgcolor = self.theme_colors["row_hover"] if e.data else base_bg
-            self.page.update()
+            hover_bg = self.theme_colors["row_hover"]
+            new_bg = hover_bg if e.data else base_bg
+            if container.bgcolor != new_bg:
+                container.bgcolor = new_bg
+                self.page.update()
         except Exception:
             pass
 
@@ -340,6 +345,7 @@ class ResultsViewMixin:
         self._render_current_page()
         self._scroll_to_top()
         self._save_ui_prefs()
+        self.page.update()
 
     def _get_sort_key(self, col_idx):
         rating_order = {"EXCELLENT": 4, "GOOD": 3, "MODERATE": 2, "POOR": 1, "WEAK": 0}
@@ -404,6 +410,7 @@ class ResultsViewMixin:
         self.current_page = max(0, min(self.current_page + delta, total_pages - 1))
         self._render_current_page()
         self._scroll_to_top()
+        self.page.update()
 
     def _on_page_size_change(self, e):
         try:
@@ -414,6 +421,7 @@ class ResultsViewMixin:
         self._render_current_page()
         self._scroll_to_top()
         self._save_ui_prefs()
+        self.page.update()
 
     def _load_all_pages(self):
         total = len(self._visible_results())
@@ -424,6 +432,7 @@ class ResultsViewMixin:
         self._render_current_page()
         self._scroll_to_top()
         self._save_ui_prefs()
+        self.page.update()
 
     # ── Table-view persistence (sort / page size / rating filter) ────────
 
@@ -587,6 +596,8 @@ class ResultsViewMixin:
             ctrls.insert(insert_at, frame)
 
     def _show_news(self, ticker, items):
+        if self.active_view != "dashboard":
+            return
         c = self.theme_colors
         ctrls = self.table_column.controls
         # Replace this ticker's loading placeholder and drop any other open

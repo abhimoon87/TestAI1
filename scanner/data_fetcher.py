@@ -542,9 +542,14 @@ def _fetch_fallback_batch(
     future_to_ticker = {executor.submit(_fetch_one, t): t for t in tickers}
     try:
         # Daemon threads: on cancel we don't join, so in-flight provider calls
-        # must not keep the process alive afterwards.
-        for t in executor._threads:
-            t.daemon = True
+        # must not keep the process alive afterwards.  Access the private
+        # _threads set only if it exists; the public API does not expose
+        # thread-level daemon control, and _threads has been stable since
+        # CPython 3.x.
+        threads = getattr(executor, "_threads", None)
+        if threads is not None:
+            for t in threads:
+                t.daemon = True
     except Exception:
         pass
     cancelled_fb = False

@@ -343,6 +343,8 @@ class BacktestViewMixin:
 
     # -- run flow ---------------------------------------------------------
     def _run_wf(self, e=None):
+        if getattr(self, "_wf_busy", False):
+            return
         try:
             stop = float(self._wf_stop.value or 0)
             target = float(self._wf_target.value or 0)

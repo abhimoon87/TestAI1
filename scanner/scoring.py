@@ -634,9 +634,9 @@ def _score_volatility(curr: dict) -> tuple[float, float, str]:
     Returns:
         (score, atr_pct, volatility_status)
     """
-    atr_pct = (curr["atr"] / curr["close"]) * 100 if curr["close"] > 0 else 0
     if np.isnan(curr["atr"]) or np.isnan(curr["close"]) or curr["close"] <= 0:
         return 0.0, 0.0, "N/A"
+    atr_pct = (curr["atr"] / curr["close"]) * 100
     volat_stat = "High" if atr_pct > 3 else ("Low" if atr_pct < 1 else "Medium")
     volat_score = 5.0 if volat_stat in ("Medium", "Low") else 0.0
     return volat_score, atr_pct, volat_stat
