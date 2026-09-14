@@ -169,6 +169,7 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     scores = score_bar(
         curr, close, bar_idx, nifty_df,
         settings.get("rs_length", 14), fund=stock.fundamentals or None,
+        settings=settings,
     )
 
     return {

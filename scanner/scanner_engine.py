@@ -142,6 +142,7 @@ def _score_ticker(
             slow_ma_type=settings.get("slow_ma_type", "EMA"),
             slow_ma_len=settings.get("slow_ma_len", 50),
             crossover_lookback=settings.get("crossover_lookback", 20),
+            settings=settings,
         )
         if filter_result is None:
             return None, "filtered"

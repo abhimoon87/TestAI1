@@ -62,6 +62,7 @@ from __future__ import annotations
 __all__ = [
     "compute_scores", "score_bar", "check_filter", "get_direction",
     "detect_crossover", "get_ma", "to_weekly",
+    "is_hp_gate_active", "check_hp_freshness", "check_hp_volume",
 ]
 
 import math
@@ -208,6 +209,43 @@ def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
     return result
 
 
+def is_hp_gate_active(settings: dict | None) -> bool:
+    """Return True if high-probability entry gates should be enforced."""
+    if settings is None:
+        return False
+    entry_mode = settings.get("entry_mode", "classic")
+    return entry_mode == "high_probability" or (
+        entry_mode == "custom" and (
+            settings.get("hp_freshness_max_bars", 0) > 0
+            or settings.get("hp_counter_signal_penalty", False)
+            or settings.get("hp_volume_confirmation", False)
+        )
+    )
+
+
+def check_hp_freshness(xo: dict, settings: dict | None) -> bool:
+    """Return True if the crossover passes the freshness gate (or gate is off)."""
+    if settings is None or not is_hp_gate_active(settings):
+        return True
+    max_bars = settings.get("hp_freshness_max_bars", 2)
+    return max_bars <= 0 or xo["bars_ago"] <= max_bars
+
+
+def check_hp_volume(volume, xo: dict, settings: dict | None) -> bool:
+    """Return True if the crossover bar has sufficient volume (or gate is off)."""
+    if settings is None or not is_hp_gate_active(settings):
+        return True
+    if not settings.get("hp_volume_confirmation", True):
+        return True
+    vol_ma_len = settings.get("vol_ma_len", 20)
+    vol_idx = -1 - xo["bars_ago"] if xo["bars_ago"] > 0 else -1
+    vol_at_xo = volume.iloc[vol_idx]
+    vol_ma_val = volume.rolling(vol_ma_len).mean().iloc[vol_idx]
+    if np.isnan(vol_ma_val):
+        return True
+    return vol_at_xo >= vol_ma_val * 0.8
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL 1: STOCK FILTER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -215,7 +253,8 @@ def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
 def check_filter(df: pd.DataFrame,
                  fast_ma_type: str = "HMA", fast_ma_len: int = 40,
                  slow_ma_type: str = "EMA", slow_ma_len: int = 50,
-                 crossover_lookback: int = 20) -> dict | None:
+                 crossover_lookback: int = 20,
+                 settings: dict | None = None) -> dict | None:
     """
     Model 1 — Stock Filter.
 
@@ -246,6 +285,12 @@ def check_filter(df: pd.DataFrame,
     xo = detect_crossover(fast_ma, slow_ma, crossover_lookback)
     if not xo["crossed"]:
         return None  # No recent crossover → filtered out
+
+    # ── High-probability gates (applied before scoring) ──────────────────
+    if not check_hp_freshness(xo, settings):
+        return None  # stale crossover
+    if not check_hp_volume(volume, xo, settings):
+        return None  # low-volume crossover
 
     return {
         "ma_crossed_above": True,
@@ -734,7 +779,8 @@ def _score_fundamentals(df: pd.DataFrame) -> tuple[float, dict]:
 
 def score_bar(curr: dict, close: pd.Series, bar_idx: int,
               index_df: pd.DataFrame | None, rs_length: int,
-              fund: dict | None = None) -> dict:
+              fund: dict | None = None,
+              settings: dict | None = None) -> dict:
     """Compute all 10 category scores for a single bar.
 
     This is the **single source of truth** for per-bar scoring logic.
@@ -777,6 +823,38 @@ def score_bar(curr: dict, close: pd.Series, bar_idx: int,
 
     total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
              + obv_score + vol_score + rs_score + volat_score + fund_score)
+
+    # ── Counter-signal penalty (high-probability mode) ───────────────────
+    if settings is not None:
+        entry_mode = settings.get("entry_mode", "classic")
+        is_hp = entry_mode == "high_probability" or (
+            entry_mode == "custom" and settings.get("hp_counter_signal_penalty", False)
+        )
+        if is_hp:
+            penalty = 0.0
+            # Overbought + losing momentum
+            if not np.isnan(curr["rsi"]) and curr["rsi"] > 75:
+                if not np.isnan(curr["macd_hist"]) and not np.isnan(curr["macd_hist_prev"]):
+                    if curr["macd_hist"] < curr["macd_hist_prev"]:
+                        penalty += 5.0
+            # Stochastic exhaustion
+            if not np.isnan(curr["stoch_k"]) and curr["stoch_k"] > 85:
+                penalty += 3.0
+            # Extended beyond 3x ATR above slow MA
+            if (not np.isnan(curr["atr"]) and curr["close"] > 0
+                    and not np.isnan(curr["slow_ma"]) and curr["atr"] > 0):
+                extended = (curr["close"] - curr["slow_ma"]) / curr["atr"]
+                if extended > 3.0:
+                    penalty += 4.0
+            # Volume drying up while price rising
+            vol_val = curr.get("volume")
+            vol_ma_val = curr.get("vol_ma")
+            if (vol_val is not None and not np.isnan(vol_val)
+                    and vol_ma_val is not None and not np.isnan(vol_ma_val)
+                    and vol_ma_val > 0 and vol_val < vol_ma_val * 0.7):
+                penalty += 3.0
+            total = max(0.0, total - penalty)
+
     total = max(0.0, min(total, 100.0))
 
     return {
@@ -938,6 +1016,7 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     scores = score_bar(
         curr, close, len(close) - 1, index_df,
         settings.get("rs_length", 14), fund=fund_for_bar,
+        settings=settings,
     )
 
     trend_score = scores["trend"]

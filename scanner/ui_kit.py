@@ -45,11 +45,10 @@ def _margin_only(left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -
 # "1M" column draws a mini sparkline of the last ~20 closes (see px_tail on
 # each result row); "1M%" stays the numeric one-month change.
 RESULT_COLS = [
-    ("#", 30), ("Ticker", 92), ("Score", 46), ("Rating", 66), ("ENTRY", 50),
-    ("Price", 72), ("MA", 58), ("T/15", 40), ("M/15", 40), ("R/8", 34),
-    ("V/7", 34), ("Vol/10", 40), ("RS/10", 40), ("F/20", 40),
-    ("1M%", 50), ("Dir", 50), ("ADX", 38), ("Chop", 40),
-    ("1M", 56),
+    "#", "Ticker", "Score", "Rating", "ENTRY",
+    "Price", "MA", "T/15", "M/15", "R/8",
+    "V/7", "Vol/10", "RS/10", "F/20",
+    "1M%", "Dir", "ADX", "Chop", "1M",
 ]
 
 

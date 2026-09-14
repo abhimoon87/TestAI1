@@ -69,6 +69,11 @@ DEFAULT_SETTINGS = {
     "use_indian_fundamentals": True,
     "use_insider_data": True,
     "use_macro_data": True,
+    # Entry mode: "classic" (original), "high_probability" (optimized), "custom"
+    "entry_mode": "classic",
+    "hp_counter_signal_penalty": True,
+    "hp_freshness_max_bars": 2,
+    "hp_volume_confirmation": True,
 }
 
 

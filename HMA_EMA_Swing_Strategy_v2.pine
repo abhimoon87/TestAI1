@@ -2,18 +2,18 @@
 // © YourUsername
 
 //@version=6
-indicator("HMAxEMA_VP Swing Trading System ", overlay=true, max_labels_count=500, max_boxes_count=200, max_lines_count=100, max_bars_back=5000, shorttitle="HMAxEMA_VP")
+indicator("HMAxEMA_VP Swing Trading System V4", overlay=true, max_labels_count=500, max_boxes_count=200, max_lines_count=100, max_bars_back=5000, shorttitle="HMAxEMA_VP")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. INPUT PARAMETERS
 // ══════════════════════════════════════════════════════════════════════════════
 
 // ── Timeframe ────────────────────────────────────────────────────────────────
-tf = input.timeframe("D", "Analysis Timeframe", group="Timeframe")
+tf = input.timeframe("W", "Analysis Timeframe", group="Timeframe")
 
 // ── Moving Averages (Crossover) ──────────────────────────────────────────────
 fastMAType  = input.string("HMA", "Fast MA Type", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Moving Averages")
-fastMALen   = input.int(44, "Fast MA Length", minval=1, group="Moving Averages")
+fastMALen   = input.int(40, "Fast MA Length", minval=1, group="Moving Averages")
 slowMAType  = input.string("EMA", "Slow MA Type", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Moving Averages")
 slowMALen   = input.int(50, "Slow MA Length", minval=1, group="Moving Averages")
 showMAs     = input.bool(true, "Show MAs on Chart", group="Moving Averages")
@@ -51,6 +51,12 @@ maLen         = input.int(50, "Slope MA Length", minval=1, group="Sideways Filte
 slopeLookback = input.int(10, "Slope Lookback (Bars)", minval=1, group="Sideways Filter")
 flatThreshold = input.float(0.5, "Flatness Threshold (%)", step=0.1, group="Sideways Filter")
 showSidewaysStatus = input.bool(true, "Show Sideways Status", group="Sideways Filter")
+sidewaysMinCount   = input.int(2, "Min Filters to Trigger Sideways (1-3)", minval=1, maxval=3, group="Sideways Filter")
+
+// ── Score Calibration ────────────────────────────────────────────────────────
+scoreExcellent = input.int(70, "Excellent Threshold", minval=50, maxval=100, group="Score Calibration")
+scoreGood      = input.int(50, "Good Threshold", minval=30, maxval=90, group="Score Calibration")
+scoreModerate  = input.int(30, "Moderate Threshold", minval=10, maxval=70, group="Score Calibration")
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
 showDash    = input.bool(true, "Show Dashboard", group="Dashboard")
@@ -314,7 +320,8 @@ if hasFund
 
 // ── TOTAL SCORE ─────────────────────────────────────────────────────────────
 float score = trendScore + momScore + rsiScore + macdScore + stochScore + obvScore + volScore2 + rsScore + volatScore + fundScore
-score := math.max(0.0, math.min(score, 100.0))
+int   maxScore = hasFund ? 100 : 80
+score := math.max(0.0, math.min(score, float(maxScore)))
 
 // ── Score Components for Dashboard ──────────────────────────────────────────
 string trendComp = str.tostring(math.round(trendScore)) + "/15"
@@ -324,8 +331,8 @@ string volComp2  = str.tostring(math.round(volScore2)) + "/10"
 string rsComp    = str.tostring(math.round(rsScore)) + "/10"
 string fundComp  = str.tostring(math.round(fundScore)) + "/20"
 
-recStr = score >= 70 ? "EXCELLENT" : score >= 50 ? "GOOD" : score >= 30 ? "MODERATE" : "POOR"
-recCol = score >= 70 ? color.green : score >= 50 ? color.lime : score >= 30 ? color.orange : color.red
+recStr = score >= scoreExcellent ? "EXCELLENT" : score >= scoreGood ? "GOOD" : score >= scoreModerate ? "MODERATE" : "POOR"
+recCol = score >= scoreExcellent ? color.green : score >= scoreGood ? color.lime : score >= scoreModerate ? color.orange : color.red
 
 // Active signal labels (placed after scoring engine to access score)
 var label activeBuy = na
@@ -333,12 +340,12 @@ var label activeSell = na
 
 if hideOldSignals and buyCross
     label.delete(activeBuy)
-    string sigSize = score >= 70 ? size.large : score >= 50 ? size.normal : size.small
+    string sigSize = score >= scoreExcellent ? size.large : score >= scoreGood ? size.normal : size.small
     activeBuy := label.new(bar_index, low, "BUY " + str.tostring(math.round(score)), color=color.green, textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=sigSize)
 
 if hideOldSignals and sellCross
     label.delete(activeSell)
-    string sigSize = score >= 70 ? size.large : score >= 50 ? size.normal : size.small
+    string sigSize = score >= scoreExcellent ? size.large : score >= scoreGood ? size.normal : size.small
     activeSell := label.new(bar_index, high, "SELL " + str.tostring(math.round(score)), color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=sigSize)
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -474,7 +481,7 @@ plotcandle(showMomCandles ? open : na, high, low, close, title="Momentum Candles
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 7. SIDeways / TREND FILTER (variables — display table stays after dashboard)
+// 7. SIDeways / TREND FILTER
 // ══════════════════════════════════════════════════════════════════════════════
 
 [_, _, adxSide] = ta.dmi(adxLen, adxLen)
@@ -489,7 +496,8 @@ selectedMA = get_ma(maType, close, maLen)
 maSlopePct = selectedMA[slopeLookback] != 0 ? math.abs((selectedMA - selectedMA[slopeLookback]) / selectedMA[slopeLookback]) * 100 : 0.0
 isSidewaysSlope = maSlopePct < flatThreshold
 
-isSideways = isSidewaysADX or isSidewaysChop or isSidewaysSlope
+int sidewaysCount = (isSidewaysADX ? 1 : 0) + (isSidewaysChop ? 1 : 0) + (isSidewaysSlope ? 1 : 0)
+isSideways = sidewaysCount >= sidewaysMinCount
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 8. DASHBOARD
@@ -511,9 +519,9 @@ if showDash and barstate.islast
     table.cell(dash, 1, 0, recStr,       text_color=recCol,     bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
     if compactMode
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 1, str.tostring(score, "#") + "/100", text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 1, str.tostring(score, "#") + "/" + str.tostring(maxScore), text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 2, "Trend",      text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 2, trdStr,       text_color=trdCol2,  bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 2, trdStr, text_color=trdCol2,  bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 3, "RSI",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 3, str.tostring(rsi, "#.#") + " " + rsiStat, text_color=rsiCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 4, "Momentum",   text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
@@ -529,7 +537,7 @@ if showDash and barstate.islast
         table.cell(dash, 0, 7, "Signal",     text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 7, cSigStr,       text_color=cSigCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
     else
-        int filled = int(math.round(score / 10))
+        int filled = int(math.round(score * 10 / maxScore))
         string scoreBar = ""
         for i = 0 to 9
             scoreBar += i < filled ? "█" : "░"
@@ -541,7 +549,7 @@ if showDash and barstate.islast
         color rsRowCol    = rsScore >= 7 ? color.green : rsScore >= 4 ? color.orange : color.red
         color fundRowCol  = hasFund ? (fundScore >= 14 ? color.green : fundScore >= 8 ? color.orange : color.red) : color.gray
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 1, str.tostring(score, "#") + "/100 " + scoreBar + " " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 1, str.tostring(score, "#") + "/" + str.tostring(maxScore) + " " + scoreBar + " " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 2, "Trend",      text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 2, trdStr + "  " + trendComp, text_color=trendRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 3, "RSI",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
@@ -585,7 +593,8 @@ var table statusTable = table.new(position.bottom_center, 1, 1, border_width=2, 
 
 if barstate.islast
     if showSidewaysStatus
-        string displayTxt = isSideways ? "⚠️ " + syminfo.ticker + " IS IN SIDEWAYS (" + maType + ")" : "✅ " + syminfo.ticker + " IS TRENDING (" + maType + ")"
+        string sideFilters = (isSidewaysADX ? "ADX " : "") + (isSidewaysChop ? "CHOP " : "") + (isSidewaysSlope ? "SLOPE" : "")
+        string displayTxt = isSideways ? "⚠️ " + syminfo.ticker + " IS IN SIDEWAYS (" + sideFilters + ")" : "✅ " + syminfo.ticker + " IS TRENDING"
         color  lblBgColor = isSideways ? color.new(color.orange, 10) : color.new(color.teal, 10)
         table.cell(statusTable, 0, 0, text=displayTxt, text_color=color.white, bgcolor=lblBgColor, text_size=size.normal)
     else

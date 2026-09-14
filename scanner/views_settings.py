@@ -29,6 +29,9 @@ class SettingsViewMixin:
     # Bounds are intentionally lenient: they only reject values the engine
     # itself cannot tolerate, so a stored setting can never brick Save.
     _SETTINGS_SPEC: ClassVar[list] = [
+        ("Entry mode", [
+            ("entry_mode", "Entry mode", "entry_mode", None, None),
+        ]),
         ("Signal — HMA×EMA crossover", [
             ("fast_ma_type", "Fast MA type", "ma_type", None, None),
             ("fast_ma_len", "Fast MA length", "int", 2, 500),
@@ -89,6 +92,17 @@ class SettingsViewMixin:
                 options=[ft.dropdown.Option(v) for v in opts],
                 value=cur if cur in opts else "dark",
                 width=150, height=40, text_size=13,
+                bgcolor=c["option_bg"], color=c["text"],
+                border_color=c["border"], border_width=1, border_radius=8,
+                focused_border_color=c["purple"],
+            )
+        elif kind == "entry_mode":
+            opts = ["classic", "high_probability", "custom"]
+            cur = str(self.settings.get(key, "classic"))
+            ctrl = ft.Dropdown(
+                options=[ft.dropdown.Option(v) for v in opts],
+                value=cur if cur in opts else "classic",
+                width=180, height=40, text_size=13,
                 bgcolor=c["option_bg"], color=c["text"],
                 border_color=c["border"], border_width=1, border_radius=8,
                 focused_border_color=c["purple"],
@@ -182,9 +196,11 @@ class SettingsViewMixin:
         bad = []
         for key, ctrl in self._settings_inputs.items():
             kind = ctrl._settings_kind
-            if kind in ("ma_type", "theme"):
+            if kind in ("ma_type", "theme", "entry_mode"):
                 val = ctrl.value
-                ok_opts = self._MA_TYPES if kind == "ma_type" else ["dark", "light"]
+                ok_opts = self._MA_TYPES if kind == "ma_type" else (
+                    ["dark", "light"] if kind == "theme" else ["classic", "high_probability", "custom"]
+                )
                 if val not in ok_opts:
                     bad.append(key)
                     continue
@@ -203,6 +219,7 @@ class SettingsViewMixin:
             self._settings_error.value = f"Invalid value: {', '.join(bad)}"
             self.page.update()
             return
+        self._settings_error.value = ""
         new_theme = self.settings.get("theme", self.current_theme)
         # Local import: scanner.app imports this mixin at module load, so the
         # module-level helper is only resolvable once app.py has finished.

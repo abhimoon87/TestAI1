@@ -16,6 +16,7 @@ import flet as ft
 from flet.controls.alignment import Alignment
 
 from .report import fetch_news_for_ticker
+from .trade_reasons import build_trade_reasons
 from .ui_kit import (
     RESULT_COLS,
     _border_all,
@@ -129,14 +130,15 @@ class ResultsViewMixin:
 
     def _make_header_row(self, c):
         headers = []
-        for idx, (text, width) in enumerate(RESULT_COLS):
+        for idx, text in enumerate(RESULT_COLS):
             is_sorted = self.sort_col == idx
             arrow = " ▲" if is_sorted and not self.sort_reverse else (" ▼" if is_sorted else "")
             color = c["cyan"] if not is_sorted else c["green"]
             headers.append(
                 ft.Container(
-                    content=ft.Text(f"{text}{arrow}", size=9, weight=ft.FontWeight.BOLD, color=color),
-                    width=width,
+                    content=ft.Text(f"{text}{arrow}", size=10, weight=ft.FontWeight.BOLD, color=color,
+                                    text_align=ft.TextAlign.LEFT if idx == 1 else None),
+                    expand=2 if idx == 1 else True,
                     on_click=lambda e, i=idx: self._on_sort(i),
                     ink=True,
                 )
@@ -204,22 +206,22 @@ class ResultsViewMixin:
         cols = [
             (str(rank), c["text_dim"], 11, False),
             (ticker, c["green"] if is_above else c["text"], 12, True),
-            (f'{total:.0f}', c["green"] if total >= 70 else c["lime"] if total >= 50 else c["orange"] if total >= 30 else c["red"], 13, True),
-            (rating, rating_txt_color, 10, True),
-            ("YES" if entry else "--", c["green"] if entry else c["text_dim"], 10, True),
-            (f'₹{r.get("close", 0) or 0:.0f}', c["text"], 11, True),
-            (self._ma_text(r), self._ma_color(r), 10, False),
-            (f'{r.get("trend", 0) or 0:.0f}', c["green"], 10, False),
-            (f'{r.get("momentum", 0) or 0:.0f}', c["cyan"], 10, False),
-            (f'{r.get("rsi", 0) or 0:.0f}', c["blue"], 10, False),
-            (f'{r.get("macd", 0) or 0:.0f}', "#aa88ff", 10, False),
-            (f'{r.get("volume", 0) or 0:.0f}', c["orange"], 10, False),
-            (f'{r.get("rel_str", 0) or 0:.0f}', c["lime"], 10, False),
-            (f'{r.get("fundamentals", 0) or 0:.0f}', "#ffe600", 10, False),
-            (f'{r.get("pc1m", 0) or 0:+.1f}%', c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"], 10, False),
-            (("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?"), c["green"] if trend_dir == "Bull" else c["red"], 10, False),
-            (f'{r.get("adx_val", 0) or 0:.0f}', c["text"], 10, False),
-            ("Chop" if r.get("is_sideways") else "OK", c["orange"] if r.get("is_sideways") else c["green"], 10, False),
+            (f'{total:.0f}', c["green"] if total >= 70 else c["lime"] if total >= 50 else c["orange"] if total >= 30 else c["red"], 14, True),
+            (rating, rating_txt_color, 11, True),
+            ("YES" if entry else "--", c["green"] if entry else c["text_dim"], 11, True),
+            (f'₹{r.get("close", 0) or 0:.0f}', c["text"], 12, True),
+            (self._ma_text(r), self._ma_color(r), 11, False),
+            (f'{r.get("trend", 0) or 0:.0f}', c["green"], 11, False),
+            (f'{r.get("momentum", 0) or 0:.0f}', c["cyan"], 11, False),
+            (f'{r.get("rsi", 0) or 0:.0f}', c["blue"], 11, False),
+            (f'{r.get("macd", 0) or 0:.0f}', "#aa88ff", 11, False),
+            (f'{r.get("volume", 0) or 0:.0f}', c["orange"], 11, False),
+            (f'{r.get("rel_str", 0) or 0:.0f}', c["lime"], 11, False),
+            (f'{r.get("fundamentals", 0) or 0:.0f}', "#ffe600", 11, False),
+            (f'{r.get("pc1m", 0) or 0:+.1f}%', c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"], 11, False),
+            (("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?"), c["green"] if trend_dir == "Bull" else c["red"], 11, False),
+            (f'{r.get("adx_val", 0) or 0:.0f}', c["text"], 11, False),
+            ("Chop" if r.get("is_sideways") else "OK", c["orange"] if r.get("is_sideways") else c["green"], 11, False),
         ]
 
         # Subtle chip washes for the rating and ENTRY columns — the text color
@@ -236,14 +238,14 @@ class ResultsViewMixin:
 
         controls = []
         ticker_cell = None
-        for idx, ((text, color, size, bold), (_col_name, width)) in enumerate(zip(cols, RESULT_COLS)):
+        for idx, ((text, color, size, bold), _col_name) in enumerate(zip(cols, RESULT_COLS)):
             w = ft.Text(
                 text, size=size,
                 weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
                 color=color,
                 max_lines=1, overflow=ft.TextOverflow.CLIP,
             )
-            cell = ft.Container(content=w, width=width)
+            cell = ft.Container(content=w, expand=2 if idx == 1 else True)
             if idx == 0:
                 # Rank cell carries a rating-colored accent rail so rows read
                 # as green/lime/orange/red bands at a glance.
@@ -261,6 +263,10 @@ class ResultsViewMixin:
                 cell.border_radius = 6
             if idx == 1:
                 ticker_cell = cell
+                w.text_align = ft.TextAlign.LEFT
+                w.max_lines = 1
+                w.overflow = ft.TextOverflow.CLIP
+                w.no_wrap = True
                 badge = self._sentiment_badge(r, c)
                 if badge is not None:
                     # Keep the ticker text as the row's first control so the
@@ -275,7 +281,6 @@ class ResultsViewMixin:
 
         # Trailing column: mini 1-month sparkline from the closes the engine
         # attached to each row (``px_tail``); dim dash when unavailable.
-        spark_w = RESULT_COLS[-1][1]
         px = r.get("px_tail") or []
         if len(px) >= 2:
             lo, hi = min(px), max(px)
@@ -297,7 +302,7 @@ class ResultsViewMixin:
                     controls=bars, spacing=1, height=26,
                     vertical_alignment=ft.CrossAxisAlignment.END,
                 ),
-                width=spark_w,
+                expand=True,
                 padding=_padding_only(top=2, bottom=2),
                 tooltip=f"{ticker}: {move:+.1f}% over the last {len(px)} closes",
             )
@@ -305,7 +310,7 @@ class ResultsViewMixin:
             spark_cell = ft.Container(
                 content=ft.Text("—", size=10, color=c["text_faint"],
                                 text_align=ft.TextAlign.CENTER),
-                width=spark_w,
+                expand=True,
             )
         controls.append(spark_cell)
 
@@ -351,7 +356,8 @@ class ResultsViewMixin:
         rating_order = {"EXCELLENT": 4, "GOOD": 3, "MODERATE": 2, "POOR": 1, "WEAK": 0}
         def _ma_rank(r):
             if r.get("ma_crossed_above"):
-                return 2
+                # More recent crossover (lower bars_ago) ranks higher.
+                return 200 - (r.get("crossover_bars_ago") or 0)
             if r.get("ma_bullish"):
                 return 1
             return 0
@@ -610,6 +616,37 @@ class ResultsViewMixin:
         stats = self._news_stats_row(self._find_result_row(ticker))
         if stats is not None:
             news_controls.append(stats)
+
+        # ── Trade reasons ──────────────────────────────────────────────
+        row = self._find_result_row(ticker)
+        if row is not None:
+            reasons = build_trade_reasons(row)
+            if reasons:
+                reason_controls = []
+                for r in reasons:
+                    is_risk = r.startswith("Risk:")
+                    icon_name = ft.Icons.WARNING_ROUNDED if is_risk else ft.Icons.CHECK_CIRCLE_ROUNDED
+                    icon_color = c["orange"] if is_risk else c["green"]
+                    reason_controls.append(
+                        ft.Row([
+                            ft.Icon(icon_name, size=12, color=icon_color),
+                            ft.Text(r, size=10, color=c["text"], expand=True),
+                        ], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                    )
+                news_controls.append(
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text("Why this trade?", size=11, weight=ft.FontWeight.BOLD, color=c["cyan"]),
+                            ft.Divider(height=1, color=c["border"]),
+                            *reason_controls,
+                        ], spacing=3),
+                        bgcolor=c["card"],
+                        border_radius=8,
+                        padding=8,
+                        margin=_margin_only(bottom=4),
+                    )
+                )
+
         if not items:
             news_controls.append(ft.Text("No recent news found.", size=11, color=c["text_dim"]))
         else:

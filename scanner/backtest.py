@@ -254,6 +254,13 @@ class BacktestEngine:
                     if not xo["crossed"]:
                         continue
 
+                    # ── High-probability freshness & volume gates ────────────
+                    from .scoring import is_hp_gate_active, check_hp_freshness, check_hp_volume
+                    if not check_hp_freshness(xo, settings):
+                        continue
+                    if not check_hp_volume(stock.df["volume"], xo, settings):
+                        continue
+
                     signals_generated += 1
                     crossover_level = xo["level"]
 
@@ -792,6 +799,9 @@ def main():
     parser.add_argument("--universe", type=str, default="nifty50",
                         choices=["nifty50", "fno", "all"],
                         help="Stock universe: nifty50, fno, or all (default: nifty50)")
+    parser.add_argument("--entry-mode", type=str, default="classic",
+                        choices=["classic", "high_probability", "custom"],
+                        help="Entry mode: classic (default), high_probability, or custom")
     args = parser.parse_args()
 
     # Build settings
@@ -812,6 +822,7 @@ def main():
         "atr_trail_multiplier": args.atr_trail_mult,
         "max_risk_per_trade": args.max_risk,
         "crossover_lookback": args.crossover_lookback,
+        "entry_mode": args.entry_mode,
     }
 
     # Select tickers
