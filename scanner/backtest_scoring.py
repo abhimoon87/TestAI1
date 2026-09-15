@@ -103,12 +103,17 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     else:
         is_sideways = adx_weak or chop_weak or slope_weak
 
-    # --- Weekly HMA higher-timeframe check ---
+    # --- Weekly HMA higher-timeframe check (as-of bar date, no look-ahead) ---
     weekly_hma_bull = False
     if bar_idx >= 250 and stock.w_hma is not None and stock.w_ema50 is not None:
         try:
-            if not np.isnan(stock.w_hma.iloc[-1]) and not np.isnan(stock.w_ema50.iloc[-1]):
-                weekly_hma_bull = stock.w_hma.iloc[-1] > stock.w_ema50.iloc[-1]
+            bar_date = df.index[bar_idx]
+            w_idx = stock.w_hma.index.searchsorted(bar_date, side="right") - 1
+            if w_idx >= 0:
+                w_hma_val = stock.w_hma.iloc[w_idx]
+                w_ema_val = stock.w_ema50.iloc[w_idx]
+                if not np.isnan(w_hma_val) and not np.isnan(w_ema_val):
+                    weekly_hma_bull = w_hma_val > w_ema_val
         except Exception as e:
             logger.debug("Weekly HMA/EMA gate failed at bar %d: %s", bar_idx, e)
 

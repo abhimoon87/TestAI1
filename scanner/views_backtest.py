@@ -24,6 +24,7 @@ from .ui_kit import (
     _glass_border,
     _margin_only,
     _padding_only,
+    themed_dropdown,
 )
 
 # Scoreboard column widths shared by the header and every metric row so the
@@ -75,9 +76,9 @@ class BacktestViewMixin:
     def _wf_field(self, label, value):
         c = self.theme_colors
         ctrl = ft.TextField(
-            value=str(value), width=110, height=40, text_size=13,
+            value=str(value), width=120, height=42, text_size=13,
             bgcolor=c["option_bg"], color=c["text"], border_color=c["border"],
-            border_width=1, border_radius=8, focused_border_color=c["purple"],
+            border_width=1, border_radius=10, focused_border_color=c["purple"],
         )
         return ctrl, ft.Row([
             ft.Text(label, size=12, color=c["text"], expand=True),
@@ -91,9 +92,9 @@ class BacktestViewMixin:
                 ft.Text(title, size=12, weight=ft.FontWeight.BOLD, color=c.get(accent, c["cyan"])),
                 ft.Divider(height=1, color=c["border"]),
                 *body_controls,
-            ], spacing=8),
+            ], spacing=10),
             bgcolor=_glass_bg(), border=_glass_border(),
-            border_radius=14, shadow=_card_shadow(), padding=14,
+            border_radius=16, shadow=_card_shadow(), padding=16,
         )
 
     # -- walk-forward results scoreboard --------------------------------
@@ -108,8 +109,8 @@ class BacktestViewMixin:
     def _wf_chip(self, text, color):
         return ft.Container(
             content=ft.Text(text, size=10, weight=ft.FontWeight.BOLD, color=color),
-            bgcolor=_glass_bg(), border=_glass_border(), border_radius=8,
-            padding=_padding_only(left=9, right=9, top=3, bottom=3),
+            bgcolor=_glass_bg(), border=_glass_border(), border_radius=10,
+            padding=_padding_only(left=10, right=10, top=4, bottom=4),
         )
 
     def _wf_metric_row(self, label, m, c, emphasize=False):
@@ -146,9 +147,9 @@ class BacktestViewMixin:
             return ft.Container(
                 content=row,
                 bgcolor=ft.Colors.with_opacity(0.14, c["green"]),
-                border_radius=8,
-                padding=_padding_only(left=4, right=4, top=2, bottom=2),
-                margin=_margin_only(top=2, bottom=2),
+                border_radius=10,
+                padding=_padding_only(left=6, right=6, top=3, bottom=3),
+                margin=_margin_only(top=3, bottom=3),
             )
         return row
 
@@ -216,35 +217,24 @@ class BacktestViewMixin:
         self._wf_minadx, r4 = self._wf_field("Min ADX gate", s.get("min_adx_entry", 20.0))
 
         yrs = params.get("years", 3)
-        self._wf_years = ft.Dropdown(
-            options=[ft.dropdown.Option(str(y)) for y in (3, 5)],
-            value=str(yrs), width=110, height=40, text_size=13,
-            bgcolor=c["option_bg"], color=c["text"], border_color=c["border"],
-            border_width=1, border_radius=8, focused_border_color=c["purple"],
-        )
+        self._wf_years = themed_dropdown(["3", "5"], str(yrs), c, width=120)
         r5 = ft.Row([
             ft.Text("History (years)", size=12, color=c["text"], expand=True),
             self._wf_years,
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
-        self._wf_preset = ft.Dropdown(
-            options=[ft.dropdown.Option(n) for n in _WF_PRESETS],
-            value=params.get("preset", "Custom"), width=250, height=40, text_size=13,
-            bgcolor=c["option_bg"], color=c["text"], border_color=c["border"],
-            border_width=1, border_radius=8, focused_border_color=c["purple"],
-            on_select=self._wf_apply_preset,
+        self._wf_preset = themed_dropdown(
+            list(_WF_PRESETS), params.get("preset", "Custom"), c, width=260,
+            on_change=self._wf_apply_preset,
         )
         r6 = ft.Row([
             ft.Text("Config preset", size=12, color=c["text"], expand=True),
             self._wf_preset,
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
-        self._wf_ma_set = ft.Dropdown(
-            options=[ft.dropdown.Option(key, text)
-                     for key, text in _MA_SET_OPTIONS],
-            value=params.get("ma_set", "current"), width=250, height=40, text_size=13,
-            bgcolor=c["option_bg"], color=c["text"], border_color=c["border"],
-            border_width=1, border_radius=8, focused_border_color=c["purple"],
+        self._wf_ma_set = themed_dropdown(
+            [ft.dropdown.Option(key, text) for key, text in _MA_SET_OPTIONS],
+            params.get("ma_set", "current"), c, width=260,
         )
         r7 = ft.Row([
             ft.Text("MA set for this run", size=12, color=c["text"], expand=True),
@@ -315,7 +305,7 @@ class BacktestViewMixin:
             controls=[params_card, gates_card, settings_note,
                       ft.Row([self._wf_btn, self._wf_status], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                       self._wf_btn_label, results_card],
-            spacing=10, scroll=ft.ScrollMode.AUTO, expand=True,
+            spacing=12, scroll=ft.ScrollMode.AUTO, expand=True,
         )
         footer = ft.Row([
             ft.Container(expand=True),
@@ -324,7 +314,7 @@ class BacktestViewMixin:
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER)
         return ft.Column(
             controls=[header, body,
-                      ft.Container(content=footer, padding=_padding_only(top=8, bottom=14, right=6))],
+                      ft.Container(content=footer, padding=_padding_only(top=10, bottom=16, right=8))],
             spacing=0, expand=True,
         )
 
@@ -343,8 +333,16 @@ class BacktestViewMixin:
 
     # -- run flow ---------------------------------------------------------
     def _run_wf(self, e=None):
-        if getattr(self, "_wf_busy", False):
+        lock = getattr(self, "_state_lock", None)
+        if lock is not None:
+            with lock:
+                if getattr(self, "_wf_busy", False):
+                    return
+                self._wf_busy = True
+        elif getattr(self, "_wf_busy", False):
             return
+        else:
+            self._wf_busy = True
         try:
             stop = float(self._wf_stop.value or 0)
             target = float(self._wf_target.value or 0)
@@ -354,6 +352,12 @@ class BacktestViewMixin:
             if stop <= 0 or target <= 0 or trail < 0 or min_adx < 0:
                 raise ValueError("risk values must be positive")
         except ValueError:
+            lock = getattr(self, "_state_lock", None)
+            if lock is not None:
+                with lock:
+                    self._wf_busy = False
+            else:
+                self._wf_busy = False
             self.wf_state = {"status": "Invalid numbers in the risk fields.",
                              "result": None, "error": "invalid input"}
             self._wf_status.value = self.wf_state["status"]
@@ -361,20 +365,24 @@ class BacktestViewMixin:
             self.page.update()
             return
         ma_set = self._wf_ma_set.value if hasattr(self, "_wf_ma_set") else "current"
+        gates = {"regime": bool(self._wf_regime.value),
+                 "rotation": bool(self._wf_rotation.value),
+                 "no_thursday": bool(self._wf_nothu.value)}
         self.wf_state = {
             "status": "Running walk-forward (NIFTY 50)… window stays open, results appear here.",
             "result": None, "error": None,
             "params": {"stop": stop, "target": target, "trail": trail,
                        "years": years, "min_adx": min_adx,
                        "preset": self._wf_preset.value, "ma_set": ma_set},
-            "gates": {"regime": self._wf_regime.value, "rotation": self._wf_rotation.value,
-                      "no_thursday": self._wf_nothu.value},
+            "gates": gates,
         }
-        self._wf_busy = True
-        self.main_area_box.content = self._build_backtest_view()
+        box = getattr(self, "main_area_box", None)
+        if box is not None:
+            box.content = self._build_backtest_view()
         threading.Thread(target=self._wf_job,
                          kwargs={"years": years, "stop": stop, "target": target,
-                                 "trail": trail, "min_adx": min_adx, "ma_set": ma_set},
+                                 "trail": trail, "min_adx": min_adx, "ma_set": ma_set,
+                                 "gates": gates},
                          daemon=True).start()
         self.page.update()
 
@@ -391,7 +399,8 @@ class BacktestViewMixin:
             self._wf_ma_set.value = "reference"
         self.page.update()
 
-    def _wf_job(self, years, stop, target, trail, min_adx, ma_set="current"):
+    def _wf_job(self, years, stop, target, trail, min_adx, ma_set="current",
+                gates=None):
         try:
             import contextlib
             import io
@@ -400,15 +409,16 @@ class BacktestViewMixin:
             overrides = self._wf_overrides()
             if ma_set == "reference":
                 overrides = {**overrides, **_MA_REFERENCE}
+            gates = gates or {}
             # The engine prints its banners to stdout; swallow them so the app
             # console stays clean (results come back via the return dict).
             with contextlib.redirect_stdout(io.StringIO()):
                 res = run_walkforward(
                     period=f"{years}y", stop=stop, target=target, trail=trail,
                     min_adx=min_adx, verbose=False,
-                    regime=self.wf_state.get("gates", {}).get("regime", False),
-                    rotation=self.wf_state.get("gates", {}).get("rotation", False),
-                    no_thursday=self.wf_state.get("gates", {}).get("no_thursday", False),
+                    regime=bool(gates.get("regime", False)),
+                    rotation=bool(gates.get("rotation", False)),
+                    no_thursday=bool(gates.get("no_thursday", False)),
                     ma_overrides=overrides,
                 )
             self._safe_update(lambda: self._wf_done(res))
@@ -417,7 +427,12 @@ class BacktestViewMixin:
             self._safe_update(lambda: self._wf_done({"error": msg}))
 
     def _wf_done(self, res):
-        self._wf_busy = False
+        lock = getattr(self, "_state_lock", None)
+        if lock is not None:
+            with lock:
+                self._wf_busy = False
+        else:
+            self._wf_busy = False
         if isinstance(res, dict) and res.get("error"):
             self.wf_state = {"status": f"Walk-forward failed: {res['error']}",
                              "result": None, "error": res["error"]}
@@ -425,8 +440,10 @@ class BacktestViewMixin:
             tc = (res or {}).get("test_chosen")
             self.wf_state = {"status": "Walk-forward complete." if tc else "Walk-forward finished (no trades).",
                              "result": res, "error": None}
-        if self.active_view == "backtest" and self.main_area_box is not None:
-            self.main_area_box.content = self._build_backtest_view()
+        if self.active_view == "backtest":
+            box = getattr(self, "main_area_box", None)
+            if box is not None:
+                box.content = self._build_backtest_view()
         self._log(self.wf_state["status"])
         self.page.update()
 

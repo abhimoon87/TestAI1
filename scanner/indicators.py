@@ -32,6 +32,8 @@ def _wma_vectorized(series: pd.Series, length: int) -> pd.Series:
     original series index (n-1+i). We place it at output index (n-1+i) to
     match pandas rolling() semantics, and NaN the first n-1 positions.
     """
+    if int(length) < 1:
+        raise ValueError(f"WMA length must be >= 1, got {length}")
     vals = series.values.astype(np.float64)
     n = length
     N = len(vals)
@@ -58,6 +60,8 @@ def hull_ma(series: pd.Series, length: int) -> pd.Series:
     Formula: WMA(2 × WMA(close, n/2) − WMA(close, n), √n)
     All three WMA layers use vectorized convolution — no Python per-window loops.
     """
+    if int(length) < 2:
+        raise ValueError(f"HMA length must be >= 2, got {length}")
     half = int(length / 2)
     sqrt_len = int(np.sqrt(length))
 
@@ -69,11 +73,15 @@ def hull_ma(series: pd.Series, length: int) -> pd.Series:
 
 def ema(series: pd.Series, length: int) -> pd.Series:
     """Exponential Moving Average."""
+    if int(length) < 1:
+        raise ValueError(f"EMA length must be >= 1, got {length}")
     return series.ewm(span=length, adjust=False).mean()
 
 
 def sma(series: pd.Series, length: int) -> pd.Series:
     """Simple Moving Average."""
+    if int(length) < 1:
+        raise ValueError(f"SMA length must be >= 1, got {length}")
     return series.rolling(length).mean()
 
 
@@ -91,6 +99,8 @@ def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int 
     The recursive KAMA(k) = k + sc × (price − k) is handled by a single
     numba-free loop over the smoothing constant array.
     """
+    if int(length) < 1:
+        raise ValueError(f"KAMA length must be >= 1, got {length}")
     vals = series.values.astype(np.float64)
     n = len(vals)
     result = np.full(n, np.nan, dtype=np.float64)
@@ -210,8 +220,10 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> 
 # ── Derived Metrics ─────────────────────────────────────────────────────────
 
 def price_change(series: pd.Series, period: int) -> pd.Series:
-    """Percentage price change over N periods."""
-    return ((series - series.shift(period)) / series.shift(period)) * 100
+    """Percentage price change over N periods (0-base → NaN, never inf)."""
+    base = series.shift(period)
+    base = base.mask(base == 0)
+    return ((series - base) / base) * 100
 
 
 def highest(series: pd.Series, length: int) -> pd.Series:
@@ -246,7 +258,7 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
 
     high_arr = high.values.astype(float)
     low_arr = low.values.astype(float)
-    vol_arr = volume.values.astype(float)
+    vol_arr = np.nan_to_num(volume.values.astype(float), nan=0.0)
     close_arr = close.values.astype(float)
 
     # Pre-allocate rolling min/max arrays (vectorized via pandas)
@@ -258,7 +270,7 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
         price_max = rolling_high[i]
 
         if np.isnan(price_min) or np.isnan(price_max) or price_max == price_min:
-            poc_series.iloc[i] = price_min if not np.isnan(price_min) else close_arr[i]
+            poc_series.iat[i] = price_min if not np.isnan(price_min) else close_arr[i]
             continue
 
         # Adaptive bin count (matches original logic)
@@ -288,6 +300,10 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
         # Distribute volume: (B, 1) × (B, N) → sum over bars → (N,)
         bin_volumes = (w_vol[:, None] * overlap_pct).sum(axis=0)
 
-        poc_series.iloc[i] = bin_centers[np.argmax(bin_volumes)]
+        total_vol = float(np.nansum(bin_volumes))
+        if not np.isfinite(total_vol) or total_vol <= 0:
+            poc_series.iat[i] = close_arr[i]
+        else:
+            poc_series.iat[i] = bin_centers[np.argmax(bin_volumes)]
 
     return poc_series

@@ -195,6 +195,7 @@ class BacktestEngine:
         stock_map = {s.ticker: s for s in self.stocks}
 
         for day in backtest_dates:
+            new_positions = set()
             # 1. Check exits on open positions
             closed_today = []
             for pos in self.positions:
@@ -255,10 +256,14 @@ class BacktestEngine:
                         continue
 
                     # ── High-probability freshness & volume gates ────────────
-                    from .scoring import is_hp_gate_active, check_hp_freshness, check_hp_volume
+                    from .scoring import check_hp_freshness, check_hp_volume
                     if not check_hp_freshness(xo, settings):
                         continue
-                    if not check_hp_volume(stock.df["volume"], xo, settings):
+                    # Slice to bar_idx so the volume gate is evaluated as-of
+                    # the signal bar (no look-ahead into future volume).
+                    if not check_hp_volume(
+                        stock.df["volume"].iloc[: bar_idx + 1], xo, settings
+                    ):
                         continue
 
                     signals_generated += 1
@@ -410,12 +415,15 @@ class BacktestEngine:
                     )
                     self.positions.append(pos)
                     cash -= investment
+                    new_positions.add(stock.ticker)
 
             # 3. Record equity curve
             portfolio_value = cash
             for pos in self.positions:
                 stock = stock_map.get(pos.ticker)
-                if stock and day in stock.df.index:
+                if pos.ticker in new_positions:
+                    portfolio_value += pos.entry_price * pos.shares
+                elif stock and day in stock.df.index:
                     current_price = stock.df.loc[day, "close"]
                     portfolio_value += current_price * pos.shares
                 else:
@@ -497,9 +505,9 @@ class BacktestEngine:
                 avg_daily = np.mean(daily_rets)
                 std_daily = np.std(daily_rets)
                 sharpe = (avg_daily / std_daily) * np.sqrt(252) if std_daily > 0 else 0
-                # Sortino: downside deviation uses all returns but zeros out positive ones
-                downside_devs = [min(r, 0) for r in daily_rets]
-                downside_std = np.std(downside_devs) if downside_devs else 0.001
+                # Sortino: downside deviation uses sqrt(mean(min(r, 0)^2))
+                downside_sq = [min(r, 0) ** 2 for r in daily_rets]
+                downside_std = np.sqrt(np.mean(downside_sq)) if downside_sq else 0.001
                 sortino = (avg_daily / downside_std) * np.sqrt(252) if downside_std > 0 else 0
             else:
                 sharpe = sortino = 0

@@ -133,6 +133,19 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
     Returns:
         DataFrame with columns [open, high, low, close, volume] or None
     """
+    ticker = str(ticker or "").strip().upper()
+    if not ticker:
+        return None
+    if period not in ("6mo", "1y", "2y", "3y", "5y"):
+        logger.debug("Unknown period %r for %s", period, ticker)
+        return None
+    if timeframe not in ("D", "W", "M"):
+        logger.debug("Unknown timeframe %r for %s", timeframe, ticker)
+        return None
+    try:
+        retries = max(1, int(retries))
+    except (TypeError, ValueError):
+        retries = 2
     provider = _get_provider()
     download_period = _extend_period_for_timeframe(period, timeframe)
 
@@ -151,9 +164,12 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
                 return df
         except Exception as e:
             if attempt < retries - 1:
-                time.sleep(1)
+                logger.debug("Fetch %s attempt %d/%d failed: %s",
+                             ticker, attempt + 1, retries, e)
+                time.sleep(min(2 ** attempt, 4))
             else:
-                logger.warning("Failed to fetch %s: %s", ticker, e)
+                logger.warning("Failed to fetch %s after %d attempts: %s",
+                               ticker, retries, e)
 
     return None
 
@@ -328,6 +344,7 @@ def _record_negative_cache_skips(n: int) -> None:
 # (.cache/enrichment_cache.json) and replay them on repeat scans within the
 # TTL window (default 24h) instead of re-hitting the providers.
 ENRICHMENT_CACHE_TTL_HOURS = 24
+_ENRICHMENT_TTL_OVERRIDE: float | None = None
 _ENRICHMENT_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".cache", "enrichment_cache.json"
 )
@@ -338,9 +355,25 @@ _enrichment_misses = 0
 _enrichment_counts_lock = threading.Lock()
 
 
+def set_enrichment_cache_ttl_hours(hours: float | None) -> None:
+    """Override the enrichment expiry window (hours); None restores default."""
+    global _ENRICHMENT_TTL_OVERRIDE
+    with _enrichment_lock:
+        _ENRICHMENT_TTL_OVERRIDE = (
+            max(0.5, float(hours)) if hours else None
+        )
+
+
+def enrichment_cache_ttl_hours() -> float:
+    """Current enrichment expiry window in hours."""
+    with _enrichment_lock:
+        return _ENRICHMENT_TTL_OVERRIDE or ENRICHMENT_CACHE_TTL_HOURS
+
+
 def _enrichment_cache_load() -> dict:
     """Load unexpired entries from disk once per process."""
     global _enrichment_cache
+    ttl_h = enrichment_cache_ttl_hours()
     with _enrichment_lock:
         if _enrichment_cache is None:
             cache: dict = {}
@@ -352,7 +385,7 @@ def _enrichment_cache_load() -> dict:
                     if (
                         isinstance(entry, dict)
                         and isinstance(entry.get("ts"), (int, float))
-                        and now - entry["ts"] < ENRICHMENT_CACHE_TTL_HOURS * 3600
+                        and now - entry["ts"] < ttl_h * 3600
                     ):
                         cache[k] = entry
             except Exception:
@@ -375,12 +408,13 @@ def _enrichment_cache_save() -> None:
 
 def _enrichment_cache_get(ticker: str) -> dict | None:
     """Fresh cached entry for a ticker (providers + fundamentals), else None."""
+    ttl_h = enrichment_cache_ttl_hours()
     cache = _enrichment_cache_load()
     with _enrichment_lock:
         entry = cache.get(ticker)
         if entry is None:
             return None
-        if time.time() - entry.get("ts", 0) < ENRICHMENT_CACHE_TTL_HOURS * 3600:
+        if time.time() - entry.get("ts", 0) < ttl_h * 3600:
             return entry
         cache.pop(ticker, None)  # expired — evict
         return None
@@ -404,6 +438,11 @@ def _enrichment_cache_put(
             "fundamentals": fundamentals,
         }
         _enrichment_cache_save()
+
+
+def _enrichment_cache_flush() -> None:
+    """No-op — enrichment cache is saved per-ticker. Kept for API compatibility."""
+    pass
 
 
 def enrichment_cache_clear() -> None:
@@ -750,7 +789,7 @@ def fetch_batch_yfinance_stream(
             try:
                 # Daemon threads: on cancel we don't join in-flight chunk
                 # downloads (which can take ~60s under Yahoo rate limits).
-                for t in executor._threads:
+                for t in getattr(executor, "_threads", ()):
                     t.daemon = True
             except Exception:
                 pass

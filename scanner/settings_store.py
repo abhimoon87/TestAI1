@@ -5,9 +5,12 @@ Handles loading/saving user settings to settings.json and defines the
 defaults that mirror the Pine Script indicator inputs.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +288,76 @@ def get_api_key(key_name: str, config: dict | None = None) -> str | None:
     return os.environ.get(key_name)
 
 
+def _sanitize_settings(saved: dict) -> dict:
+    """Validate and coerce loaded settings against DEFAULT_SETTINGS.
+
+    Unknown keys are dropped (except ``ui_*`` table-view prefs, which are
+    validated separately); known keys are coerced to the default's type and
+    checked against small enum sets. Out-of-range numerics fall back to the
+    default so a corrupt file can never brick Save or the engine.
+    """
+    cleaned: dict = {}
+    for key, val in saved.items():
+        if key not in DEFAULT_SETTINGS:
+            if key == "ui_sort_col" and isinstance(val, int) and 0 <= val < 19:
+                cleaned[key] = val
+            elif key == "ui_sort_reverse" and isinstance(val, bool):
+                cleaned[key] = val
+            elif (key == "ui_page_size" and isinstance(val, int)
+                    and 0 < val <= 500):
+                cleaned[key] = val
+            elif (key == "ui_rating_filter" and val in
+                    ("ALL", "EXCELLENT", "GOOD", "MODERATE", "POOR")):
+                cleaned[key] = val
+            elif key == "universe" and isinstance(val, str) and val:
+                cleaned[key] = val
+            else:
+                logger.debug("Dropping unknown setting %r", key)
+            continue
+        default = DEFAULT_SETTINGS[key]
+        try:
+            if isinstance(default, bool):
+                if isinstance(val, bool):
+                    cleaned[key] = val
+                elif isinstance(val, str) and val.lower() in ("true", "false"):
+                    cleaned[key] = val.lower() == "true"
+                else:
+                    raise ValueError(key)
+            elif isinstance(default, int) and not isinstance(default, bool):
+                ival = int(float(val))
+                if key == "ui_sort_col":
+                    raise ValueError(key)  # not a default key; guarded above
+                cleaned[key] = ival
+            elif isinstance(default, float):
+                fval = float(val)
+                if key == "min_score" and not 0 <= fval <= 100:
+                    raise ValueError(key)
+                if key in ("negative_cache_ttl_hours",
+                           "stale_member_max_age_days") and fval <= 0:
+                    raise ValueError(key)
+                cleaned[key] = fval
+            elif isinstance(default, str):
+                sval = str(val)
+                enums = {
+                    "theme": ("dark", "light"),
+                    "entry_mode": ("classic", "high_probability", "custom"),
+                    "fast_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
+                    "slow_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
+                    "slope_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
+                    "data_period": ("6mo", "1y", "2y"),
+                    "timeframe": ("D", "W", "M"),
+                    "trend_filter": ("All", "Bullish Only", "Bearish Only"),
+                }
+                if key in enums and sval not in enums[key]:
+                    raise ValueError(key)
+                cleaned[key] = sval
+            else:
+                cleaned[key] = val
+        except (ValueError, TypeError):
+            logger.debug("Dropping invalid setting %r=%r", key, val)
+    return cleaned
+
+
 def load_settings() -> dict:
     """Load settings from JSON file, falling back to defaults."""
     settings = DEFAULT_SETTINGS.copy()
@@ -292,16 +365,30 @@ def load_settings() -> dict:
         try:
             with open(SETTINGS_FILE, "r") as f:
                 saved = json.load(f)
-            settings.update(saved)
+            if isinstance(saved, dict):
+                settings.update(_sanitize_settings(saved))
+            else:
+                logger.warning("Settings file is not a JSON object; using defaults")
         except Exception as e:
-            logger.debug("Failed to load settings: %s", e)
+            logger.warning("Failed to load settings: %s", e)
     return settings
 
 
 def save_settings(settings: dict):
-    """Save settings to JSON file."""
+    """Save settings to JSON file atomically."""
     try:
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(settings, f, indent=2)
+        dir_name = os.path.dirname(SETTINGS_FILE) or "."
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(settings, f, indent=2)
+            os.replace(tmp_path, SETTINGS_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except Exception as e:
-        logger.debug("Failed to save settings: %s", e)
+        logger.warning("Failed to save settings: %s", e)
+        raise

@@ -146,22 +146,31 @@ def _ensure_cache_dir():
 
 
 def _cache_key(ticker: str, period: str, provider: str) -> str:
-    """Generate a cache file key."""
-    today = date.today().isoformat()
-    raw = f"{ticker}_{period}_{provider}_{today}"
+    """Generate a cache file key.
+
+    Keyed on normalized ticker + period + provider only; freshness is
+    enforced by the ``meta`` timestamp against ``CACHE_TTL_HOURS``. (A
+    previous day-keyed scheme made entries unreachable after midnight while
+    still counting as fresh.)
+    """
+    norm = str(ticker or "").strip().upper()
+    raw = f"{norm}_{period}_{provider}"
     return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
 
-def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
-    """Retrieve cached data if fresh enough."""
-    _ensure_cache_dir()
-    key = _cache_key(ticker, period, provider)
-    cache_file = os.path.join(CACHE_DIR, f"{key}.pkl")
-    meta_file = os.path.join(CACHE_DIR, f"{key}.meta")
+def _legacy_cache_key(ticker: str, period: str, provider: str) -> str:
+    """Pre-fix day-keyed cache key (kept for reading legacy entries)."""
+    today = date.today().isoformat()
+    norm = str(ticker or "").strip().upper()
+    raw = f"{norm}_{period}_{provider}_{today}"
+    return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
+
+def _read_cache_pair(cache_file: str, meta_file: str,
+                     ticker: str) -> pd.DataFrame | None:
+    """Return the frame if the pkl+meta pair exists and is fresh."""
     if not os.path.exists(cache_file) or not os.path.exists(meta_file):
         return None
-
     try:
         with open(meta_file, "r") as f:
             meta = json.load(f)
@@ -177,8 +186,29 @@ def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
         return None
 
 
+def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
+    """Retrieve cached data if fresh enough.
+
+    Reads the current (date-independent) key first, then falls back to the
+    legacy day-keyed entry so caches written by older versions keep working
+    until they age out and are pruned.
+    """
+    _ensure_cache_dir()
+    key = _cache_key(ticker, period, provider)
+    hit = _read_cache_pair(os.path.join(CACHE_DIR, f"{key}.pkl"),
+                           os.path.join(CACHE_DIR, f"{key}.meta"), ticker)
+    if hit is not None:
+        return hit
+    legacy = _legacy_cache_key(ticker, period, provider)
+    if legacy != key:
+        return _read_cache_pair(os.path.join(CACHE_DIR, f"{legacy}.pkl"),
+                                os.path.join(CACHE_DIR, f"{legacy}.meta"),
+                                ticker)
+    return None
+
+
 def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
-    """Store data in cache."""
+    """Store data in cache (atomic: tmp files + os.replace)."""
     _ensure_cache_dir()
     key = _cache_key(ticker, period, provider)
     cache_file = os.path.join(CACHE_DIR, f"{key}.pkl")
@@ -186,10 +216,20 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
 
     try:
         df = _normalize_cache_frame(df)
-        df.to_pickle(cache_file)
-        with open(meta_file, "w") as f:
+        tmp_pkl = cache_file + ".tmp"
+        tmp_meta = meta_file + ".tmp"
+        df.to_pickle(tmp_pkl)
+        with open(tmp_meta, "w") as f:
             json.dump({"timestamp": datetime.now().isoformat(), "rows": len(df)}, f)
+        os.replace(tmp_pkl, cache_file)
+        os.replace(tmp_meta, meta_file)
     except Exception as e:
+        for tmp in (cache_file + ".tmp", meta_file + ".tmp"):
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except OSError:
+                pass
         logger.debug("Cache write failed for %s: %s", ticker, e)
 
 
@@ -734,15 +774,23 @@ class DataProvider:
                     return df
             except Exception as e:
                 with self._meta_lock:
-                    self.last_error = f"{name}: {e!s}"
+                    prev = self.last_error
+                    err = f"{name}: {e!s}"
+                    self.last_error = err if not prev else f"{prev}; {err}"
+                logger.debug("Provider %s failed for %s: %s", name, ticker, e)
                 continue
 
         with self._meta_lock:
-            self.last_error = "All providers failed"
+            if not self.last_error:
+                self.last_error = "All providers failed"
+            else:
+                self.last_error = f"All providers failed ({self.last_error})"
+        logger.info("All providers failed for %s: %s", ticker, self.last_error)
         return None
 
-    def fetch_index(self, ticker: str, period: str = "1y") -> pd.DataFrame | None:
-        """Fetch index data with provider fallback."""
+    def fetch_index(self, ticker: str, period: str = "1y",
+                    provider_timeout: float | None = 30.0) -> pd.DataFrame | None:
+        """Fetch index data with provider fallback (bounded by default)."""
         with self._meta_lock:
             self.last_provider = None
 
@@ -760,7 +808,13 @@ class DataProvider:
 
         for name, fetch_fn in providers:
             try:
-                df = fetch_fn()
+                if provider_timeout:
+                    df = _call_with_timeout(fetch_fn, provider_timeout)
+                    if df is _TIMEOUT:
+                        logger.debug("Index provider %s timed out for %s", name, ticker)
+                        continue
+                else:
+                    df = fetch_fn()
                 if df is not None and not df.empty:
                     with self._meta_lock:
                         self.last_provider = name

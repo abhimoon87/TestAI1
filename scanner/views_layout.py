@@ -22,8 +22,17 @@ from .ui_kit import (
     _neon_glow,
     _padding_only,
     _score_of,
+    score_color,
 )
 from .universes import UNIVERSES
+
+# Fixed pane widths — single source of truth for the main-row geometry
+# (must match _build_rail / _build_sidebar / _build_right_panel).
+RAIL_W = 64
+SIDE_W = 248
+RIGHT_W = 300
+# Hero geometry: market box width and its left margin.
+MARKET_BOX_W = 190
 
 
 class LayoutViewMixin:
@@ -118,7 +127,7 @@ class LayoutViewMixin:
                 spacing=0,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            width=64,
+            width=RAIL_W,
             bgcolor=c["rail_bg"],
             padding=_padding_only(top=14),
         )
@@ -150,12 +159,12 @@ class LayoutViewMixin:
                     clear_btn,
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 status_lbl,
-            ], spacing=2),
+            ], spacing=3),
             bgcolor=_glass_bg(),
             border=_glass_border(),
-            border_radius=10,
+            border_radius=12,
             shadow=_card_shadow(),
-            padding=_padding_only(left=10, right=4, top=6, bottom=6),
+            padding=_padding_only(left=10, right=4, top=7, bottom=7),
         )
 
     def _build_sidebar(self) -> ft.Container:
@@ -198,15 +207,15 @@ class LayoutViewMixin:
 
         self.action_btn_label = ft.Text("▶  RUN SCAN", size=14, weight=ft.FontWeight.BOLD)
         self.action_btn = ft.Button(
-            content=self.action_btn_label, expand=True, height=46,
+            content=self.action_btn_label, expand=True, height=48,
             bgcolor=c["green"], color=c["on_accent"],
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=14)),
             on_click=self._on_action_click,
         )
         self.progress_bar = ft.ProgressBar(
-            height=8, color=c["progress_fg"],
+            height=6, color=c["progress_fg"],
             bgcolor=c["progress_bg"], value=0,
-            border_radius=5,
+            border_radius=4,
         )
         self.progress_label = ft.Text("Ready", size=10, color=c["text_dim"])
 
@@ -280,7 +289,7 @@ class LayoutViewMixin:
                 spacing=0,
                 expand=True,
             ),
-            width=248,
+            width=SIDE_W,
             bgcolor=c["side_bg"],
         )
 
@@ -289,10 +298,10 @@ class LayoutViewMixin:
 
         self.search_entry = ft.TextField(
             hint_text="Filter by ticker…",
-            width=240, height=34, text_size=12,
+            width=260, height=36, text_size=12,
             bgcolor=c["card"], color=c["text"],
             border_color=c["border"], border_width=1,
-            border_radius=17,
+            border_radius=18,
             prefix_icon=ft.Icons.SEARCH,
             content_padding=_padding_only(left=10, top=4, bottom=4),
             on_change=self._on_search_change,
@@ -353,31 +362,30 @@ class LayoutViewMixin:
                 spacing=0,
                 horizontal_alignment=ft.CrossAxisAlignment.END,
             ),
+            width=MARKET_BOX_W,
             border_radius=12,
-            border=ft.Border(
-                top=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-                bottom=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-                left=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-                right=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-            ),
-            bgcolor=c.get("card2", "#24242c"),
+            border=_border_all(1, c["border_light"]),
+            bgcolor=c["card2"],
             padding=_padding_only(left=16, right=16, top=8, bottom=8),
-            margin=_margin_only(left=16),
             visible=False,
         )
         # Secondary index readouts (BANK NIFTY / SENSEX / NIFTY IT) — a slim
         # ticker strip at the bottom of the hero; hidden until data arrives.
         self.market_strip = ft.Row(spacing=6, scroll=ft.ScrollMode.AUTO, visible=False)
+        self.hero_text_col = ft.Column(
+            controls=[self.hero_text, ft.Container(height=16), self.hero_sub],
+            spacing=0,
+        )
+        # The hero Row always allocates the market_box slot (MARKET_BOX_W +
+        # 16 margin) so the layout geometry is stable even when the box is
+        # hidden — no expand/flex needed, no resize handler needed.
         self.hero = ft.Container(
             content=ft.Column(
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Column(
-                                controls=[self.hero_text, ft.Container(height=14), self.hero_sub],
-                                spacing=0,
-                                expand=True,
-                            ),
+                            self.hero_text_col,
+                            ft.Container(width=16),
                             self.market_box,
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -391,10 +399,10 @@ class LayoutViewMixin:
                 begin=Alignment.CENTER_LEFT, end=Alignment.CENTER_RIGHT,
                 colors=c["hero_grad"],
             ),
-            border_radius=14,
+            border_radius=16,
             shadow=_card_shadow(),
-            padding=_padding_only(left=26, right=18, top=14, bottom=12),
-            margin=_margin_only(bottom=8),
+            padding=_padding_only(left=28, right=20, top=18, bottom=14),
+            margin=_margin_only(bottom=10),
         )
 
         self.summary_cards = {}
@@ -410,14 +418,14 @@ class LayoutViewMixin:
                     ft.Container(expand=True),
                     self.chart_sub,
                 ]),
-                ft.Container(content=self.chart_bars, height=64),
+                ft.Container(content=self.chart_bars, height=60),
             ], spacing=6),
             bgcolor=_glass_bg(),
             border=_glass_border(),
             border_radius=14,
             shadow=_card_shadow(),
-            padding=_padding_only(left=14, right=14, top=10, bottom=10),
-            margin=_margin_only(top=8),
+            padding=_padding_only(left=16, right=16, top=12, bottom=12),
+            margin=_margin_only(top=10),
             visible=False,
         )
 
@@ -430,7 +438,7 @@ class LayoutViewMixin:
                     self.result_count_label,
                 ],
             ),
-            padding=_padding_only(left=6, right=6, top=8, bottom=4),
+            padding=_padding_only(left=8, right=8, top=10, bottom=6),
         )
 
         self.table_column = ft.Column(spacing=0, expand=True)
@@ -470,25 +478,25 @@ class LayoutViewMixin:
             content=self.pagination_row,
             bgcolor=_glass_bg(),
             border=_glass_border(),
-            border_radius=10,
+            border_radius=12,
             shadow=_card_shadow(),
-            padding=_padding_only(left=10, right=10, top=6, bottom=6),
-            margin=_margin_only(left=6, right=6, top=8, bottom=12),
+            padding=_padding_only(left=12, right=12, top=7, bottom=7),
+            margin=_margin_only(left=6, right=6, top=10, bottom=14),
             visible=False,
         )
 
         self.empty_label = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(ft.Icons.SEARCH_OFF, size=42, color=c["text_faint"]),
-                    ft.Text("No results yet", size=14, weight=ft.FontWeight.BOLD, color=c["text"]),
+                    ft.Icon(ft.Icons.SEARCH_OFF, size=48, color=c["text_faint"]),
+                    ft.Text("No results yet", size=15, weight=ft.FontWeight.BOLD, color=c["text"]),
                     ft.Text("Choose a universe and hit RUN SCAN", size=11, color=c["text_dim"]),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=6,
+                spacing=8,
             ),
             alignment=Alignment.CENTER,
-            padding=40,
+            padding=48,
         )
         self.table_column.controls.append(self.empty_label)
 
@@ -523,6 +531,11 @@ class LayoutViewMixin:
                 colors=[c["bg_radial"], c["main_bg"]],
             ),
         )
+        # Rebuilds (view switches, theme changes) reset the hero's market
+        # readout to hidden — repaint it from the cached snapshot so the
+        # NIFTY banner survives any main-area rebuild (no network round-trip).
+        if getattr(self, "_last_market", None) is not None:
+            self._render_market(self._last_market)
         return self.main_area_box
 
     def _build_summary_row(self) -> ft.Row:
@@ -546,25 +559,47 @@ class LayoutViewMixin:
             card = ft.Container(
                 content=ft.Column(
                     controls=[
-                        ft.Container(height=2, bgcolor=color, border_radius=1),
+                        ft.Container(height=3, bgcolor=color, border_radius=2),
                         ft.Row([
                             ft.Icon(icon, size=10, color=color),
                             ft.Text(label, size=8, weight=ft.FontWeight.BOLD, color=c["text_faint"]),
                         ], spacing=4),
                         val_label,
                     ],
-                    spacing=2,
+                    spacing=3,
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                width=122,
+                width=130,
                 bgcolor=_glass_bg(),
                 border_radius=14,
                 border=_glass_border(),
                 shadow=_card_shadow(),
-                padding=_padding_only(top=8, bottom=10, left=6, right=6),
+                padding=_padding_only(top=10, bottom=12, left=8, right=8),
+                animate_scale=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+                animate_opacity=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
             )
+            card.on_hover = lambda e, _card=card: self._on_card_hover(e, _card)
             cards.append(card)
         return ft.Row(controls=cards, spacing=8, scroll=ft.ScrollMode.AUTO)
+
+    def _on_card_hover(self, e, card):
+        """Scale up + intensify shadow on hover for summary/top-pick cards."""
+        try:
+            if e.data == "true":
+                card.scale = ft.Scale(1.04)
+                card.opacity = 0.92
+                card.shadow = [ft.BoxShadow(
+                    blur_radius=32,
+                    color=ft.Colors.with_opacity(0.65, ft.Colors.BLACK),
+                    spread_radius=2,
+                )]
+            else:
+                card.scale = ft.Scale(1.0)
+                card.opacity = 1.0
+                card.shadow = _card_shadow()
+            card.update()
+        except Exception:
+            pass
 
     def _build_right_panel(self) -> ft.Container:
         c = self.theme_colors
@@ -572,7 +607,7 @@ class LayoutViewMixin:
         avatar = ft.Container(
             content=ft.Text("ABHI", size=13, weight=ft.FontWeight.BOLD,
                             color=c["avatar_text"]),
-            width=52, height=52, border_radius=26,
+            width=54, height=54, border_radius=27,
             bgcolor=c["avatar_bg"],
             border=_border_all(2, c["avatar_border"]),
             alignment=Alignment.CENTER,
@@ -591,8 +626,8 @@ class LayoutViewMixin:
             expand=True,
             bgcolor=c["panel_bg"],
             border=_border_all(1, c["border"]),
-            border_radius=12,
-            padding=8,
+            border_radius=14,
+            padding=10,
         )
         self.log_clear_btn = ft.TextButton(
             content=ft.Text("Clear", size=10), on_click=lambda e: self._clear_log(),
@@ -644,8 +679,30 @@ class LayoutViewMixin:
 
         return ft.Container(
             content=panel_content,
-            width=300,
+            width=RIGHT_W,
             bgcolor=c["side_bg"],
+        )
+
+    def _make_score_gauge(self, score: float, color: str, size: int = 30) -> ft.Container:
+        """Compact circular score display using a progress ring + centered text."""
+        return ft.Container(
+            content=ft.Stack(
+                controls=[
+                    ft.ProgressRing(
+                        width=size, height=size,
+                        stroke_width=3,
+                        value=score / 100.0,
+                        color=color,
+                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.WHITE),
+                    ),
+                    ft.Container(
+                        content=ft.Text(str(int(score)), size=9, weight=ft.FontWeight.BOLD, color=color),
+                        alignment=Alignment.CENTER,
+                    ),
+                ],
+                width=size, height=size,
+            ),
+            width=size, height=size,
         )
 
     def _render_topicks(self, top):
@@ -665,13 +722,13 @@ class LayoutViewMixin:
             return
         for i, r in enumerate(top[:5], 1):
             score = _score_of(r)
-            color = (c["green"] if score >= 70 else c["lime"] if score >= 50 else c["orange"] if score >= 30 else c["red"])
+            color = score_color(score, c)
             card = ft.Container(
                 content=ft.Row(
                     controls=[
                         ft.Container(
                             content=ft.Text(str(i), size=11, weight=ft.FontWeight.BOLD, color=color),
-                            width=26, height=26, border_radius=13,
+                            width=28, height=28, border_radius=14,
                             bgcolor=c["card2"],
                             alignment=Alignment.CENTER,
                         ),
@@ -680,10 +737,10 @@ class LayoutViewMixin:
                                 ft.Text(r.get("ticker", "?"), size=12, weight=ft.FontWeight.BOLD, color=c["text"]),
                                 ft.Text(f"₹{r.get('close', 0) or 0:,.0f}  ·  {r.get('trend_dir', '')}", size=9, color=c["text_dim"]),
                             ],
-                            spacing=0,
+                            spacing=1,
                             expand=True,
                         ),
-                        ft.Text(f"{score:.0f}", size=15, weight=ft.FontWeight.BOLD, color=color),
+                        self._make_score_gauge(score, color),
                     ],
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
@@ -691,9 +748,12 @@ class LayoutViewMixin:
                 border_radius=12,
                 border=_glass_border(),
                 shadow=_card_shadow(),
-                padding=_padding_only(left=10, right=12, top=6, bottom=6),
-                margin=_margin_only(bottom=3),
+                padding=_padding_only(left=10, right=12, top=7, bottom=7),
+                margin=_margin_only(bottom=4),
+                animate_scale=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+                animate_opacity=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
             )
+            card.on_hover = lambda e, _card=card: self._on_card_hover(e, _card)
             self.topicks_column.controls.append(card)
 
     # ── Market readout (hero card) ────────────────────────────────────────
@@ -767,19 +827,14 @@ class LayoutViewMixin:
                 ft.Text(q["label"], size=9, weight=ft.FontWeight.BOLD,
                         color=ft.Colors.with_opacity(0.85, c["hero_sub"])),
                 ft.Text(f"{q['level']:,.1f}", size=13, weight=ft.FontWeight.BOLD,
-                        color=c["hero_title"]),
+                        color=c.get("hero_value", c["hero_title"])),
                 ft.Text(f"{'▲' if up else '▼'} {q['pct']:+.2f}%", size=10,
                         weight=ft.FontWeight.BOLD, color=move_color),
             ], spacing=7, vertical_alignment=ft.CrossAxisAlignment.BASELINE),
-            bgcolor=c.get("chip_neutral", "#23232b"),
-            border_radius=9,
-            border=ft.Border(
-                top=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-                bottom=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-                left=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-                right=ft.BorderSide(1, c.get("border_light", "#3a3a46")),
-            ),
-            padding=_padding_only(left=12, right=12, top=6, bottom=6),
+            bgcolor=c["chip_neutral"],
+            border_radius=10,
+            border=_border_all(1, c["border_light"]),
+            padding=_padding_only(left=14, right=14, top=7, bottom=7),
             tooltip=f"{q['label']} · day change",
         )
 

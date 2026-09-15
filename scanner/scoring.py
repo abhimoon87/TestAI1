@@ -75,10 +75,8 @@ from .indicators import (
     adx,
     atr,
     ema,
-    highest,
     hull_ma,
     kama,
-    lowest,
     macd,
     obv,
     price_change,
@@ -238,7 +236,7 @@ def check_hp_volume(volume, xo: dict, settings: dict | None) -> bool:
     if not settings.get("hp_volume_confirmation", True):
         return True
     vol_ma_len = settings.get("vol_ma_len", 20)
-    vol_idx = -1 - xo["bars_ago"] if xo["bars_ago"] > 0 else -1
+    vol_idx = -xo["bars_ago"] if xo["bars_ago"] > 0 else -1
     vol_at_xo = volume.iloc[vol_idx]
     vol_ma_val = volume.rolling(vol_ma_len).mean().iloc[vol_idx]
     if np.isnan(vol_ma_val):
@@ -401,8 +399,6 @@ def _last_values(ind: dict, df: pd.DataFrame, settings: dict) -> dict:
         "adx": ind["adx_val"].iloc[-1],
         "pc1m": price_change(close, pc1m_period).iloc[-1],
         "pc3m": price_change(close, pc3m_period).iloc[-1],
-        "hh50": highest(ind["high"], 50).iloc[-1],
-        "ll50": lowest(ind["low"], 50).iloc[-1],
     }
 
 
@@ -595,7 +591,7 @@ def _score_stochastic(curr: dict) -> float:
     """Category 5: STOCHASTIC (max 5 pts)."""
     if np.isnan(curr["stoch_k"]):
         return 0.0
-    return 5.0 if 20 < curr["stoch_k"] < 80 else 0.0
+    return 5.0 if 20 <= curr["stoch_k"] <= 80 else 0.0
 
 
 def _score_obv(curr: dict) -> float:
@@ -883,43 +879,25 @@ def _get_combined_rating(total_score: float, ma_bullish: bool,
                          above_poc: bool, close_above_both_ma: bool = False) -> str:
     """
     Generate combined rating based on key signals and score.
+
+    Thresholds per setup (score cutoffs for EXCELLENT/GOOD/MODERATE):
+    both-MAs + POC: 60/50/35; bullish + POC: 65/50/40;
+    either: 68/53/40; neither: 70/55/40.
     """
-    if close_above_both_ma and above_poc:
-        if total_score >= 60:
-            return "EXCELLENT"
-        elif total_score >= 50:
-            return "GOOD"
-        elif total_score >= 35:
-            return "MODERATE"
-        else:
-            return "POOR"
-    elif ma_bullish and above_poc:
-        if total_score >= 65:
-            return "EXCELLENT"
-        elif total_score >= 50:
-            return "GOOD"
-        elif total_score >= 40:
-            return "MODERATE"
-        else:
-            return "POOR"
-    elif ma_bullish or above_poc:
-        if total_score >= 70:
-            return "EXCELLENT"
-        elif total_score >= 55:
-            return "GOOD"
-        elif total_score >= 40:
-            return "MODERATE"
-        else:
-            return "POOR"
-    else:
-        if total_score >= 70:
-            return "EXCELLENT"
-        elif total_score >= 55:
-            return "GOOD"
-        elif total_score >= 40:
-            return "MODERATE"
-        else:
-            return "POOR"
+    bands = (
+        (60, 50, 35) if close_above_both_ma and above_poc
+        else (65, 50, 40) if ma_bullish and above_poc
+        else (68, 53, 40) if ma_bullish or above_poc
+        else (70, 55, 40)
+    )
+    exc, good, mod = bands
+    if total_score >= exc:
+        return "EXCELLENT"
+    if total_score >= good:
+        return "GOOD"
+    if total_score >= mod:
+        return "MODERATE"
+    return "POOR"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

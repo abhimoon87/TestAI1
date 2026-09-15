@@ -476,8 +476,14 @@ class TestTopPicks:
         row = app.topicks_column.controls[0].content  # ft.Row of the #1 card
         rank = row.controls[0].content.value
         ticker = row.controls[1].controls[0].value
-        score = row.controls[2].value
-        assert rank == "1" and ticker == "T0" and score == "90"
+        assert rank == "1" and ticker == "T0"
+        # controls[2] is now a Container with Stack > ProgressRing + Text score
+        gauge_container = row.controls[2]
+        stack = gauge_container.content
+        from flet import Stack
+        assert isinstance(stack, Stack)
+        score_text = stack.controls[1].content  # the centered Text
+        assert score_text.value == "90"
 
 
 def test_summary_cards_update_values():

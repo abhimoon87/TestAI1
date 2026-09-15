@@ -17,19 +17,23 @@ Features:
 
 __all__ = ["TTLCache"]
 
+import copy
 import hashlib
-import logging
 import threading
 import time
 from typing import Generic, TypeVar
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
 class TTLCache(Generic[T]):
     def __init__(self, ttl: int = 4 * 3600, namespace: str = ""):
+        try:
+            ttl = int(ttl)
+        except (TypeError, ValueError):
+            ttl = 4 * 3600
+        if ttl <= 0:
+            ttl = 4 * 3600
         self.ttl = ttl
         self.namespace = namespace
         self._store: dict[str, tuple[T, float]] = {}
@@ -42,7 +46,7 @@ class TTLCache(Generic[T]):
                 return None
             value, ts = item
             if time.monotonic() - ts < self.ttl:
-                return value
+                return copy.deepcopy(value)
             # Expired — evict
             try:
                 del self._store[key]
@@ -52,7 +56,7 @@ class TTLCache(Generic[T]):
 
     def set(self, key: str, value: T) -> None:
         with self._lock:
-            self._store[key] = (value, time.monotonic())
+            self._store[key] = (copy.deepcopy(value), time.monotonic())
 
     def clear(self) -> None:
         with self._lock:
@@ -70,7 +74,8 @@ class TTLCache(Generic[T]):
         return removed
 
     def make_key(self, *parts: str, hashed: bool = True) -> str:
-        raw = ":".join(str(p) for p in parts)
+        prefix = f"{self.namespace}:" if self.namespace else ""
+        raw = prefix + ":".join(str(p) for p in parts)
         if not hashed:
             return raw
         return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()

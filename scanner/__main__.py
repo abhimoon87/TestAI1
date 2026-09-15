@@ -13,8 +13,8 @@ def main():
     try:
         from .trace import setup_trace
         setup_trace()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"Trace setup skipped: {exc}", file=sys.stderr)
 
     args = sys.argv[1:]
 

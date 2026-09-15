@@ -190,7 +190,7 @@ def _score_ticker(
                 if k.startswith("_") and k not in scores:
                     scores[k] = v
         return scores, direction
-    except (RequestException, ValueError, KeyError, TypeError) as e:
+    except Exception as e:
         logger.debug("Scoring failed for %s: %s", ticker, e)
         return None, "error"
 
@@ -264,7 +264,7 @@ def _enrich_rows_in_place(
                 )
                 if recomputed is not None:
                     r.update(recomputed)
-        except (RequestException, ValueError, KeyError, AttributeError) as e:
+        except Exception as e:
             logger.debug("Top enrichment failed for %s: %s", ticker, e)
         return r
 
@@ -293,6 +293,11 @@ def _enrich_rows_in_place(
             "Enrichment cache: %d/%d rows served from cache",
             hits, hits + misses,
         )
+    try:
+        from .data_fetcher import _enrichment_cache_flush
+        _enrichment_cache_flush()
+    except Exception:
+        pass
     return rows  # mutated in place; unfinished rows keep phase-1 scores
 
 
@@ -434,7 +439,7 @@ class ScannerEngine:
                    f"SlowMA={settings.get('slow_ma_type','EMA')}{settings.get('slow_ma_len',50)} "
                    f"RSI={settings.get('rsi_len',14)} Threshold={settings.get('min_score',50)}")
 
-        self._progress(0.0, "Fetching NIFTY 50 index...")
+        self._progress(0.0, f"Fetching {index_symbol} index...")
         index_df = fetch_index_data(f"^{index_symbol}", period=period)
         if index_df is not None:
             self._log(f"{index_symbol} index loaded ({len(index_df)} bars)")
@@ -829,6 +834,7 @@ class ScannerEngine:
                 top_n = min(ENRICH_TOP_N, len(results))
                 top = results[:top_n]
                 rest = results[top_n:]
+                self._progress(0.82, f"Enriching top {top_n} stocks...")
                 self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
                 enriched_top = _enrich_rows_in_place(
                     top, batch_data,
@@ -838,6 +844,8 @@ class ScannerEngine:
                     cancel_event=self._cancel_event,
                 )
                 results = enriched_top + rest
+
+            self._progress(0.95, "Finalizing scan...")
 
             self._finalize_scan(
                 result, settings, tickers, results, filtered_out,

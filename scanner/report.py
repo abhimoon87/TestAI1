@@ -5,6 +5,7 @@ Produces a sortable, filterable table with color-coded scores and news sentiment
 
 import html as _html
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
@@ -34,7 +35,6 @@ def _sentiment(title: str, summary: str = "") -> str:
     """Simple keyword-based sentiment: Good / Bad / Neutral."""
     text = (title + " " + summary).lower()
     # Split on whitespace and hyphens to catch hyphenated words
-    import re
     words = set(re.split(r'[\s\-]+', text))
     g = len(words & SENTIMENT_GOOD)
     b = len(words & SENTIMENT_BAD)
@@ -56,6 +56,17 @@ def _parse_date(date_str: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _news_id(ticker: str) -> str:
+    """DOM/JS-safe element id fragment for a ticker.
+
+    Tickers are interpolated into ``id="news-..."`` and an inline
+    ``onclick="toggleNews('...')"`` handler; HTML-escaping alone does not
+    make a string safe for the JS single-quoted context, so restrict to
+    ``[A-Za-z0-9_]`` (NSE/BSE symbols are alphanumeric).
+    """
+    return re.sub(r"[^A-Za-z0-9_]", "_", str(ticker or "UNKNOWN"))
 
 
 def fetch_stock_news(ticker: str, max_items: int = 10,
@@ -142,9 +153,13 @@ def _fetch_news_parallel(tickers: list[str], max_items: int = 10,
                     news_map[ticker] = []
     except Exception as e:
         logger.debug("ThreadPoolExecutor failed: %s", e)
-        # Fallback: sequential fetch
+        # Fallback: sequential fetch (never let one ticker abort the rest)
         for t in tickers:
-            news_map[t] = fetch_fn(t, max_items, months_back)
+            try:
+                news_map[t] = fetch_fn(t, max_items, months_back)
+            except Exception as e2:
+                logger.debug("Sequential news fetch failed for %s: %s", t, e2)
+                news_map[t] = []
 
     return news_map
 
@@ -203,23 +218,23 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     Returns:
         Complete HTML string
     """
-    # Sort by total score descending (non-mutating)
-    results = sorted(results, key=lambda x: x["total"], reverse=True)
+    # Sort by total score descending (non-mutating, tolerant of bad rows)
+    results = sorted(results, key=lambda x: x.get("total", 0) or 0, reverse=True)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    passed = [r for r in results if r["total"] >= threshold]
-    failed = [r for r in results if r["total"] < threshold]
+    passed = [r for r in results if (r.get("total", 0) or 0) >= threshold]
+    failed = [r for r in results if (r.get("total", 0) or 0) < threshold]
 
     # ── Pre-fetch news for all tickers in parallel ───────────────────────
     news_map: dict[str, list] = {}
     if fetch_news:
-        tickers = [r["ticker"] for r in results]
+        tickers = [str(r.get("ticker", "?")) for r in results]
         news_map = _fetch_news_parallel(tickers)
 
     rows_html = ""
     for r in results:
-        score = r["total"]
-        ticker = r["ticker"]
+        score = r.get("total", 0) or 0
+        ticker = str(r.get("ticker", "?"))
 
         # Use combined rating if available, else fall back to score-based
         combined_rating = r.get('combined_rating', None)
@@ -236,8 +251,8 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             else:
                 badge = '<span class="badge poor">POOR</span>'
 
-        trend_icon = "▲" if r["trend_dir"] == "Bull" else "▼"
-        trend_class = "bull" if "bull" in r["trend_color"] else "bear"
+        trend_icon = "▲" if r.get("trend_dir") == "Bull" else "▼"
+        trend_class = "bull" if "bull" in str(r.get("trend_color", "")) else "bear"
         rs_icon = "+" if (r.get("pc1m", 0) or 0) > 0 else ""
 
         # MA signal
@@ -277,9 +292,12 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         if fetch_news:
             news_items = news_map.get(ticker, [])
             if news_items:
-                good_count = sum(1 for n in news_items if n["sentiment"] == "Good")
-                bad_count = sum(1 for n in news_items if n["sentiment"] == "Bad")
-                neutral_count = sum(1 for n in news_items if n["sentiment"] == "Neutral")
+                good_count = sum(1 for n in news_items
+                                 if isinstance(n, dict) and n.get("sentiment") == "Good")
+                bad_count = sum(1 for n in news_items
+                                if isinstance(n, dict) and n.get("sentiment") == "Bad")
+                neutral_count = sum(1 for n in news_items
+                                    if isinstance(n, dict) and n.get("sentiment") == "Neutral")
                 summary_parts = []
                 if good_count:
                     summary_parts.append(f'<span class="news-good">{good_count} Good</span>')
@@ -290,12 +308,15 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 
                 news_rows = ""
                 for n in news_items:
-                    sent_cls = _html.escape(n["sentiment"].lower())
-                    safe_title = _html.escape(n["title"])
-                    safe_summary = _html.escape(n["summary"][:200])
-                    safe_publisher = _html.escape(n["publisher"])
-                    safe_date = _html.escape(n["date"])
-                    safe_sentiment = _html.escape(n["sentiment"])
+                    if not isinstance(n, dict):
+                        continue
+                    sent = str(n.get("sentiment", "Neutral"))
+                    sent_cls = _html.escape(sent.lower())
+                    safe_title = _html.escape(str(n.get("title", "")))
+                    safe_summary = _html.escape(str(n.get("summary", ""))[:200])
+                    safe_publisher = _html.escape(str(n.get("publisher", "")))
+                    safe_date = _html.escape(str(n.get("date", "")))
+                    safe_sentiment = _html.escape(sent)
                     news_rows += f"""
                         <div class="news-item">
                             <span class="news-sentiment {sent_cls}">[{safe_sentiment}]</span>
@@ -306,7 +327,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
                         </div>"""
 
                 news_html = f"""
-                <tr class="news-row" id="news-{ticker.replace(".", "_")}" style="display:none">
+                <tr class="news-row" id="news-{_news_id(ticker)}" style="display:none">
                     <td colspan="20">
                         <div class="news-panel">
                             <div class="news-summary-line">{" | ".join(summary_parts)}</div>
@@ -316,7 +337,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
                 </tr>"""
             else:
                 news_html = f"""
-                <tr class="news-row" id="news-{ticker.replace(".", "_")}" style="display:none">
+                <tr class="news-row" id="news-{_news_id(ticker)}" style="display:none">
                     <td colspan="20">
                         <div class="news-panel">
                             <div class="news-item"><span class="news-title">No recent news found</span></div>
@@ -331,7 +352,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             data-both-ma="{'true' if close_above_both else 'false'}"
             data-crossed="{'true' if ma_crossed else 'false'}"
             data-ticker="{_html.escape(ticker)}">
-            <td class="ticker" onclick="toggleNews('{_html.escape(ticker.replace(".", "_"))}')">{_html.escape(ticker)}</td>
+            <td class="ticker" onclick="toggleNews('{_news_id(ticker)}')">{_html.escape(ticker)}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
             <td class="num">{r.get('close', '—')}</td>
@@ -340,39 +361,39 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             <td class="num">{bothma_html}</td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar" style="width: {r['trend'] / 20 * 100:.0f}%"></div>
+                    <div class="bar" style="width: {r.get('trend', 0) / 20 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['trend']}/20</span>
+                <span class="bar-val">{r.get('trend', 0)}/20</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar mom" style="width: {r['momentum'] / 15 * 100:.0f}%"></div>
+                    <div class="bar mom" style="width: {r.get('momentum', 0) / 15 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['momentum']}/15</span>
+                <span class="bar-val">{r.get('momentum', 0)}/15</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar rsi" style="width: {r['rsi'] / 8 * 100:.0f}%"></div>
+                    <div class="bar rsi" style="width: {r.get('rsi', 0) / 8 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['rsi']}/8</span>
+                <span class="bar-val">{r.get('rsi', 0)}/8</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar macd" style="width: {r['macd'] / 7 * 100:.0f}%"></div>
+                    <div class="bar macd" style="width: {r.get('macd', 0) / 7 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['macd']}/7</span>
+                <span class="bar-val">{r.get('macd', 0)}/7</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar vol" style="width: {r['volume'] / 10 * 100:.0f}%"></div>
+                    <div class="bar vol" style="width: {r.get('volume', 0) / 10 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['volume']}/10</span>
+                <span class="bar-val">{r.get('volume', 0)}/10</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar rs" style="width: {r['rel_str'] / 10 * 100:.0f}%"></div>
+                    <div class="bar rs" style="width: {r.get('rel_str', 0) / 10 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r['rel_str']}/10</span>
+                <span class="bar-val">{r.get('rel_str', 0)}/10</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
@@ -383,7 +404,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             <td class="num">{r.get('rsi_val', '—')}</td>
             <td class="num">{r.get('adx_val', '—')}</td>
             <td class="num {'bull' if (r.get('pc1m') or 0) > 0 else 'bear'}">{rs_icon}{r.get('pc1m', '—')}%</td>
-            <td><span class="{trend_class}">{trend_icon} {r['trend_dir']}</span></td>
+            <td><span class="{trend_class}">{trend_icon} {r.get('trend_dir', '')}</span></td>
             <td>{r.get('volat_stat', '—')}</td>
             <td><span class="{sideways_cls}" title="{sideways_reasons}">{sideways_label}</span></td>
         </tr>
@@ -814,14 +835,23 @@ def save_report(html: str, filename: str = "scanner_report.html",
     import glob as _glob
     import os as _os
 
-    # Save the report
-    with open(filename, "w", encoding="utf-8") as f:
+    # Atomic save so a crash never leaves a truncated report behind
+    report_dir = _os.path.dirname(filename) or "."
+    try:
+        _os.makedirs(report_dir, exist_ok=True)
+    except OSError:
+        pass
+    tmp = filename + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         f.write(html)
+    _os.replace(tmp, filename)
 
     # Clean up old reports — keep only the newest max_reports
-    report_dir = _os.path.dirname(filename) or "."
-    pattern = _os.path.join(report_dir, "scanner_report_*.html")
-    reports = sorted(_glob.glob(pattern), key=_os.path.getmtime, reverse=True)
+    try:
+        pattern = _os.path.join(report_dir, "scanner_report_*.html")
+        reports = sorted(_glob.glob(pattern), key=_os.path.getmtime, reverse=True)
+    except OSError:
+        return filename
     for old in reports[max_reports:]:
         try:
             _os.remove(old)

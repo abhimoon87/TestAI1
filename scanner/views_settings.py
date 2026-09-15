@@ -19,6 +19,7 @@ from .ui_kit import (
     _glass_bg,
     _glass_border,
     _padding_only,
+    themed_dropdown,
 )
 
 
@@ -77,42 +78,24 @@ class SettingsViewMixin:
         if kind == "ma_type":
             opts = list(self._MA_TYPES)
             cur = str(self.settings.get(key, opts[0]))
-            ctrl = ft.Dropdown(
-                options=[ft.dropdown.Option(v) for v in opts],
-                value=cur if cur in opts else opts[0],
-                width=150, height=40, text_size=13,
-                bgcolor=c["option_bg"], color=c["text"],
-                border_color=c["border"], border_width=1, border_radius=8,
-                focused_border_color=c["purple"],
-            )
+            ctrl = themed_dropdown(opts, cur if cur in opts else opts[0],
+                                   c, width=160)
         elif kind == "theme":
             opts = ["dark", "light"]
             cur = str(self.settings.get(key, "dark"))
-            ctrl = ft.Dropdown(
-                options=[ft.dropdown.Option(v) for v in opts],
-                value=cur if cur in opts else "dark",
-                width=150, height=40, text_size=13,
-                bgcolor=c["option_bg"], color=c["text"],
-                border_color=c["border"], border_width=1, border_radius=8,
-                focused_border_color=c["purple"],
-            )
+            ctrl = themed_dropdown(opts, cur if cur in opts else "dark",
+                                   c, width=160)
         elif kind == "entry_mode":
             opts = ["classic", "high_probability", "custom"]
             cur = str(self.settings.get(key, "classic"))
-            ctrl = ft.Dropdown(
-                options=[ft.dropdown.Option(v) for v in opts],
-                value=cur if cur in opts else "classic",
-                width=180, height=40, text_size=13,
-                bgcolor=c["option_bg"], color=c["text"],
-                border_color=c["border"], border_width=1, border_radius=8,
-                focused_border_color=c["purple"],
-            )
+            ctrl = themed_dropdown(opts, cur if cur in opts else "classic",
+                                   c, width=190)
         else:
             ctrl = ft.TextField(
-                value=str(self.settings.get(key, "")), width=150, height=40, text_size=13,
+                value=str(self.settings.get(key, "")), width=160, height=42, text_size=13,
                 bgcolor=c["card"], color=c["text"],
-                border_color=c["border"], border_width=1, border_radius=8,
-                content_padding=_padding_only(left=10, right=8, top=6, bottom=6),
+                border_color=c["border"], border_width=1, border_radius=10,
+                content_padding=_padding_only(left=12, right=10, top=8, bottom=8),
             )
         ctrl._settings_key = key
         ctrl._settings_kind = kind
@@ -137,12 +120,12 @@ class SettingsViewMixin:
                         ft.Text(title, size=12, weight=ft.FontWeight.BOLD, color=c["cyan"]),
                         ft.Divider(height=1, color=c["border"]),
                         *rows,
-                    ], spacing=8),
+                    ], spacing=10),
                     bgcolor=_glass_bg(),
                     border=_glass_border(),
-                    border_radius=14,
+                    border_radius=16,
                     shadow=_card_shadow(),
-                    padding=14,
+                    padding=16,
                 )
             )
         self._settings_error = ft.Text("", size=11, color=c["red"])
@@ -159,7 +142,7 @@ class SettingsViewMixin:
         )
         body = ft.Column(
             controls=[*cards, self._settings_error],
-            spacing=10, scroll=ft.ScrollMode.AUTO, expand=True,
+            spacing=12, scroll=ft.ScrollMode.AUTO, expand=True,
         )
         self.stale_audit_lbl = ft.Text("", size=10, color=c["text_dim"])
         self.stale_fix_btn = ft.OutlinedButton(
@@ -185,15 +168,16 @@ class SettingsViewMixin:
         return ft.Column(
             controls=[
                 header, body,
-                ft.Container(content=audit_row, padding=_padding_only(left=6, right=6, top=8)),
-                ft.Container(content=self.stale_audit_lbl, padding=_padding_only(left=6, right=6, bottom=4)),
-                ft.Container(content=footer, padding=_padding_only(top=4, bottom=14, right=6)),
+                ft.Container(content=audit_row, padding=_padding_only(left=8, right=8, top=10)),
+                ft.Container(content=self.stale_audit_lbl, padding=_padding_only(left=8, right=8, bottom=6)),
+                ft.Container(content=footer, padding=_padding_only(top=6, bottom=16, right=8)),
             ],
             spacing=0, expand=True,
         )
 
     def _save_settings_page(self, e=None):
         bad = []
+        updates = {}
         for key, ctrl in self._settings_inputs.items():
             kind = ctrl._settings_kind
             if kind in ("ma_type", "theme", "entry_mode"):
@@ -214,17 +198,22 @@ class SettingsViewMixin:
                 except (ValueError, TypeError):
                     bad.append(key)
                     continue
-            self.settings[key] = val
+            updates[key] = val
         if bad:
             self._settings_error.value = f"Invalid value: {', '.join(bad)}"
             self.page.update()
             return
+        self.settings.update(updates)
         self._settings_error.value = ""
         new_theme = self.settings.get("theme", self.current_theme)
         # Local import: scanner.app imports this mixin at module load, so the
         # module-level helper is only resolvable once app.py has finished.
         from .settings_store import save_settings
-        save_settings(self.settings)
+        try:
+            save_settings(self.settings)
+        except Exception:
+            self._settings_error.value = "Failed to save settings"
+            return
         self._apply_cache_settings()
         self._log("Settings saved")
         if new_theme != self.current_theme:

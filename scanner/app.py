@@ -9,6 +9,7 @@ Usage:
     python scanner/app.py
 """
 
+import atexit
 import logging
 import os
 import threading
@@ -53,6 +54,16 @@ _log_file_handle = None
 _log_lock = threading.Lock()
 
 
+def _close_log_handle():
+    """Ensure the log file handle is closed on process exit (Windows)."""
+    with _log_lock:
+        if _log_file_handle is not None and not _log_file_handle.closed:
+            _log_file_handle.close()
+
+
+atexit.register(_close_log_handle)
+
+
 class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestViewMixin):
     def __init__(self, page: ft.Page):
         self.page = page
@@ -61,9 +72,11 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.results = []
         self.all_results = []
         self.filtered_results = []
-        self._results_lock = threading.Lock()
+        self._results_lock = threading.RLock()
         self._ui_lock = threading.Lock()
         self._scan_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._hover_last_ms = 0.0
         self.scanning = False
         self._scan_epoch = 0
         self.filter_text = ""
@@ -140,14 +153,15 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
     # ── View switching ──────────────────────────────────────────────────
 
     def _restore_main_area(self):
-        """Replace the main_area_box in the parent Row with a completely
-        fresh one built by ``_build_main_area``.
+        """Rebuild the dashboard and splice it into the main row.
 
-        Flet tracks controls by identity.  When a subtree is detached (by
-        the settings or backtest view) and the *same* child objects are
-        re-parented into a new tree, Flet silently drops them from the
-        client widget tree.  Rebuilding the entire Container and all its
-        children avoids this.
+        Flet tracks controls by identity: when the settings/backtest view
+        detaches the dashboard subtree and the *same* child objects are
+        re-parented later, Flet silently drops them from the client widget
+        tree.  Rebuilding the box and all its children fresh — and swapping
+        the new box into the row — avoids this.  ``self.main_area_box``
+        always points at the box actually on screen, so content swaps
+        elsewhere (settings/backtest) land on the visible tree.
         """
         old_box = self.main_area_box
         idx = None
@@ -194,12 +208,13 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
     def _visible_results(self) -> list:
         """Results after search/rating filters.
 
-        Returns the filtered list as-is (possibly empty) when a filter is
-        active, so 'no match' is distinguishable from 'no filter'.
+        Returns a snapshot copy under ``_results_lock`` so concurrent
+        streaming mutations cannot corrupt the caller's iteration.
         """
-        if self._is_filter_active():
-            return self.filtered_results
-        return self.all_results
+        with self._results_lock:
+            if self._is_filter_active():
+                return list(self.filtered_results)
+            return list(self.all_results)
 
     def _row_matches_filters(self, r: dict) -> bool:
         if self.filter_text and self.filter_text not in r.get("ticker", "").upper():
@@ -307,9 +322,16 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 return
             self.scanning = True
 
-        self.settings = self._collect_settings()
-        save_settings(self.settings)
-        self._apply_cache_settings()
+        try:
+            self.settings = self._collect_settings()
+            save_settings(self.settings)
+            self._apply_cache_settings()
+        except Exception as exc:
+            with self._scan_lock:
+                self.scanning = False
+            msg = f"Scan setup failed: {exc}"
+            self._safe_update(lambda: self._log(msg))
+            return
 
         self._scan_cancelled = False
         self._stop_requested = False
@@ -416,6 +438,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         with self._results_lock:
             existing = {r.get("ticker"): idx for idx, r in enumerate(self.all_results)}
             filtered_idx = {r.get("ticker"): idx for idx, r in enumerate(self.filtered_results)}
+            removed_filtered = False
             for r in batch:
                 t = r.get("ticker")
                 if t in existing:
@@ -432,7 +455,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 else:
                     if t in filtered_idx:
                         self.filtered_results.pop(filtered_idx[t])
-                        filtered_idx = {fr.get("ticker"): i for i, fr in enumerate(self.filtered_results)}
+                        removed_filtered = True
+            if removed_filtered:
+                filtered_idx = {fr.get("ticker"): i for i, fr in enumerate(self.filtered_results)}
+            self.results = list(self.all_results)
             self.results = list(self.all_results)
         self._safe_update(lambda: self._render_current_page())
 
@@ -535,7 +561,9 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
     def _flush_news_badges(self):
         """Repaint the visible table so prefetched news badges appear."""
         try:
-            if not self.scanning:
+            with self._scan_lock:
+                still_scanning = self.scanning
+            if not still_scanning:
                 self._render_current_page()
                 self.page.update()
         except Exception:
@@ -711,21 +739,33 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         return verdict
 
     def _run_stale_audit(self, e=None):
-        if getattr(self, "stale_audit_running", False):
+        lock = getattr(self, "_state_lock", None)
+        if lock is not None:
+            with lock:
+                if getattr(self, "stale_audit_running", False):
+                    return
+                self.stale_audit_running = True
+        elif getattr(self, "stale_audit_running", False):
             return
+        else:
+            self.stale_audit_running = True
         universe = None
         dd = getattr(self, "universe_dd", None)
         if dd is not None and getattr(dd, "value", None):
             universe = str(dd.value)
         universe = universe or "ALL (Combined)"
-        self.stale_audit_running = True
 
         def _bg():
             try:
                 self._log(f"Stale-member audit: {universe} …")
                 res, report = self._audit_report(universe)
                 verdict = self._audit_verdict(res)
-                self._last_audit_res = res
+                lock = getattr(self, "_state_lock", None)
+                if lock is not None:
+                    with lock:
+                        self._last_audit_res = res
+                else:
+                    self._last_audit_res = res
                 self._log("\n" + report)
                 self._safe_update(lambda: self._log(f"Audit done — {verdict}"))
                 if hasattr(self, "stale_audit_lbl"):
@@ -743,13 +783,23 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                 self._safe_update(lambda: self._log(msg))
                 # Never leave a stale (previously fixable) result actionable
                 # after a failed audit — force a fresh audit before applying.
-                self._last_audit_res = None
+                lock = getattr(self, "_state_lock", None)
+                if lock is not None:
+                    with lock:
+                        self._last_audit_res = None
+                else:
+                    self._last_audit_res = None
                 if hasattr(self, "stale_fix_btn"):
                     self._safe_update(
                         lambda: setattr(self.stale_fix_btn, "disabled", True)
                     )
             finally:
-                self.stale_audit_running = False
+                lock = getattr(self, "_state_lock", None)
+                if lock is not None:
+                    with lock:
+                        self.stale_audit_running = False
+                else:
+                    self.stale_audit_running = False
                 self._safe_update(lambda: self.page.update())
 
         threading.Thread(target=_bg, daemon=True).start()
@@ -770,7 +820,12 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         """
         if getattr(self, "stale_fix_running", False):
             return
-        res = getattr(self, "_last_audit_res", None)
+        lock = getattr(self, "_state_lock", None)
+        if lock is not None:
+            with lock:
+                res = getattr(self, "_last_audit_res", None)
+        else:
+            res = getattr(self, "_last_audit_res", None)
         if not res or not self._audit_fixable(res):
             return
         parts = []
@@ -904,6 +959,8 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         if not self.results:
             return
         import csv
+        with self._results_lock:
+            results_snapshot = list(self.results)
 
         def _bg():
             try:
@@ -916,7 +973,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                                      "Both_MA", "Trend", "Momentum", "RSI", "MACD", "Volume",
                                      "RelStrength", "Fundamentals", "Direction", "RSI_Val", "ADX",
                                      "1M_Change", "Volatility_Stat", "Sideways"])
-                    for i, r in enumerate(self.results, 1):
+                    for i, r in enumerate(results_snapshot, 1):
                         sideways_reasons = ", ".join(r.get("sideways_reasons", []))
                         ma_signal = "Bull" if r.get("ma_bullish") else "Bear"
                         if r.get("ma_crossed_above"):
@@ -943,9 +1000,15 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
     # ── Utilities ───────────────────────────────────────────────────────
 
     def _clear_results(self, e=None):
-        self.results = []
-        self.all_results = []
-        self.filtered_results = []
+        with self._results_lock:
+            self.results = []
+            self.all_results = []
+            self.filtered_results = []
+        for attr in ("table_column", "chart_card", "empty_label",
+                     "result_count_label", "progress_bar", "progress_label",
+                     "status_label", "html_btn", "csv_btn", "clear_btn"):
+            if getattr(self, attr, None) is None:
+                return
         self.table_column.controls.clear()
         self.chart_card.visible = False
         self.empty_label.visible = True
@@ -970,7 +1033,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
         self.current_theme = new_theme
         self.theme_colors = THEMES[new_theme]
         self.settings["theme"] = new_theme
-        save_settings(self.settings)
+        try:
+            save_settings(self.settings)
+        except Exception:
+            logger.debug("Failed to save theme change", exc_info=True)
         had_results = bool(self.results)
         was_scanning = self.scanning
         saved_log = self._get_log_lines()
@@ -1087,9 +1153,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin, BacktestV
                     with _log_lock:
                         if _log_file_handle and not _log_file_handle.closed:
                             _log_file_handle.close()
-                        with open(LOG_FILE, "w") as f:
-                            f.truncate(0)
                         _log_file_handle = None
+                    # open("w") already truncates — no explicit truncate needed
+                    with open(LOG_FILE, "w"):
+                        pass
         except Exception:
             pass
 

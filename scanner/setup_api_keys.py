@@ -36,10 +36,14 @@ def load_config():
     return {}
 
 def save_config(config):
-    """Save config to file."""
+    """Save config to file with owner-only permissions (contains secrets)."""
     try:
         with open(CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError as e:
+            logger.debug("Could not restrict api_config.json permissions: %s", e)
         logger.info("  [OK] Config saved to %s", CONFIG_FILE)
     except Exception as e:
         logger.error("  [ERROR] Could not save config: %s", e)

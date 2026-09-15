@@ -10,19 +10,25 @@ and on the controls created by ``LayoutViewMixin._build_main_area``
 (``self.table_column``, ``self.chart_bars``, ...).
 """
 
+import logging
 import threading
 
 import flet as ft
+from flet.canvas import Canvas, Path
 from flet.controls.alignment import Alignment
 
 from .report import fetch_news_for_ticker
 from .trade_reasons import build_trade_reasons
+
+logger = logging.getLogger(__name__)
 from .ui_kit import (
     RESULT_COLS,
     _border_all,
     _margin_only,
     _padding_only,
     _score_of,
+    rating_color,
+    score_color,
 )
 
 # Rating → theme-color-key accent used for row rails / washes.
@@ -58,10 +64,11 @@ class ResultsViewMixin:
             try:
                 key_fn = self._get_sort_key(self.sort_col)
                 shown = sorted(shown, key=key_fn, reverse=self.sort_reverse)
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.debug("Sort failed for col %s: %s", self.sort_col, ex)
 
         self.table_column.controls.clear()
+        self.pagination_bar.visible = False
 
         if not shown:
             if self.scanning and not results:
@@ -125,7 +132,7 @@ class ResultsViewMixin:
 
         self._update_summary(results)
         self._update_hero_status(results)
-        self._render_topicks(results[:5])
+        self._render_topicks(shown[:5])
         self._render_chart(results)
 
     def _make_header_row(self, c):
@@ -148,8 +155,8 @@ class ResultsViewMixin:
             bgcolor=c["card2"],
             border_radius=10,
             border=_border_all(1, c["border"]),
-            height=32,
-            padding=_padding_only(left=4, right=4, top=4, bottom=4),
+            height=34,
+            padding=_padding_only(left=6, right=6, top=4, bottom=4),
             margin=_margin_only(bottom=6),
         )
 
@@ -193,20 +200,66 @@ class ResultsViewMixin:
             tooltip=f"News sentiment: {tone} · {n} articles — click ticker to read",
         )
 
+    def _make_sparkline(self, px: list, ticker: str, c: dict) -> ft.Container:
+        """Canvas-drawn smooth sparkline curve from price data."""
+        up = px[-1] >= px[0]
+        spark_color = c["green"] if up else c["red"]
+        move = (px[-1] - px[0]) / px[0] * 100.0 if px[0] else 0.0
+        W, H = 120, 24
+        lo, hi = min(px), max(px)
+        span = (hi - lo) or 1.0
+        n = len(px)
+        coords = []
+        for i, v in enumerate(px):
+            x = i / max(n - 1, 1) * W
+            y = H - 2 - (v - lo) / span * (H - 4)
+            coords.append((x, y))
+        # Build smooth cubic bezier elements
+        elements: list[Path.PathElement] = [
+            Path.MoveTo(coords[0][0], coords[0][1]),
+        ]
+        for i in range(1, len(coords)):
+            px0, py0 = coords[i - 1]
+            px1, py1 = coords[i]
+            mx = (px0 + px1) / 2
+            elements.append(Path.CubicTo(mx, py0, mx, py1, px1, py1))
+        # Line art stroke
+        line_path = Path(elements=list(elements), paint=ft.Paint(
+            color=spark_color, stroke_width=1.5,
+            style=ft.PaintingStyle.STROKE, stroke_cap=ft.StrokeCap.ROUND,
+        ))
+        # Fill area under the curve
+        fill_elements = list(elements) + [
+            Path.LineTo(W, H),
+            Path.LineTo(0, H),
+        ]
+        fill_color = ft.Colors.with_opacity(0.15, spark_color)
+        fill_path = Path(elements=fill_elements, paint=ft.Paint(
+            color=fill_color, style=ft.PaintingStyle.FILL,
+        ))
+        canvas = Canvas(
+            width=W, height=H,
+            shapes=[fill_path, line_path],
+        )
+        return ft.Container(
+            content=canvas,
+            expand=True,
+            tooltip=f"{ticker}: {move:+.1f}% over the last {len(px)} closes",
+        )
+
     def _make_data_row(self, r, rank, c, bg, threshold):
         total = _score_of(r)
         ticker = r.get("ticker", "?")
         trend_dir = r.get("trend_dir") or ""
         is_above = total >= threshold
         rating = r.get("combined_rating", "POOR")
-        rating_txt_color = {"EXCELLENT": c["green"], "GOOD": c["lime"],
-                            "MODERATE": c["orange"]}.get(rating, c["red"])
+        rating_txt_color = rating_color(rating, c)
         entry = bool(r.get("entry_signal"))
         accent = self._rating_accent(rating)
         cols = [
             (str(rank), c["text_dim"], 11, False),
             (ticker, c["green"] if is_above else c["text"], 12, True),
-            (f'{total:.0f}', c["green"] if total >= 70 else c["lime"] if total >= 50 else c["orange"] if total >= 30 else c["red"], 14, True),
+            (f'{total:.0f}', score_color(total, c), 14, True),
             (rating, rating_txt_color, 11, True),
             ("YES" if entry else "--", c["green"] if entry else c["text_dim"], 11, True),
             (f'₹{r.get("close", 0) or 0:.0f}', c["text"], 12, True),
@@ -214,10 +267,10 @@ class ResultsViewMixin:
             (f'{r.get("trend", 0) or 0:.0f}', c["green"], 11, False),
             (f'{r.get("momentum", 0) or 0:.0f}', c["cyan"], 11, False),
             (f'{r.get("rsi", 0) or 0:.0f}', c["blue"], 11, False),
-            (f'{r.get("macd", 0) or 0:.0f}', "#aa88ff", 11, False),
+            (f'{r.get("macd", 0) or 0:.0f}', c.get("macd", c["blue"]), 11, False),
             (f'{r.get("volume", 0) or 0:.0f}', c["orange"], 11, False),
             (f'{r.get("rel_str", 0) or 0:.0f}', c["lime"], 11, False),
-            (f'{r.get("fundamentals", 0) or 0:.0f}', "#ffe600", 11, False),
+            (f'{r.get("fundamentals", 0) or 0:.0f}', c.get("fund", c["yellow"]), 11, False),
             (f'{r.get("pc1m", 0) or 0:+.1f}%', c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"], 11, False),
             (("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?"), c["green"] if trend_dir == "Bull" else c["red"], 11, False),
             (f'{r.get("adx_val", 0) or 0:.0f}', c["text"], 11, False),
@@ -281,31 +334,9 @@ class ResultsViewMixin:
 
         # Trailing column: mini 1-month sparkline from the closes the engine
         # attached to each row (``px_tail``); dim dash when unavailable.
-        px = r.get("px_tail") or []
+        px = [v for v in (r.get("px_tail") or []) if v is not None and isinstance(v, (int, float))]
         if len(px) >= 2:
-            lo, hi = min(px), max(px)
-            span = (hi - lo) or 1.0
-            up = px[-1] >= px[0]
-            spark_color = c["green"] if up else c["red"]
-            move = (px[-1] - px[0]) / px[0] * 100.0 if px[0] else 0.0
-            bars = [
-                ft.Container(
-                    expand=True,
-                    height=round(4 + (v - lo) / span * 16),
-                    bgcolor=spark_color,
-                    border_radius=1,
-                )
-                for v in px[-14:]
-            ]
-            spark_cell = ft.Container(
-                content=ft.Row(
-                    controls=bars, spacing=1, height=26,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-                expand=True,
-                padding=_padding_only(top=2, bottom=2),
-                tooltip=f"{ticker}: {move:+.1f}% over the last {len(px)} closes",
-            )
+            spark_cell = self._make_sparkline(px, ticker, c)
         else:
             spark_cell = ft.Container(
                 content=ft.Text("—", size=10, color=c["text_faint"],
@@ -322,8 +353,8 @@ class ResultsViewMixin:
             bgcolor=bg,
             border_radius=8,
             border=_border_all(1, c["border"]) if is_above else None,
-            height=32,
-            padding=_padding_only(left=4, right=4),
+            height=34,
+            padding=_padding_only(left=6, right=6),
             margin=_margin_only(bottom=1),
         )
         row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
@@ -332,11 +363,17 @@ class ResultsViewMixin:
     def _on_row_hover(self, container, base_bg, e):
         """Highlight the hovered result row (desktop mouse feedback)."""
         try:
+            import time
+            now_ms = time.monotonic() * 1000.0
+            last = getattr(self, "_hover_last_ms", 0.0)
+            if now_ms - last < 80:
+                return
+            self._hover_last_ms = now_ms
             hover_bg = self.theme_colors["row_hover"]
-            new_bg = hover_bg if e.data else base_bg
+            new_bg = hover_bg if e.data == "true" else base_bg
             if container.bgcolor != new_bg:
                 container.bgcolor = new_bg
-                self.page.update()
+                container.update()
         except Exception:
             pass
 
@@ -508,8 +545,8 @@ class ResultsViewMixin:
                 ft.Text("Loading news & sentiment…", size=11, color=c["text_dim"]),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=c["card2"],
-            border_radius=10,
-            padding=10,
+            border_radius=12,
+            padding=12,
             margin=_margin_only(bottom=4),
         )
         loading._news_ticker = ticker
@@ -522,7 +559,7 @@ class ResultsViewMixin:
                 parsed = fetch_news_for_ticker(ticker)
             except Exception:
                 parsed = []
-            self._safe_update(lambda: self._show_news(ticker, parsed))
+            self._safe_update(lambda: self._show_news(ticker, parsed, update=False))
 
         threading.Thread(target=_fetch_news, daemon=True).start()
 
@@ -567,7 +604,7 @@ class ResultsViewMixin:
                     content=ft.Text(label, size=10, weight=ft.FontWeight.BOLD, color=color),
                     bgcolor=c["card"],
                     border_radius=6,
-                    padding=_padding_only(left=7, right=7, top=2, bottom=2),
+                    padding=_padding_only(left=8, right=8, top=3, bottom=3),
                 )
                 for label, color in chips
             ],
@@ -601,16 +638,20 @@ class ResultsViewMixin:
         else:
             ctrls.insert(insert_at, frame)
 
-    def _show_news(self, ticker, items):
+    def _show_news(self, ticker, items, update: bool = True):
         if self.active_view != "dashboard":
             return
         c = self.theme_colors
         ctrls = self.table_column.controls
-        # Replace this ticker's loading placeholder and drop any other open
-        # frames (loading placeholders also carry ``_news_ticker``; they are
-        # distinguished by ``_news_loading`` and must not collapse the panel).
+        # Remove open news frames, but preserve loading placeholders for
+        # other tickers (they're still fetching and will render when done).
         for ctrl in [x for x in ctrls if hasattr(x, "_news_ticker")]:
-            ctrls.remove(ctrl)
+            if getattr(ctrl, "_news_loading", False) and getattr(ctrl, "_news_ticker", None) != ticker:
+                continue
+            try:
+                ctrls.remove(ctrl)
+            except ValueError:
+                pass
 
         news_controls = []
         stats = self._news_stats_row(self._find_result_row(ticker))
@@ -639,10 +680,10 @@ class ResultsViewMixin:
                             ft.Text("Why this trade?", size=11, weight=ft.FontWeight.BOLD, color=c["cyan"]),
                             ft.Divider(height=1, color=c["border"]),
                             *reason_controls,
-                        ], spacing=3),
+                        ], spacing=4),
                         bgcolor=c["card"],
-                        border_radius=8,
-                        padding=8,
+                        border_radius=10,
+                        padding=10,
                         margin=_margin_only(bottom=4),
                     )
                 )
@@ -679,37 +720,38 @@ class ResultsViewMixin:
                     card_lines.append(ft.Text(item["summary"], size=10, color=c["text_dim"], max_lines=2))
                 news_controls.append(
                     ft.Container(
-                        content=ft.Column(card_lines, spacing=2),
+                        content=ft.Column(card_lines, spacing=3),
                         bgcolor=c["card"],
-                        border_radius=8,
-                        padding=8,
-                        margin=_margin_only(bottom=2),
+                        border_radius=10,
+                        padding=10,
+                        margin=_margin_only(bottom=3),
                     )
                 )
 
         news_frame = ft.Container(
-            content=ft.Column(controls=news_controls, spacing=4),
+            content=ft.Column(controls=news_controls, spacing=5),
             bgcolor=c["card2"],
-            border_radius=10,
-            padding=8,
+            border_radius=12,
+            padding=10,
             margin=_margin_only(bottom=4),
         )
         news_frame._news_ticker = ticker
         self._insert_news_frame(ticker, news_frame)
-        self.page.update()
+        if update:
+            self.page.update()
 
     def _make_scan_placeholder(self, headline="Scanning — fetching batches…"):
         """Animated placeholder shown in the results area during a scan."""
         c = self.theme_colors
         return ft.Container(
             content=ft.Column([
-                ft.ProgressRing(width=40, height=40, stroke_width=3, color=c["green"]),
-                ft.Container(height=8),
-                ft.Text(headline, size=12, weight=ft.FontWeight.BOLD, color=c["green"]),
+                ft.ProgressRing(width=44, height=44, stroke_width=3, color=c["green"]),
+                ft.Container(height=10),
+                ft.Text(headline, size=13, weight=ft.FontWeight.BOLD, color=c["green"]),
                 ft.Text("First results appear after ~1 batch (~20s)", size=11, color=c["text_dim"]),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
             alignment=Alignment.CENTER,
-            padding=30,
+            padding=40,
         )
 
     def _render_chart(self, results):
@@ -722,14 +764,13 @@ class ResultsViewMixin:
         bars = []
         for r in top:
             s = _score_of(r)
-            color = (c["green"] if s >= 70 else c["lime"] if s >= 50
-                     else c["orange"] if s >= 30 else c["red"])
+            color = score_color(s, c)
             bars.append(
                 ft.Container(
                     expand=True,
-                    height=max(4, round(s / peak * 64)),
+                    height=max(4, round(s / peak * 56)),
                     bgcolor=color,
-                    border_radius=3,
+                    border_radius=2,
                     tooltip=f'{r.get("ticker", "?")}  {s:.0f}',
                 )
             )

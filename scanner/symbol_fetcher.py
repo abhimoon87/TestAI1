@@ -6,6 +6,7 @@ BSE support is limited due to anti-scraping measures on bseindia.com.
 
 import json
 import logging
+import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -17,9 +18,10 @@ logger = logging.getLogger(__name__)
 # Cache TTL in seconds (4 hours)
 CACHE_TTL_SECONDS = 4 * 3600
 
-# In-memory cache with timestamps
+# In-memory cache with timestamps (guarded: readers/writers run on UI + scan threads)
 _cache: dict[str, list] = {}
 _cache_timestamps: dict[str, float] = {}
+_cache_lock = threading.Lock()
 
 # Disk cache for persistence across restarts
 _DISK_CACHE_FILE = Path(__file__).parent / ".cache" / "symbols.json"
@@ -29,14 +31,24 @@ def _load_disk_cache():
     try:
         if _DISK_CACHE_FILE.exists():
             data = json.loads(_DISK_CACHE_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return
             now = time.time()
-            for k, v in data.items():
-                ts = v.get("_ts", 0)
-                if now - ts < CACHE_TTL_SECONDS and isinstance(v.get("data"), list):
-                    _cache[k] = v["data"]
-                    _cache_timestamps[k] = ts
-            if _cache:
-                logger.debug("Disk symbol cache loaded: %d keys", len(_cache))
+            loaded = 0
+            with _cache_lock:
+                for k, v in data.items():
+                    if not isinstance(v, dict):
+                        continue
+                    ts = v.get("_ts", 0)
+                    items = v.get("data")
+                    if (isinstance(ts, (int, float)) and now - ts < CACHE_TTL_SECONDS
+                            and isinstance(items, list)
+                            and all(isinstance(s, str) for s in items)):
+                        _cache[k] = items
+                        _cache_timestamps[k] = ts
+                        loaded += 1
+            if loaded:
+                logger.debug("Disk symbol cache loaded: %d keys", loaded)
     except Exception as e:
         logger.debug("Disk cache load failed: %s", e)
 
@@ -44,8 +56,12 @@ def _load_disk_cache():
 def _save_disk_cache():
     try:
         _DISK_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        payload = {k: {"data": v, "_ts": _cache_timestamps.get(k, 0)} for k, v in _cache.items()}
-        _DISK_CACHE_FILE.write_text(json.dumps(payload), encoding="utf-8")
+        with _cache_lock:
+            payload = {k: {"data": v, "_ts": _cache_timestamps.get(k, 0)}
+                       for k, v in _cache.items()}
+        tmp = _DISK_CACHE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(_DISK_CACHE_FILE)
     except Exception as e:
         logger.debug("Disk cache save failed: %s", e)
 
@@ -56,22 +72,26 @@ _load_disk_cache()
 
 def _is_cache_valid(key: str) -> bool:
     """Check if cached data is still valid."""
-    if key not in _cache_timestamps:
+    with _cache_lock:
+        ts = _cache_timestamps.get(key)
+    if ts is None:
         return False
-    return (time.time() - _cache_timestamps[key]) < CACHE_TTL_SECONDS
+    return (time.time() - ts) < CACHE_TTL_SECONDS
 
 
 def _cache_get(key: str) -> list | None:
-    """Get cached value if valid."""
+    """Get cached value if valid (returns a copy)."""
     if _is_cache_valid(key):
-        return _cache.get(key)
+        with _cache_lock:
+            return list(_cache.get(key, []))
     return None
 
 
 def _cache_set(key: str, value: list):
     """Set cache value with timestamp (persists to disk)."""
-    _cache[key] = value
-    _cache_timestamps[key] = time.time()
+    with _cache_lock:
+        _cache[key] = list(value)
+        _cache_timestamps[key] = time.time()
     try:
         _save_disk_cache()
     except Exception:
@@ -138,7 +158,13 @@ def fetch_nse_sme(trade_date: date | None = None) -> list[str]:
                 return df["symbol"].str.strip().tolist()
             elif "SYMBOL" in df.columns:
                 return df["SYMBOL"].str.strip().tolist()
-        except (KeyError, ValueError, ConnectionError, TimeoutError) as e:
+        except (KeyError, ValueError, ConnectionError, TimeoutError,
+                OSError) as e:
+            logger.debug("SME fetch failed for %s: %s", d, e)
+            continue
+        except Exception as e:
+            # requests/SSL/JSON errors from nselib surface as assorted
+            # subclasses; treat like any other transient fetch failure.
             logger.debug("SME fetch failed for %s: %s", d, e)
             continue
     logger.warning("SME symbol fetch failed for all recent dates")

@@ -96,7 +96,7 @@ class TestTTLCacheKeys:
 
     def test_make_key_unhashed(self):
         c = TTLCache(ttl=3600, namespace="k")
-        assert c.make_key("a", "b", hashed=False) == "a:b"
+        assert c.make_key("a", "b", hashed=False) == "k:a:b"
 
 
 class TestTTLCacheThreadSafety:
