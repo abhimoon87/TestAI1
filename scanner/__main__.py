@@ -2,16 +2,16 @@
 Entry point for running the scanner as a package.
 
 Usage:
-    python scanner              # launches GUI (default)
+    python scanner              # launches GUI (default, Flet edition)
     python scanner --cli        # launches interactive CLI
-    python scanner --gui        # launches GUI explicitly
+    python scanner --gui        # launches GUI explicitly (Flet edition)
 """
 import sys
 
 
 def main():
     try:
-        from .trace import setup_trace
+        from .shared.trace import setup_trace
         setup_trace()
     except Exception as exc:
         print(f"Trace setup skipped: {exc}", file=sys.stderr)
@@ -19,12 +19,12 @@ def main():
     args = sys.argv[1:]
 
     if "--cli" in args:
-        from .run_scanner import run_scan
+        from .backend.run_scanner import run_scan
         run_scan()
     else:
         import flet as ft
 
-        from .app import main as app_main
+        from .ui.app import main as app_main
         ft.run(app_main)
 
 

@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 REM Check if dependencies are installed
-python -c "import customtkinter" >nul 2>&1
+python -c "import flet" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo  First time setup - installing dependencies...
@@ -34,7 +34,7 @@ if errorlevel 1 (
 
 REM Launch the GUI
 echo Starting HMAxEMA Stock Scanner...
-python -m scanner.app
+python -m scanner
 
 if errorlevel 1 (
     echo.

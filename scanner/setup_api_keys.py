@@ -29,7 +29,7 @@ def load_config():
     """Load existing config."""
     if CONFIG_FILE.exists():
         try:
-            with open(CONFIG_FILE, "r") as f:
+            with open(CONFIG_FILE) as f:
                 return json.load(f)
         except Exception as e:
             logger.debug("Failed to load API config: %s", e)
@@ -55,10 +55,10 @@ def set_env_variable(key, value):
 def get_current_status():
     """Check current API key status."""
     config = load_config()
-    
+
     finnhub_key = config.get("FINNHUB_API_KEY", "") or os.environ.get("FINNHUB_API_KEY", "")
     av_key = config.get("ALPHA_VANTAGE_API_KEY", "") or os.environ.get("ALPHA_VANTAGE_API_KEY", "")
-    
+
     return {
         "FINNHUB_API_KEY": finnhub_key,
         "ALPHA_VANTAGE_API_KEY": av_key
@@ -77,9 +77,9 @@ def setup_finnhub():
     logger.info("  4. Go to Dashboard → API Keys")
     logger.info("  5. Copy your API key")
     logger.info("")
-    
+
     key = input("  Paste your Finnhub API key (or press Enter to skip): ").strip()
-    
+
     if key:
         set_env_variable("FINNHUB_API_KEY", key)
         logger.info("  [OK] FINNHUB_API_KEY set for this session")
@@ -100,9 +100,9 @@ def setup_alpha_vantage():
     logger.info("  3. Click 'Get Free API Key'")
     logger.info("  4. Check your email for the key")
     logger.info("")
-    
+
     key = input("  Paste your Alpha Vantage API key (or press Enter to skip): ").strip()
-    
+
     if key:
         set_env_variable("ALPHA_VANTAGE_API_KEY", key)
         logger.info("  [OK] ALPHA_VANTAGE_API_KEY set for this session")
@@ -114,16 +114,16 @@ def setup_alpha_vantage():
 def test_providers():
     """Test if the providers work with current keys."""
     print_section("TESTING PROVIDERS")
-    
+
     try:
-        from scanner.data_providers import DataProvider
-        
+        from scanner.api.data_providers import DataProvider
+
         provider = DataProvider()
         test_ticker = "RELIANCE"
-        
+
         logger.info("  Testing fundamentals for %s...", test_ticker)
         fund = provider.fetch_fundamentals(test_ticker)
-        
+
         if fund:
             logger.info("  [OK] Provider: %s", provider.last_provider)
             logger.info("       P/E Ratio: %s", fund.get('pe_ratio', 'N/A'))
@@ -133,7 +133,7 @@ def test_providers():
         else:
             logger.warning("  [WARN] No data fetched (using fallback)")
             return False
-            
+
     except Exception as e:
         logger.error("  [ERROR] Test failed: %s", e)
         return False
@@ -160,34 +160,34 @@ def print_permanent_instructions():
 def main():
     """Main setup function."""
     print_header()
-    
+
     # Show current status
     status = get_current_status()
     logger.info("  Current API Key Status:")
     logger.info("    FINNHUB_API_KEY:       %s", 'SET' if status['FINNHUB_API_KEY'] else 'NOT SET')
     logger.info("    ALPHA_VANTAGE_API_KEY: %s", 'SET' if status['ALPHA_VANTAGE_API_KEY'] else 'NOT SET')
-    
+
     # Setup keys
     config = load_config()
-    
+
     finnhub_key = setup_finnhub()
     if finnhub_key:
         config["FINNHUB_API_KEY"] = finnhub_key
-    
+
     av_key = setup_alpha_vantage()
     if av_key:
         config["ALPHA_VANTAGE_API_KEY"] = av_key
-    
+
     # Save config
     if config:
         save_config(config)
-    
+
     # Test providers
     test_providers()
-    
+
     # Print permanent setup instructions
     print_permanent_instructions()
-    
+
     print_section("SETUP COMPLETE")
     logger.info("  API keys are configured for this session.")
     logger.info("  Restart the scanner to use the new providers.")

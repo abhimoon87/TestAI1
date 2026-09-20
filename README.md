@@ -16,7 +16,7 @@ The app includes a dark-themed desktop GUI (Flet), an interactive CLI, a headles
 - **Resilient data layer** — multi-provider fallback chains with disk caching, chunked batch downloads, and a per-ticker NSE fallback when Yahoo rate-limits a full-market scan.
 - **Optional enrichment** — news/social sentiment, FII/DII delivery data, 52-week position, macro/forex/crypto regime, insider signals, Shariah compliance (all optional; most need free API keys).
 - **HTML report** with sortable/filterable table, score bars and per-stock news sentiment; CSV export.
-- **Backtesting engine** — walk-forward simulation of the entry/exit rules with position sizing, stop/target/trailing stops, ATR stops and sector rotation.
+- **Backtesting engine** — simulation of the entry/exit rules with position sizing, stop/target/trailing stops, ATR stops and sector rotation.
 - **Tracing & logging** — rotating `scanner/trace.log`, `scanner/scan.log`, plus an uncaught-exception hook.
 
 ---
@@ -43,9 +43,11 @@ The GUI also needs `Pillow` (already listed above) and a display server.
 | Backtest NIFTY Alpha 50 | `python run_alpha_backtest.py` |
 | Backtest with options | `python -m scanner.backtest --years 3` |
 
-In the GUI: pick a **universe**, **timeframe** (Daily/Weekly/Monthly), **data period**, optional **trend filter**, and a **min score threshold**, then press **RUN SCAN**. Results stream into the table incrementally; use the header row to sort, the search box to filter, and the top-bar buttons to export **HTML** or **CSV**.
+In the GUI: pick a **universe**, **timeframe** (Daily/Weekly/Monthly), **data period**, optional **trend filter**, and a **min score threshold**, then press **RUN SCAN**. Results stream into the table incrementally; use the header row to sort, the search box to filter, and the top-bar buttons to export **HTML** or **CSV**. The **Import watchlist** button scans your own ticker list straight from a CSV/TXT file, and every news panel has a copy button for its ticker.
 
 Settings chosen in the GUI are saved to `scanner/settings.json`.
+
+Keyboard-first workflow: `Ctrl+K` command palette · `Ctrl+R` run/stop · `Ctrl+1/2` views · `Ctrl+E` export HTML · `Ctrl+S` save settings · `/` focus search. Snackbars confirm scans, exports, audits and backtests; the rail also collapses the sidebar; double-click a ticker for its news & sentiment.
 
 ---
 
@@ -55,12 +57,13 @@ Settings chosen in the GUI are saved to `scanner/settings.json`.
 HMA_EMA_Swing_Strategy_v2.pine   ← strategy spec (TradingView reference)
 
 scanner/__main__.py ─┬─> scanner/app.py           Flet GUI ("Aurora") — scan wiring, page
-                     │                             layout, pagination, exports, logging
+                     │                             layout, pagination, exports, logging,
+                     │                             palette, shortcuts, snackbars
                      │        views_layout.py       dashboard panes: rail / sidebar / main /
                      │                             right panel (+ summary & top-pick cards)
                      │        views_results.py      results grid (rows, sort), chart, news rows
                      │        views_settings.py     settings page + input builder
-                     │        ui_kit.py             shared Flet primitives (view mixins use it)
+                     │        ui_kit.py             shared primitives + palette matcher
                      └─> scanner/run_scanner.py   interactive CLI
 run_alpha_backtest.py ─> scanner/backtest.py      backtesting engine
 
@@ -88,11 +91,11 @@ live NSE/BSE symbol lists             data_providers.py               filter, en
 
 | Module | Responsibility |
 |---|---|
-| `scanner/app.py` | Flet GUI — `ScannerApp` wires the view mixins below; owns app lifecycle, scanning/events, cache UI, HTML/CSV export and the activity log |
+| `scanner/app.py` | Flet GUI — `ScannerApp` wires the view mixins below; owns app lifecycle, scanning/events, cache UI, HTML/CSV export, activity log, palette, shortcuts and snackbars |
 | `scanner/views_layout.py` | `LayoutViewMixin` — dashboard panes (rail, sidebar, main area, right panel), summary + top-pick cards |
 | `scanner/views_results.py` | `ResultsViewMixin` — paginated results grid, data-row/header builders, sorting keys, score chart, row-level news expansion, summary/hero updates |
 | `scanner/views_settings.py` | `SettingsViewMixin` — declarative settings spec + settings-page builder/inputs |
-| `scanner/ui_kit.py` | Shared Flet primitives (`_border_all`, `_glass_bg`, ...), `RESULT_COLS`, `_score_of` |
+| `scanner/ui_kit.py` | Shared primitives (`_border_all`, `_glass_bg`, ...), `RESULT_COLS`, `_score_of`, palette matcher (`fuzzy_score`, `filter_actions`) |
 | `scanner/scanner_engine.py` | Headless scan orchestration (`scan`, `scan_stream`) shared by GUI/CLI; "fast mode" for >500 tickers (technicals first, enrich top 200) |
 | `scanner/scoring.py` | Stock filter (MA crossover), Bull/Bear direction, 10-category scoring, weekly-HTF check, sideways filter, entry signals |
 | `scanner/indicators.py` | Vectorized pandas/numpy indicators used by scoring & backtest |
@@ -105,7 +108,7 @@ live NSE/BSE symbol lists             data_providers.py               filter, en
 | `scanner/settings_store.py` | Canonical `DEFAULT_SETTINGS`, settings persistence, API-key registry/loading |
 | `scanner/trace.py` | Rotating trace log, `@trace` decorator, custom TRACE level |
 | `scanner/cache.py` | Shared in-memory TTL cache |
-| `scanner/themes.py` | Light/dark theme definitions |
+| `scanner/themes.py` | Dark theme definition (Aurora palette, single variant) |
 
 Enrichment modules (all optional, all guarded): `market_sentiment.py`, `social_sentiment.py`, `indian_market.py`, `indian_fundamentals.py`, `insider_data.py`, `macro_data.py`, `free_apis.py`, `premium_finance.py`.
 
@@ -128,7 +131,7 @@ Enrichment modules (all optional, all guarded): `market_sentiment.py`, `social_s
 ### Cache hygiene (price data)
 
 - **One trade-date calendar.** Every daily frame is normalized onto tz-naive IST midnights at the cache boundary (`data_providers._normalize_cache_frame` on both write and read), so the UTC-close 18:30 stamps some fallback providers return can never make cross-ticker date unions double-count (the FNO 2×-calendar bug) or drift the relative-strength date masks.
-- **Auto-prune on scan start.** The cache key embeds the fetch date, so entries from previous days are unreachable and would accumulate forever. `fetch_batch_yfinance` sweeps them (`data_providers.prune_stale_cache`, rate-limited to once per hour per process) before the first chunk of any scan/backtest/walk-forward; a manual **Prune** button lives on the sidebar's **Price data** card, which also shows the live fresh/stale entry counts (`cache_health`).
+- **Auto-prune on scan start.** The cache key embeds the fetch date, so entries from previous days are unreachable and would accumulate forever. `fetch_batch_yfinance` sweeps them (`data_providers.prune_stale_cache`, rate-limited to once per hour per process) before the first chunk of any scan/backtest; a manual **Prune** button lives on the sidebar's **Price data** card, which also shows the live fresh/stale entry counts (`cache_health`).
 - **Short frames are honest data.** Names whose history is shorter than the requested window (recent listings, or suspended/delisted names like GSPL — halted May 2026 — and TATAMETALI — merged into Tata Steel 2024) come back with whatever exists, contiguous and ending at the last trade day; they are **not** fetch truncation. Anything under 260 bars is dropped by the engine's warm-up gate.
 - **Dead members are skipped, stale ones are warned.** GSPL and TATAMETALI are annotated in `universes.SUSPENDED_OR_DELISTED` (kept in their lists so published membership is intact) and every scan skips them with a log line — no more pointless re-fetching. If a *different* member's data ends more than `stale_member_max_age_days` ago (Settings → Output, cache & theme, default 45), the scan appends an amber warning under the results hero naming the member and its last bar date.
 - **Keep the annotation current with the audit script.** Run `python -m scanner.audit_stale_members` (or the **Check stale members** button on the Settings page) roughly weekly to catch new suspensions: it reports stale-but-unannotated names (with a paste-ready `SUSPENDED_OR_DELISTED` snippet), annotated names whose trading resumed, and names with no data in the window — flagged separately when they are only dead-symbol-cache skips. It also caught real symbol bugs in the universe lists (AVALONLABS→AVALON, ASTER→ASTERDM, BIRLASOFT→BSOFT), so treat its "no data" section as a symbol-integrity check too.
@@ -197,34 +200,25 @@ Without keys, provider fetches return empty results and the scanner simply score
 
 ---
 
-## Backtesting & walk-forward validation
+## Backtesting
 
-### One-line walk-forward (CLI)
+The **backtest engine** (`scanner/backtest.py`) simulates the full strategy on
+historical daily data:
 
 ```bash
-python -m scanner.walkforward --stop 5 --target 15 --min-adx 20
-# Sweep the ADX gate on the TRAIN half, apply the winner out-of-sample:
-python -m scanner.walkforward --stop 2 --target 10 --adx-sweep "0,15,20,25,30"
+python run_alpha_backtest.py           # NIFTY Alpha 50
+python -m scanner.backtest --years 3   # custom lookback
 ```
 
-`scanner/walkforward.py` splits the simulation window at its midpoint (or
-`--split-date YYYY-MM-DD`), runs three passes — **FULL / TRAIN / TEST** — and
-prints per-window trades, return, win rate, profit factor and drawdown. The
-TEST (out-of-sample) column is the only one that counts: full-window numbers
-are in-sample and overstate edge. Options: `--regime`, `--rotation
-[--rot-block]`, `--no-thursday`, `--tickers`, `--skip-{full,train,test}`.
+Entry: fast MA crosses above slow MA + close above the crossover level + close
+above the volume-profile POC + score above `min_score` (plus the ADX gate).
+Exit: stop loss → target → trailing stop after target, with optional position
+sizing, ATR stops and sector rotation. `--html` / `--csv` write the report and
+trade log.
 
-It is also wired into the GUI: the **chart icon in the left rail** opens a
-"Backtest — walk-forward validation" page that runs the protocol against the
-*current* scanner settings (MA types/lengths, crossover lookback, ADX gate)
-plus the risk parameters typed on the page, so a configuration can be checked
-out-of-sample before it is saved.
-
-### How the engine supports it
-
-`BacktestEngine` accepts optional `sim_start` / `sim_end` settings (ISO dates)
-that restrict the simulated calendar window while all indicators stay
-precomputed causally on the full series — each half is an independent,
+`BacktestEngine` also accepts optional `sim_start` / `sim_end` settings (ISO
+dates) that restrict the simulated calendar window while all indicators stay
+precomputed causally on the full series — each window is an independent,
 lookahead-free simulation, and positions left open at a window end are closed
 at that window's last bar rather than the data's last bar.
 
@@ -236,23 +230,23 @@ from losers. Weak-trend entries (ADX < 20) were ~60% more likely to lose, so a
 `min_adx_entry` gate was added to **both** engines (backtest entry logic and the
 live scanner's `entry_signal`) — screening and backtest now agree.
 
-| Configuration (3y window) | FULL | TRAIN | TEST (out-of-sample) |
-|---|---|---|---|
-| S5/T15, no gate | −3.8% | −1.5% | −5.1% |
-| S5/T15, ADX≥20 | +5.9% | −0.2% | −2.3% |
-| S5/T12, ADX≥20 | +2.6% | — | +0.2% |
-| S2/T10, ADX≥20 | −0.6% | — | **+3.2%** |
-| S5/T8, ADX≥20 | +1.7% | — | **+3.8%** (PF 1.30) |
+| Configuration (3y window) | FULL (in-sample) | Out-of-sample |
+|---|---|---|
+| S5/T15, no gate | −3.8% | −5.1% |
+| S5/T15, ADX≥20 | +5.9% | −2.3% |
+| S5/T12, ADX≥20 | +2.6% | +0.2% |
+| S2/T10, ADX≥20 | −0.6% | **+3.2%** |
+| S5/T8, ADX≥20 | +1.7% | **+3.8%** (PF 1.30) |
 
 Findings, in order of confidence:
 
 1. **The gate's direction holds out-of-sample.** ADX≥20 improved 13 of 15 risk
-   configs on the TEST half (avg ≈ +2–3 pts) and was the best threshold on
-   both halves (it is the standard ADX convention, not an overfit spike).
-   But out-of-sample magnitudes were far smaller than full-window numbers —
-   losses became smaller losses / break-even, not the +5% the full window
-   suggested.
-2. **Full-window ranking misleads.** S5/T15 was the full-window star (+5.9%)
+   configs out-of-sample (avg ≈ +2–3 pts) and was the best threshold on both
+   the full and out-of-sample windows (it is the standard ADX convention, not
+   an overfit spike). But out-of-sample magnitudes were far smaller than
+   in-sample numbers — losses became smaller losses / break-even, not the +5%
+   the full window suggested.
+2. **In-sample ranking misleads.** S5/T15 was the full-window star (+5.9%)
    yet ranked 12th of 15 out-of-sample. Short-target configs (T8/T10/T12)
    dominated the OOS ranking with ADX≥20.
 3. **Do not stack gates.** Adding the index-regime gate or sector rotation on
@@ -263,16 +257,15 @@ Findings, in order of confidence:
    universe, and the saved **loose 20×40 filter collapses**: S5/T8 full-window
    went +1.7% (40×50) to −16.9% (20×40), with the ADX gate no longer helping
    out-of-sample. The loose filter is only a broad candidate *screener*; it is
-   not a tradeable parameter set. The GUI backtest page therefore offers an
-   explicit MA-set toggle (current settings vs the tested 40×50 reference) and
-   documented presets rather than implying one config works everywhere.
+   not a tradeable parameter set — no single MA configuration works everywhere,
+   so treat it as a broad screener rather than a saved parameter set.
 5. **Default scanner setting:** `min_adx_entry: 20` now gates the live
    `entry_signal` in the GUI grid and CLI scan, dropping weak-trend names
    (e.g. RELIANCE at ADX 14 and SBICARD at ADX 19 no longer show "entry YES").
 
 Caveat: every number above is one 2-year window on one universe — the correct
-next step before trusting any config is re-running the walk-forward on fresh
-data (or a 5y window) and only saving settings whose TEST column is positive.
+next step before trusting any config is re-running the backtest on fresh data
+(or a 5y window) and only keeping settings that stay positive out-of-sample.
 
 ---
 

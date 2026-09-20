@@ -14,7 +14,7 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Check dependencies
-python3 -c "import customtkinter" &> /dev/null
+python3 -c "import flet" &> /dev/null
 if [ $? -ne 0 ]; then
     echo ""
     echo "  First time setup - installing dependencies..."
@@ -31,4 +31,4 @@ fi
 
 # Launch
 echo "Starting HMAxEMA Stock Scanner..."
-python3 -m scanner.app
+python3 -m scanner

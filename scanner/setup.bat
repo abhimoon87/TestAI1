@@ -34,7 +34,7 @@ pip install -r scanner/requirements.txt
 if errorlevel 1 (
     echo.
     echo  [ERROR] Failed to install some dependencies.
-    echo  Try running: pip install yfinance pandas numpy customtkinter
+    echo  Try running: pip install yfinance pandas numpy flet
     pause
     exit /b 1
 )
@@ -42,7 +42,7 @@ echo [3/4] Dependencies installed... OK
 
 REM Test import
 echo [4/4] Testing imports...
-python -c "import yfinance, pandas, numpy, customtkinter; print('All imports OK')"
+python -c "import yfinance, pandas, numpy, flet; print('All imports OK')"
 if errorlevel 1 (
     echo  [ERROR] Import test failed.
     pause
@@ -56,4 +56,4 @@ echo ========================================
 echo.
 
 REM Launch
-python -m scanner.app
+python -m scanner
