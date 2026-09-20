@@ -121,7 +121,7 @@ def _generate_trade_chart(t: TradeResult, stock_data: dict,
 
 
 def generate_html_report(engine: BacktestEngine, metrics: dict,
-                         filepath: str = "scanner/backtest_report.html"):
+                         filepath: str = "Reports/backtest_report.html"):
     """Generate a detailed HTML backtest report."""
     import html as html_mod
 
@@ -320,7 +320,7 @@ def generate_html_report(engine: BacktestEngine, metrics: dict,
 
 
 def save_trades_csv(trades: list[TradeResult],
-                    filepath: str = "scanner/backtest_trades.csv"):
+                    filepath: str = "Reports/backtest_trades.csv"):
     """Save all trades to a CSV file."""
     rows = []
     for t in trades:

@@ -274,7 +274,8 @@ def run_scan():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"scanner_report_{timestamp}.html"
-    save_report(html, filename)
+    filepath = os.path.join("Reports", filename)
+    save_report(html, filepath)
 
     passed = len([r for r in results if r["total"] >= threshold])
     logger.info("  ✓ Report saved: %s", filename)

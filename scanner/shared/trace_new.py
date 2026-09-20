@@ -41,7 +41,9 @@ from pathlib import Path
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SCANNER_DIR = Path(__file__).parent
-DEFAULT_TRACE_FILE = SCANNER_DIR / "trace.log"
+PROJECT_ROOT = SCANNER_DIR.parent.parent
+APPLOG_DIR = PROJECT_ROOT / "AppLog"
+DEFAULT_TRACE_FILE = APPLOG_DIR / "trace.log"
 MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 BACKUP_COUNT = 5
 

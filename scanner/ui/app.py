@@ -41,7 +41,10 @@ from .views_results import ResultsViewMixin
 from .views_settings import SettingsViewMixin
 
 SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(SCANNER_DIR, "scan.log")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(SCANNER_DIR))
+APPLOG_DIR = os.path.join(_PROJECT_ROOT, "AppLog")
+REPORTS_DIR = os.path.join(_PROJECT_ROOT, "Reports")
+LOG_FILE = os.path.join(APPLOG_DIR, "scan.log")
 LOG_ROTATE_HOURS = 12
 LOG_MAX_LINES = 500
 _NEWS_PREFETCH_TOP = 50  # top-scored rows whose news is prefetched after a scan
@@ -1220,11 +1223,12 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin):
 
         def _bg():
             try:
+                os.makedirs(REPORTS_DIR, exist_ok=True)
                 self._log("Fetching news sentiment for exported stocks...")
                 html = generate_html_report(results_snapshot, title=safe_title, threshold=threshold, fetch_news=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"scanner_report_{timestamp}.html"
-                filepath = os.path.join(SCANNER_DIR, filename)
+                filepath = os.path.join(REPORTS_DIR, filename)
                 save_report(html, filepath)
                 self._safe_update(lambda: self._log(f"HTML report saved: {filename}"))
                 self._safe_update(lambda: self._toast(f"Report saved: {filename}", "success"))
@@ -1247,9 +1251,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin):
 
         def _bg():
             try:
+                os.makedirs(REPORTS_DIR, exist_ok=True)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"scanner_results_{timestamp}.csv"
-                filepath = os.path.join(SCANNER_DIR, filename)
+                filepath = os.path.join(REPORTS_DIR, filename)
                 with open(filepath, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(["Rank", "Ticker", "Score", "Rating", "Price", "MA_Signal", "POC",
@@ -1364,6 +1369,7 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin):
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {msg}\n"
         try:
+            os.makedirs(APPLOG_DIR, exist_ok=True)
             with _log_lock:
                 with open(LOG_FILE, "a", encoding="utf-8") as f:
                     f.write(line)

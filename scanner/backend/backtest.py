@@ -798,9 +798,9 @@ def main():
                         help="Score bonus factor for top sectors (default: 0.5)")
     parser.add_argument("--rotation-block", type=float, default=-5.0,
                         help="Block sector if momentum below this %% (default: -5.0)")
-    parser.add_argument("--html", type=str, default="scanner/backtest_report.html",
+    parser.add_argument("--html", type=str, default="Reports/backtest_report.html",
                         help="HTML report path")
-    parser.add_argument("--csv", type=str, default="scanner/backtest_trades.csv",
+    parser.add_argument("--csv", type=str, default="Reports/backtest_trades.csv",
                         help="Trades CSV path")
     parser.add_argument("--no-html", action="store_true",
                         help="Skip HTML report generation")
