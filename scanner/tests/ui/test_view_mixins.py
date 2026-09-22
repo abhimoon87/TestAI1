@@ -10,12 +10,12 @@ control trees — so the full dashboard/settings build runs without a window.
 
 import flet as ft
 
-import scanner.ui.app as app_mod
 import scanner.backend.news_prefetch as news_prefetch_mod
 import scanner.backend.settings_store as store_mod
-from scanner.ui.app import ScannerApp
-from scanner.shared.themes import THEMES
+import scanner.ui.app as app_mod
 from scanner.shared.constants import score_of as _score_of
+from scanner.shared.themes import THEMES
+from scanner.ui.app import ScannerApp
 from scanner.ui.views_results import ResultsViewMixin
 
 
@@ -41,6 +41,26 @@ class _FakePage:
 
     def pop_dialog(self):
         self.popped += 1
+
+    def run_task(self, handler):
+        """Run async coroutines synchronously in the test harness.
+
+        Flet's ``page.run_task(handler)`` calls ``handler()`` to obtain a
+        coroutine, then schedules it.  We replicate that here.
+        """
+        import asyncio
+        coro = handler()
+        if asyncio.iscoroutine(coro):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    pool.submit(asyncio.run, coro).result(timeout=2)
+            else:
+                asyncio.run(coro)
 
 
 def _make_app():
@@ -98,7 +118,7 @@ class TestBuildDashboard:
                      "log_view", "_rail_pills"):
             assert hasattr(app, attr), f"missing panel control {attr}"
         # Dashboard pill is visible; settings page builds from it
-        assert app._rail_pills["dashboard"].visible is True
+        assert app._rail_pills["dashboard"].opacity == 1.0
 
     def test_build_summary_row_creates_eight_cards(self):
         """Summary stat cards are keyed and labelled for later updates."""

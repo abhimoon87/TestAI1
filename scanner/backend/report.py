@@ -11,6 +11,40 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+
+def _sparkline_svg(closes: list, width: int = 100, height: int = 22) -> str:
+    """Smooth cubic-bezier sparkline SVG from a list of closing prices."""
+    px = [v for v in closes if v is not None and isinstance(v, (int, float))]
+    if len(px) < 2:
+        return ""
+    up = px[-1] >= px[0]
+    stroke = "#34d399" if up else "#f87171"
+    fill = "rgba(52,211,153,0.15)" if up else "rgba(248,113,113,0.15)"
+    lo, hi = min(px), max(px)
+    span = (hi - lo) or 1.0
+    n = len(px)
+    coords = []
+    for i, v in enumerate(px):
+        x = i / max(n - 1, 1) * width
+        y = height - 2 - (v - lo) / span * (height - 4)
+        coords.append((x, y))
+    # Build smooth cubic bezier path
+    d = f"M{coords[0][0]:.1f},{coords[0][1]:.1f}"
+    for i in range(1, len(coords)):
+        x0, y0 = coords[i - 1]
+        x1, y1 = coords[i]
+        mx = (x0 + x1) / 2
+        d += f"C{mx:.1f},{y0:.1f} {mx:.1f},{y1:.1f} {x1:.1f},{y1:.1f}"
+    fill_d = d + f"L{width},{height}L0,{height}Z"
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" style="display:block">'
+        f'<path d="{fill_d}" fill="{fill}" />'
+        f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="1.5" '
+        f'stroke-linecap="round" stroke-linejoin="round" />'
+        f'</svg>'
+    )
+
 # ─── Sentiment keywords ──────────────────────────────────────────────────────
 SENTIMENT_GOOD = frozenset([
     "profit", "growth", "record", "gain", "surge", "rally",
@@ -287,37 +321,52 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
         sideways_reasons = _html.escape(', '.join(r.get('sideways_reasons', [])))
         sideways_label = '⚠ Chop' if sideways else '✓ Trend'
 
-        # ─── News sentiment (pre-fetched in parallel) ─────────────────────
-        news_html = ""
-        if fetch_news:
-            news_items = news_map.get(ticker, [])
-            if news_items:
-                good_count = sum(1 for n in news_items
-                                 if isinstance(n, dict) and n.get("sentiment") == "Good")
-                bad_count = sum(1 for n in news_items
-                                if isinstance(n, dict) and n.get("sentiment") == "Bad")
-                neutral_count = sum(1 for n in news_items
-                                    if isinstance(n, dict) and n.get("sentiment") == "Neutral")
-                summary_parts = []
-                if good_count:
-                    summary_parts.append(f'<span class="news-good">{good_count} Good</span>')
-                if bad_count:
-                    summary_parts.append(f'<span class="news-bad">{bad_count} Bad</span>')
-                if neutral_count:
-                    summary_parts.append(f'<span class="news-neutral">{neutral_count} Neutral</span>')
+        # ─── Trade reasons (per-ticker) ──────────────────────────────────
+        from ..shared.trade_reasons import build_trade_reasons
+        trade_reasons = build_trade_reasons(r)
+        reasons_html = ""
+        if trade_reasons:
+            reason_items = ""
+            for reason_text in trade_reasons:
+                is_risk = reason_text.startswith("Risk:")
+                icon_color = "var(--orange)" if is_risk else "var(--green)"
+                icon_char = "⚠" if is_risk else "✓"
+                reason_items += f'<div class="reason-item"><span class="reason-icon" style="color:{icon_color}">{icon_char}</span> {_html.escape(reason_text)}</div>'
+            reasons_html = f"""
+            <div class="reasons-panel">
+                <div class="reasons-header">Why this trade?</div>
+                {reason_items}
+            </div>"""
 
-                news_rows = ""
-                for n in news_items:
-                    if not isinstance(n, dict):
-                        continue
-                    sent = str(n.get("sentiment", "Neutral"))
-                    sent_cls = _html.escape(sent.lower())
-                    safe_title = _html.escape(str(n.get("title", "")))
-                    safe_summary = _html.escape(str(n.get("summary", ""))[:200])
-                    safe_publisher = _html.escape(str(n.get("publisher", "")))
-                    safe_date = _html.escape(str(n.get("date", "")))
-                    safe_sentiment = _html.escape(sent)
-                    news_rows += f"""
+        # ─── News sentiment (pre-fetched in parallel) ─────────────────────
+        news_items = news_map.get(ticker, []) if fetch_news else []
+        news_rows_html = ""
+        if news_items:
+            good_count = sum(1 for n in news_items
+                             if isinstance(n, dict) and n.get("sentiment") == "Good")
+            bad_count = sum(1 for n in news_items
+                            if isinstance(n, dict) and n.get("sentiment") == "Bad")
+            neutral_count = sum(1 for n in news_items
+                                if isinstance(n, dict) and n.get("sentiment") == "Neutral")
+            summary_parts = []
+            if good_count:
+                summary_parts.append(f'<span class="news-good">{good_count} Good</span>')
+            if bad_count:
+                summary_parts.append(f'<span class="news-bad">{bad_count} Bad</span>')
+            if neutral_count:
+                summary_parts.append(f'<span class="news-neutral">{neutral_count} Neutral</span>')
+
+            for n in news_items:
+                if not isinstance(n, dict):
+                    continue
+                sent = str(n.get("sentiment", "Neutral"))
+                sent_cls = _html.escape(sent.lower())
+                safe_title = _html.escape(str(n.get("title", "")))
+                safe_summary = _html.escape(str(n.get("summary", ""))[:200])
+                safe_publisher = _html.escape(str(n.get("publisher", "")))
+                safe_date = _html.escape(str(n.get("date", "")))
+                safe_sentiment = _html.escape(sent)
+                news_rows_html += f"""
                         <div class="news-item">
                             <span class="news-sentiment {sent_cls}">[{safe_sentiment}]</span>
                             <span class="news-date">{safe_date}</span>
@@ -325,25 +374,32 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
                             <div class="news-title">{safe_title}</div>
                             <div class="news-summary">{safe_summary}</div>
                         </div>"""
+            news_summary_html = f'<div class="news-summary-line">{" | ".join(summary_parts)}</div>'
+        elif fetch_news:
+            news_summary_html = ""
+            news_rows_html = '<div class="news-item"><span class="news-title" style="color:var(--text-dim)">No recent news found</span></div>'
+        else:
+            news_summary_html = ""
+            news_rows_html = ""
 
-                news_html = f"""
+        # Always build the expandable panel with trade reasons + news
+        panel_content = reasons_html
+        if news_summary_html:
+            panel_content += news_summary_html
+        if news_rows_html:
+            panel_content += news_rows_html
+
+        if panel_content:
+            news_html = f"""
                 <tr class="news-row" id="news-{_news_id(ticker)}" style="display:none">
-                    <td colspan="20">
+                    <td colspan="22">
                         <div class="news-panel">
-                            <div class="news-summary-line">{" | ".join(summary_parts)}</div>
-                            {news_rows}
+                            {panel_content}
                         </div>
                     </td>
                 </tr>"""
-            else:
-                news_html = f"""
-                <tr class="news-row" id="news-{_news_id(ticker)}" style="display:none">
-                    <td colspan="20">
-                        <div class="news-panel">
-                            <div class="news-item"><span class="news-title">No recent news found</span></div>
-                        </div>
-                    </td>
-                </tr>"""
+        else:
+            news_html = ""
 
         rows_html += f"""
         <tr class="{'highlight' if score >= threshold else ''}" 
@@ -351,10 +407,12 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             data-above-poc="{'true' if above_poc else 'false'}"
             data-both-ma="{'true' if close_above_both else 'false'}"
             data-crossed="{'true' if ma_crossed else 'false'}"
+            data-entry="{'true' if r.get('entry_signal') else 'false'}"
             data-ticker="{_html.escape(ticker)}">
             <td class="ticker" onclick="toggleNews('{_news_id(ticker)}')">{_html.escape(ticker)}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
+            <td class="num">{"<span class='bull'>YES</span>" if r.get('entry_signal') else "<span style='color:var(--text-faint)'>--</span>"}</td>
             <td class="num">{r.get('close', '—')}</td>
             <td class="num">{ma_html}</td>
             <td class="num">{poc_html}</td>
@@ -407,6 +465,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
             <td><span class="{trend_class}">{trend_icon} {r.get('trend_dir', '')}</span></td>
             <td>{r.get('volat_stat', '—')}</td>
             <td><span class="{sideways_cls}" title="{sideways_reasons}">{sideways_label}</span></td>
+            <td class="spark-cell">{_sparkline_svg(r.get('px_tail') or [])}</td>
         </tr>
         {news_html}"""
 
@@ -456,7 +515,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .filters input:focus, .filters select:focus {{ outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--focus-ring); }}
     .filters input {{ width: 280px; }}
     .table-wrap {{ background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; overflow-x: auto; }}
-    table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8em; min-width: 1100px; }}
+    table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8em; min-width: 1250px; }}
     th {{ background: var(--surface2); color: var(--text-dim); padding: 10px 8px; text-align: left; font-weight: 600; font-size: 0.75em; letter-spacing: 0.06em; text-transform: uppercase;
           border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; position: sticky; top: 0; white-space: nowrap; transition: color 0.15s, background 0.15s; }}
     th:hover {{ color: var(--green); background: var(--surface3); }}
@@ -541,6 +600,36 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     .news-good {{ color: var(--green); font-weight: bold; }}
     .news-bad {{ color: var(--red); font-weight: bold; }}
     .news-neutral {{ color: var(--text-dim); font-weight: bold; }}
+
+    /* ─── Trade reasons panel ─────────────────────────────── */
+    .reasons-panel {{
+        background: var(--surface2);
+        border-left: 3px solid var(--green);
+        padding: 10px 16px;
+        margin: 4px 12px 8px 40px;
+        border-radius: 4px;
+    }}
+    .reasons-header {{
+        color: var(--cyan);
+        font-weight: 700;
+        font-size: 0.85em;
+        margin-bottom: 6px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+    }}
+    .reason-item {{
+        color: var(--text);
+        font-size: 0.82em;
+        padding: 3px 0;
+        line-height: 1.4;
+    }}
+    .reason-icon {{
+        font-weight: bold;
+        margin-right: 4px;
+    }}
+
+    /* ─── Sparkline column ─────────────────────────────────── */
+    .spark-cell {{ padding: 4px 6px; }}
 </style>
 </head>
 <body>
@@ -593,6 +682,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     </select>
     <select id="signalFilter" onchange="filterTable()">
         <option value="">All signals</option>
+        <option value="entry">ENTRY signal</option>
         <option value="both_ma+poc">Close &gt; Both MA + POC</option>
         <option value="ma+poc">MA Bull + POC</option>
         <option value="crossed">Fresh Crossover</option>
@@ -614,23 +704,25 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
     <th onclick="sortTable(0)">Ticker</th>
     <th onclick="sortTable(1)">Score</th>
     <th onclick="sortTable(2)">Rating</th>
-    <th onclick="sortTable(3)">Price</th>
-    <th onclick="sortTable(4)">MA Signal</th>
-    <th onclick="sortTable(5)">POC</th>
-    <th onclick="sortTable(6)">Both MA</th>
-    <th onclick="sortTable(7)">Trend</th>
-    <th onclick="sortTable(8)">Momentum</th>
-    <th onclick="sortTable(9)">RSI</th>
-    <th onclick="sortTable(10)">MACD</th>
-    <th onclick="sortTable(11)">Volume</th>
-    <th onclick="sortTable(12)">RS</th>
-    <th onclick="sortTable(13)">Fund</th>
-    <th onclick="sortTable(14)">RSI Val</th>
-    <th onclick="sortTable(15)">ADX</th>
-    <th onclick="sortTable(16)">1M Chg</th>
-    <th onclick="sortTable(17)">Trend</th>
-    <th onclick="sortTable(18)">Volatility</th>
-    <th onclick="sortTable(19)">Sideways</th>
+    <th onclick="sortTable(3)">Entry</th>
+    <th onclick="sortTable(4)">Price</th>
+    <th onclick="sortTable(5)">MA Signal</th>
+    <th onclick="sortTable(6)">POC</th>
+    <th onclick="sortTable(7)">Both MA</th>
+    <th onclick="sortTable(8)">Trend</th>
+    <th onclick="sortTable(9)">Momentum</th>
+    <th onclick="sortTable(10)">RSI</th>
+    <th onclick="sortTable(11)">MACD</th>
+    <th onclick="sortTable(12)">Volume</th>
+    <th onclick="sortTable(13)">RS</th>
+    <th onclick="sortTable(14)">Fund</th>
+    <th onclick="sortTable(15)">RSI Val</th>
+    <th onclick="sortTable(16)">ADX</th>
+    <th onclick="sortTable(17)">1M Chg</th>
+    <th onclick="sortTable(18)">Trend</th>
+    <th onclick="sortTable(19)">Volatility</th>
+    <th onclick="sortTable(20)">Sideways</th>
+    <th>1M</th>
 </tr>
 </thead>
 <tbody>
@@ -641,7 +733,7 @@ def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
 
 <div class="footer">
     Generated by HMAxEMA Stock Scanner &nbsp;|&nbsp; Scoring engine mirrors the Pine Script indicator<br>
-    Click any ticker to expand/collapse news sentiment
+    Click any ticker to expand trade reasons &amp; news sentiment
 </div>
 
 <script>
@@ -734,18 +826,20 @@ function filterTable() {{
 
         const ticker = row.cells[0].textContent.toLowerCase();
         const score = parseFloat(row.cells[1].textContent);
-        const trend = row.cells[17].textContent;
+        const trend = row.cells[18].textContent;
         const maBull = row.getAttribute("data-ma-bull") === "true";
         const abovePoc = row.getAttribute("data-above-poc") === "true";
         const bothMa = row.getAttribute("data-both-ma") === "true";
         const crossed = row.getAttribute("data-crossed") === "true";
+        const hasEntry = row.getAttribute("data-entry") === "true";
 
         const matchSearch = ticker.includes(search);
         const matchScore = score >= minScore;
         const matchTrend = !trendFilter || trend.includes(trendFilter);
 
         let matchSignal = true;
-        if (signalFilter === "both_ma+poc") matchSignal = bothMa && abovePoc;
+        if (signalFilter === "entry") matchSignal = hasEntry;
+        else if (signalFilter === "both_ma+poc") matchSignal = bothMa && abovePoc;
         else if (signalFilter === "ma+poc") matchSignal = maBull && abovePoc;
         else if (signalFilter === "crossed") matchSignal = crossed;
         else if (signalFilter === "ma_bull") matchSignal = maBull;

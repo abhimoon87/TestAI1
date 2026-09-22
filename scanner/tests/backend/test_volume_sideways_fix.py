@@ -10,8 +10,8 @@ Covers the two behaviours requested after the MAHABANK deep-dive:
 import numpy as np
 import pandas as pd
 
-from scanner.shared.indicators import adx
 from scanner.backend.scoring import _compute_sideways, compute_scores
+from scanner.shared.indicators import adx
 
 
 def _ohlcv(close: np.ndarray, volume: np.ndarray | None = None) -> pd.DataFrame:

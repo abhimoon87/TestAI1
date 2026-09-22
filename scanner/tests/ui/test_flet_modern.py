@@ -86,7 +86,7 @@ def test_show_view_toggles_exactly_one_pane():
     app._show_view("dashboard")
     assert app.dashboard_view.visible is True
     assert app.settings_view.visible is False
-    assert app._rail_pills["dashboard"].visible is True
+    assert app._rail_pills["dashboard"].opacity == 1.0
 
 
 # ── Palette dialog ────────────────────────────────────────────────────

@@ -453,6 +453,7 @@ class TestPruneStaleCache:
     @staticmethod
     def _write_entry(d, name, when):
         import os
+
         from scanner.tests.conftest import safe_to_parquet
         safe_to_parquet(pd.DataFrame({"close": [1.0, 2.0]}), os.path.join(str(d), name + ".parquet"), index=False)
         with open(os.path.join(str(d), name + ".meta"), "w") as f:
@@ -518,6 +519,7 @@ class TestCacheHealth:
     def test_counts_fresh_and_stale(self, tmp_path, monkeypatch):
         self._reset(tmp_path, monkeypatch)
         import os
+
         from scanner.tests.conftest import safe_to_parquet
         fresh = datetime.now().isoformat()
         stale = (datetime.now() - timedelta(days=1)).isoformat()

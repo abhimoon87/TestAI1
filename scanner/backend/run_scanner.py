@@ -19,6 +19,7 @@ from ..api.data_fetcher import (
     fetch_batch_yfinance,
     fetch_index_data,
 )
+from ..shared.universes import UNIVERSES
 from .report import generate_html_report, save_report
 from .scanner_engine import (
     ENRICH_TOP_N,
@@ -27,7 +28,6 @@ from .scanner_engine import (
     _score_ticker,
 )
 from .settings_store import load_settings
-from ..shared.universes import UNIVERSES
 
 logger = logging.getLogger(__name__)
 

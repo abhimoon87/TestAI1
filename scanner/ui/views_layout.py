@@ -17,7 +17,11 @@ import flet as ft
 from flet.controls.alignment import Alignment
 
 from ..shared.constants import score_of as _score_of
+from ..shared.universes import UNIVERSES
 from .ui_kit import (
+    ANIM_BOUNCE,
+    ANIM_FAST,
+    ANIM_NORMAL,
     _border_all,
     _card_shadow,
     _glass_bg,
@@ -27,7 +31,6 @@ from .ui_kit import (
     _padding_only,
     score_color,
 )
-from ..shared.universes import UNIVERSES
 
 logger = logging.getLogger(__name__)
 
@@ -87,15 +90,18 @@ class LayoutViewMixin:
             return ft.Container(
                 width=4, height=26, border_radius=2,
                 bgcolor=c["neon"], shadow=_neon_glow(c["neon"], blur=8),
+                opacity=1.0, animate_opacity=ANIM_NORMAL,
             )
 
         def empty_slot():
-            return ft.Container(width=4)
+            return ft.Container(width=4, opacity=0.0, animate_opacity=ANIM_NORMAL,
+                                bgcolor=c["neon"], shadow=_neon_glow(c["neon"], blur=8))
 
         self._rail_pills = {}
-        home_pill = pill_slot()
-        home_pill.visible = self.active_view == "dashboard"
+        home_pill = pill_slot() if self.active_view == "dashboard" else empty_slot()
+        settings_pill = pill_slot() if self.active_view == "settings" else empty_slot()
         self._rail_pills["dashboard"] = home_pill
+        self._rail_pills["settings"] = settings_pill
 
         logo = ft.Container(
             content=ft.Text("ABHI", color="white", size=11, weight=ft.FontWeight.BOLD),
@@ -108,7 +114,7 @@ class LayoutViewMixin:
         rail_items = ft.Column(
             controls=[
                 rail_unit(rail_icon("home", c["neon"], lambda: self._show_view("dashboard")), home_pill),
-                rail_unit(rail_icon("gear", c["purple"], self._show_settings), empty_slot()),
+                rail_unit(rail_icon("gear", c["purple"], self._show_settings), settings_pill),
                 ft.Container(height=10),
                 rail_unit(rail_icon("play", c["green"], self._on_action_click), empty_slot()),
             ],
@@ -561,12 +567,11 @@ class LayoutViewMixin:
         )
 
         # Build both views once; switching only flips ``visible`` flags.
-        # Re-parenting or replacing live controls breaks Flet 0.86.5's client
-        # tree (vanishing panes), and rebuilding the page resizes a maximized
+        # Re-parenting or replacing live controls breaks Flet's client tree
+        # (vanishing panes), and rebuilding the page resizes a maximized
         # window — so the main area is a stable stack of two siblings.
         self.dashboard_view = self.dashboard_content
         self.settings_view = self._build_settings_view()
-        # Only the active view is visible — never a stacked pileup.
         _active = getattr(self, "active_view", "dashboard")
         self.dashboard_view.visible = (_active == "dashboard")
         self.settings_view.visible = (_active == "settings")
@@ -605,7 +610,8 @@ class LayoutViewMixin:
         ]
         cards = []
         for label, key, color, icon in stats:
-            val_label = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=color)
+            val_label = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=color,
+                                animate_scale=ANIM_BOUNCE, animate_opacity=ANIM_FAST)
             self.summary_cards[key] = val_label
             card = ft.Container(
                 content=ft.Column(

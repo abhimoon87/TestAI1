@@ -269,16 +269,56 @@ UNIVERSES = {
 def get_universe(name: str) -> list:
     """Get universe tickers by name, case-insensitive.
 
-    For static universes, returns the pre-built list.
-    For live full-market universes (NSE ALL / BSE ALL / FULL MARKET),
-    fetches via symbol_fetcher with 4h cache and falls back to static
-    NIFTY_BROAD if live fetch fails (so scan never breaks).
+    Handles common aliases (e.g. "nifty50" == "NIFTY 50", "banknifty" ==
+    "BANK NIFTY", "mainboard" == "NSE ALL").  For static universes, returns
+    the pre-built list.  For live full-market universes (NSE ALL / BSE ALL /
+    FULL MARKET), fetches via symbol_fetcher with 4h cache and falls back to
+    static NIFTY_BROAD if live fetch fails (so scan never breaks).
     """
     # Dynamic full-market — live fetch (cached 4h)
     low = name.strip().lower()
+    # Normalise common no-space aliases
+    _alias = low.replace(" ", "")
+    if _alias in ("nifty50",):
+        low = "nifty 50"
+    elif _alias in ("banknifty",):
+        low = "bank nifty"
+    elif _alias in ("niftynext50",):
+        low = "nifty next 50"
+    elif _alias in ("niftymidcap100",):
+        low = "nifty midcap 100"
+    elif _alias in ("niftysmallcap100",):
+        low = "nifty smallcap 100"
+    elif _alias in ("mainboard",):
+        low = "nse all"
+    elif low == "all":
+        low = "all (combined)"
+    elif _alias in ("niftyit",):
+        low = "nifty it"
+    elif _alias in ("niftypharma",):
+        low = "nifty pharma"
+    elif _alias in ("niftyauto",):
+        low = "nifty auto"
+    elif _alias in ("niftymetal",):
+        low = "nifty metal"
+    elif _alias in ("niftyrealty",):
+        low = "nifty realty"
+    elif _alias in ("niftyenergy",):
+        low = "nifty energy"
+    elif _alias in ("niftyfinancial",):
+        low = "nifty financial"
+    elif _alias in ("bsesensex",):
+        low = "bse sensex"
+    elif _alias in ("bsemidcap",):
+        low = "bse midcap"
+    elif _alias in ("bsesmallcap",):
+        low = "bse smallcap"
+    elif _alias in ("cashmarket",):
+        low = "cash market"
+
     if low in ("nse all (live ~2,200)", "nse all", "nse all (live)"):
         try:
-            from .symbol_fetcher import fetch_nse_mainboard
+            from ..api.symbol_fetcher import fetch_nse_mainboard
 
             live = fetch_nse_mainboard()
             if live and len(live) > 500:
@@ -291,7 +331,7 @@ def get_universe(name: str) -> list:
 
     if low in ("bse all (live ~4,500)", "bse all", "bse all (live)"):
         try:
-            from .symbol_fetcher import fetch_bse_all_live
+            from ..api.symbol_fetcher import fetch_bse_all_live
 
             live = fetch_bse_all_live()
             if live and len(live) > 500:
@@ -303,7 +343,7 @@ def get_universe(name: str) -> list:
 
     if low in ("full market (nse+bse ~5,900)", "full market", "full market (live)", "all market"):
         try:
-            from .symbol_fetcher import fetch_all_market_symbols
+            from ..api.symbol_fetcher import fetch_all_market_symbols
 
             live = fetch_all_market_symbols()
             if live and len(live) > 500:
@@ -315,7 +355,7 @@ def get_universe(name: str) -> list:
 
     if low in ("fno stocks", "fno"):
         try:
-            from .symbol_fetcher import fetch_nse_fno
+            from ..api.symbol_fetcher import fetch_nse_fno
             live = fetch_nse_fno()
             if live and len(live) > 100:
                 UNIVERSES["FnO STOCKS"] = live

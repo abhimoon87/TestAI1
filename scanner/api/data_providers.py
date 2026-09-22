@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Load API keys from config file (re-read on each call to pick up live edits)
 _API_KEYS: dict[str, str] = {}
 _API_KEYS_MTIME: float = 0.0
-_config_file = Path(__file__).parent / "api_config.json"
+_config_file = Path(__file__).parent.parent / "api_config.json"
 
 
 def _get_api_key(key_name: str) -> str:
@@ -57,10 +57,11 @@ def _get_api_key(key_name: str) -> str:
                 _API_KEYS = {}
         except Exception:
             logger.debug("API key config parse failed", exc_info=True)
+    return _API_KEYS.get(key_name) or os.environ.get(key_name, "")
 
 # ── Cache Directory ────────────────────────────────────────────────────────
 _CACHE_WRITE_LOCK = threading.Lock()
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache")
 CACHE_TTL_HOURS = 4  # Cache expires after 4 hours
 
 

@@ -50,8 +50,8 @@ from ..api.data_fetcher import (
     fetch_batch_yfinance,
     fetch_stock_data,
 )
-from .scanner_engine import _find_stale_members
 from ..shared.universes import UNIVERSES
+from .scanner_engine import _find_stale_members
 
 # Dynamic full-market entries resolve live via symbol_fetcher (and default to
 # NIFTY_BROAD copies before that); auditing them would just re-list the same

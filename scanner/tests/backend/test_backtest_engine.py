@@ -13,6 +13,7 @@ into ``run()``.
 
 import hashlib
 import json
+import logging
 import os
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
@@ -118,15 +119,16 @@ class TestEngineCalendarAlignment:
         assert len(union) == len(trade_days)  # 500, not ~1000
         assert union == list(trade_days)
 
-    def test_run_simulation_window_not_doubled(self, tmp_path, monkeypatch, capsys):
+    def test_run_simulation_window_not_doubled(self, tmp_path, monkeypatch, caplog):
         """The engine's simulated day count matches the real single calendar."""
         engine, trade_days = _load_engine(tmp_path, monkeypatch)
 
-        metrics = engine.run()
-        out = capsys.readouterr().out
+        # run() reports progress via the module logger, not stdout prints.
+        with caplog.at_level(logging.INFO, logger="scanner.backend.backtest"):
+            metrics = engine.run()
 
         expected_days = len(trade_days) - WARMUP_BARS
-        assert f"Simulation: {expected_days} trading days" in out
+        assert f"Simulation: {expected_days} trading days" in caplog.text
         assert isinstance(metrics, dict)
 
     def test_raw_flavors_would_have_doubled(self, tmp_path, monkeypatch):

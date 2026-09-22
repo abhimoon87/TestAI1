@@ -17,7 +17,7 @@ The app includes a dark-themed desktop GUI (Flet), an interactive CLI, a headles
 - **Optional enrichment** — news/social sentiment, FII/DII delivery data, 52-week position, macro/forex/crypto regime, insider signals, Shariah compliance (all optional; most need free API keys).
 - **HTML report** with sortable/filterable table, score bars and per-stock news sentiment; CSV export.
 - **Backtesting engine** — simulation of the entry/exit rules with position sizing, stop/target/trailing stops, ATR stops and sector rotation.
-- **Tracing & logging** — rotating `scanner/trace.log`, `scanner/scan.log`, plus an uncaught-exception hook.
+- **Tracing & logging** — rotating `AppLog/trace.log`, `AppLog/scan.log`, plus an uncaught-exception hook.
 
 ---
 
@@ -38,10 +38,10 @@ The GUI also needs `Pillow` (already listed above) and a display server.
 | What | How |
 |---|---|
 | Launch the GUI | `python -m scanner` (Windows: double-click `scanner/run.bat`, macOS/Linux: `scanner/run.sh`) |
-| Interactive CLI scan | `python -m scanner --cli` or `python scanner/run_scanner.py` |
-| Headless scan from code | `ScannerEngine().scan(...)` — see `scanner/scanner_engine.py` |
-| Backtest NIFTY Alpha 50 | `python run_alpha_backtest.py` |
-| Backtest with options | `python -m scanner.backtest --years 3` |
+| Interactive CLI scan | `python -m scanner --cli` or `python -m scanner.backend.run_scanner` |
+| Headless scan from code | `ScannerEngine().scan(...)` — see `scanner/backend/scanner_engine.py` |
+| Backtest NIFTY Alpha 50 | `python -m scanner.backend.run_alpha_backtest` |
+| Backtest with options | `python -m scanner.backend.backtest --years 3` |
 
 In the GUI: pick a **universe**, **timeframe** (Daily/Weekly/Monthly), **data period**, optional **trend filter**, and a **min score threshold**, then press **RUN SCAN**. Results stream into the table incrementally; use the header row to sort, the search box to filter, and the top-bar buttons to export **HTML** or **CSV**. The **Import watchlist** button scans your own ticker list straight from a CSV/TXT file, and every news panel has a copy button for its ticker.
 
@@ -56,61 +56,61 @@ Keyboard-first workflow: `Ctrl+K` command palette · `Ctrl+R` run/stop · `Ctrl+
 ```
 HMA_EMA_Swing_Strategy_v2.pine   ← strategy spec (TradingView reference)
 
-scanner/__main__.py ─┬─> scanner/app.py           Flet GUI ("Aurora") — scan wiring, page
-                     │                             layout, pagination, exports, logging,
-                     │                             palette, shortcuts, snackbars
-                     │        views_layout.py       dashboard panes: rail / sidebar / main /
-                     │                             right panel (+ summary & top-pick cards)
-                     │        views_results.py      results grid (rows, sort), chart, news rows
-                     │        views_settings.py     settings page + input builder
-                     │        ui_kit.py             shared primitives + palette matcher
-                     └─> scanner/run_scanner.py   interactive CLI
-run_alpha_backtest.py ─> scanner/backtest.py      backtesting engine
+scanner/__main__.py ???> scanner/ui/app.py        Flet GUI ("Aurora") ? scan wiring, page
+                     ?                              layout, pagination, exports, logging,
+                     ?                              palette, shortcuts, snackbars
+                     ?        ui/views_layout.py    dashboard panes: rail / sidebar / main /
+                     ?                              right panel (+ summary & top-pick cards)
+                     ?        ui/views_results.py   results grid (rows, sort), chart, news rows
+                     ?        ui/views_settings.py  settings page + input builder
+                     ?        ui/ui_kit.py          shared primitives + palette matcher
+                     ??> scanner/backend/run_scanner.py   interactive CLI
+scanner/backend/run_alpha_backtest.py ?> backend/backtest.py   backtesting engine
 
-                              ┌────────────────────────────┐
-                              │ scanner/scanner_engine.py   │  headless pipeline
-                              │ universe → index → batch →  │  with cancel + progress
-                              │ filter → enrich → score     │  callbacks
-                              └──────────────┬─────────────┘
-                                             │
-        ┌────────────────────────────────────┼───────────────────────────────┐
-        ▼                                    ▼                               ▼
-universes.py                          data_fetcher.py                 scoring.py
-static universes + sector map         chunked yfinance batch          filter + 10-category
-symbol_fetcher.py                     (+ NSE fallback pass)           scoring, sideways
-live NSE/BSE symbol lists             data_providers.py               filter, entry signals
-                                      3-tier OHLCV fallback:          indicators.py
-                                      jugaad-data → yfinance →        vectorized HMA/EMA/SMA/
-                                      nselib (disk cache 4h)          KAMA/VWMA/RSI/MACD/ATR/
-                                      fundamentals: Finnhub →         ADX/OBV/VP-POC
-                                      Alpha Vantage → yfinance →
-                                      nselib
+                              ?????????????????????????????????
+                              ? backend/scanner_engine.py       ?  headless pipeline
+                              ? universe ? index ? batch ?      ?  with cancel + progress
+                              ? filter ? enrich ? score         ?  callbacks
+                              ?????????????????????????????????
+                                               ?
+        ????????????????????????????????????????????????????????????????????
+        ?                                     ?                               ?
+shared/universes.py                     api/data_fetcher.py             backend/scoring.py
+static universes + sector map           chunked yfinance batch          filter + 10-category
+api/symbol_fetcher.py                   (+ NSE fallback pass)           scoring, sideways
+live NSE/BSE symbol lists               api/data_providers.py           filter, entry signals
+                                        3-tier OHLCV fallback:          shared/indicators.py
+                                        jugaad-data ? yfinance ?        vectorized HMA/EMA/SMA/
+                                        nselib (disk cache 4h)          KAMA/VWMA/RSI/MACD/ATR/
+                                        fundamentals: Finnhub ?         ADX/OBV/VP-POC
+                                        Alpha Vantage ? yfinance ?
+                                        nselib
 ```
 
 ### Module map
 
 | Module | Responsibility |
 |---|---|
-| `scanner/app.py` | Flet GUI — `ScannerApp` wires the view mixins below; owns app lifecycle, scanning/events, cache UI, HTML/CSV export, activity log, palette, shortcuts and snackbars |
-| `scanner/views_layout.py` | `LayoutViewMixin` — dashboard panes (rail, sidebar, main area, right panel), summary + top-pick cards |
-| `scanner/views_results.py` | `ResultsViewMixin` — paginated results grid, data-row/header builders, sorting keys, score chart, row-level news expansion, summary/hero updates |
-| `scanner/views_settings.py` | `SettingsViewMixin` — declarative settings spec + settings-page builder/inputs |
-| `scanner/ui_kit.py` | Shared primitives (`_border_all`, `_glass_bg`, ...), `RESULT_COLS`, `_score_of`, palette matcher (`fuzzy_score`, `filter_actions`) |
-| `scanner/scanner_engine.py` | Headless scan orchestration (`scan`, `scan_stream`) shared by GUI/CLI; "fast mode" for >500 tickers (technicals first, enrich top 200) |
-| `scanner/scoring.py` | Stock filter (MA crossover), Bull/Bear direction, 10-category scoring, weekly-HTF check, sideways filter, entry signals |
-| `scanner/indicators.py` | Vectorized pandas/numpy indicators used by scoring & backtest |
-| `scanner/data_fetcher.py` | Batch downloads (200/chunk, 8 parallel), weekly/monthly resampling, batch **fallback pass** via NSE providers |
-| `scanner/data_providers.py` | `DataProvider` class with provider fallback chains + disk cache |
-| `scanner/symbol_fetcher.py` | Live NSE/BSE symbol lists (4 h cache, static fallbacks) |
-| `scanner/universes.py` | ~20 static universes, sector map/colors, live-universe resolution |
-| `scanner/backtest.py` | Backtest engine (`python -m scanner.backtest`) |
-| `scanner/report.py` | Self-contained HTML report generator + keyword news sentiment |
-| `scanner/settings_store.py` | Canonical `DEFAULT_SETTINGS`, settings persistence, API-key registry/loading |
-| `scanner/trace.py` | Rotating trace log, `@trace` decorator, custom TRACE level |
-| `scanner/cache.py` | Shared in-memory TTL cache |
-| `scanner/themes.py` | Dark theme definition (Aurora palette, single variant) |
+| `scanner/ui/app.py` | Flet GUI — `ScannerApp` wires the view mixins below; owns app lifecycle, scanning/events, cache UI, HTML/CSV export, activity log, palette, shortcuts and snackbars |
+| `scanner/ui/views_layout.py` | `LayoutViewMixin` — dashboard panes (rail, sidebar, main area, right panel), summary + top-pick cards |
+| `scanner/ui/views_results.py` | `ResultsViewMixin` — paginated results grid, data-row/header builders, sorting keys, score chart, row-level news expansion, summary/hero updates |
+| `scanner/ui/views_settings.py` | `SettingsViewMixin` — declarative settings spec + settings-page builder/inputs |
+| `scanner/ui/ui_kit.py` | Shared primitives (`_border_all`, `_glass_bg`, ...), `RESULT_COLS`, `_score_of`, palette matcher (`fuzzy_score`, `filter_actions`) |
+| `scanner/backend/scanner_engine.py` | Headless scan orchestration (`scan`, `scan_stream`) shared by GUI/CLI; "fast mode" for >500 tickers (technicals first, enrich top 200) |
+| `scanner/backend/scoring.py` | Stock filter (MA crossover), Bull/Bear direction, 10-category scoring, weekly-HTF check, sideways filter, entry signals |
+| `scanner/shared/indicators.py` | Vectorized pandas/numpy indicators used by scoring & backtest |
+| `scanner/api/data_fetcher.py` | Batch downloads (200/chunk, 8 parallel), weekly/monthly resampling, batch **fallback pass** via NSE providers |
+| `scanner/api/data_providers.py` | `DataProvider` class with provider fallback chains + disk cache |
+| `scanner/api/symbol_fetcher.py` | Live NSE/BSE symbol lists (4 h cache, static fallbacks) |
+| `scanner/shared/universes.py` | ~20 static universes, sector map/colors, live-universe resolution |
+| `scanner/backend/backtest.py` | Backtest engine (`python -m scanner.backend.backtest`) |
+| `scanner/backend/report.py` | Self-contained HTML report generator + keyword news sentiment |
+| `scanner/backend/settings_store.py` | Canonical `DEFAULT_SETTINGS`, settings persistence, API-key registry/loading |
+| `scanner/shared/trace.py` | Rotating trace log, `@trace` decorator, custom TRACE level |
+| `scanner/shared/cache.py` | Shared in-memory TTL cache |
+| `scanner/shared/themes.py` | Dark theme definition (Aurora palette, single variant) |
 
-Enrichment modules (all optional, all guarded): `market_sentiment.py`, `social_sentiment.py`, `indian_market.py`, `indian_fundamentals.py`, `insider_data.py`, `macro_data.py`, `free_apis.py`, `premium_finance.py`.
+Enrichment modules (all optional, all guarded, in `scanner/api/`): `market_sentiment.py`, `social_sentiment.py`, `indian_market.py`, `indian_fundamentals.py`, `insider_data.py`, `macro_data.py`, `free_apis.py`, `premium_finance.py`. Tests mirror the package layout under `scanner/tests/{api,backend,shared,ui}/`.
 
 ### Scan pipeline (end to end)
 
@@ -124,7 +124,7 @@ Enrichment modules (all optional, all guarded): `market_sentiment.py`, `social_s
 
 ### Caching
 
-- `scanner/.cache/` — per-ticker disk cache (pickle, 4 h TTL) written by the provider chain; symbol lists are cached here too.
+- `scanner/.cache/` — per-ticker disk cache (parquet + JSON meta, 4 h TTL) written by the provider chain; symbol lists are cached here too.
 - Module-level TTL caches for free APIs (`cache.py`).
 - Full-market symbol lists survive restarts through the disk cache and fall back to the static universes.
 
@@ -134,11 +134,11 @@ Enrichment modules (all optional, all guarded): `market_sentiment.py`, `social_s
 - **Auto-prune on scan start.** The cache key embeds the fetch date, so entries from previous days are unreachable and would accumulate forever. `fetch_batch_yfinance` sweeps them (`data_providers.prune_stale_cache`, rate-limited to once per hour per process) before the first chunk of any scan/backtest; a manual **Prune** button lives on the sidebar's **Price data** card, which also shows the live fresh/stale entry counts (`cache_health`).
 - **Short frames are honest data.** Names whose history is shorter than the requested window (recent listings, or suspended/delisted names like GSPL — halted May 2026 — and TATAMETALI — merged into Tata Steel 2024) come back with whatever exists, contiguous and ending at the last trade day; they are **not** fetch truncation. Anything under 260 bars is dropped by the engine's warm-up gate.
 - **Dead members are skipped, stale ones are warned.** GSPL and TATAMETALI are annotated in `universes.SUSPENDED_OR_DELISTED` (kept in their lists so published membership is intact) and every scan skips them with a log line — no more pointless re-fetching. If a *different* member's data ends more than `stale_member_max_age_days` ago (Settings → Output, cache & theme, default 45), the scan appends an amber warning under the results hero naming the member and its last bar date.
-- **Keep the annotation current with the audit script.** Run `python -m scanner.audit_stale_members` (or the **Check stale members** button on the Settings page) roughly weekly to catch new suspensions: it reports stale-but-unannotated names (with a paste-ready `SUSPENDED_OR_DELISTED` snippet), annotated names whose trading resumed, and names with no data in the window — flagged separately when they are only dead-symbol-cache skips. It also caught real symbol bugs in the universe lists (AVALONLABS→AVALON, ASTER→ASTERDM, BIRLASOFT→BSOFT), so treat its "no data" section as a symbol-integrity check too.
+- **Keep the annotation current with the audit script.** Run `python -m scanner.backend.audit_stale_members` (or the **Check stale members** button on the Settings page) roughly weekly to catch new suspensions: it reports stale-but-unannotated names (with a paste-ready `SUSPENDED_OR_DELISTED` snippet), annotated names whose trading resumed, and names with no data in the window — flagged separately when they are only dead-symbol-cache skips. It also caught real symbol bugs in the universe lists (AVALONLABS→AVALON, ASTER→ASTERDM, BIRLASOFT→BSOFT), so treat its "no data" section as a symbol-integrity check too.
 
-- **Audit every static universe & auto-suggest renames.** `python -m scanner.audit_stale_members --all` checks every static universe in one union fetch (no repeat downloads) and prints a per-universe missing/members breakdown so a bad symbol is attributed to the exact list that carries it. Two safety passes run on any "no data" name before it is reported: a **live probe** re-attempts it through the per-ticker provider chain (bypassing the dead-symbol-cache skip that gates the batch fallback, so wrongly-marked symbols get a second chance), and a **rename search** matches it against the live NSE mainboard list (prefix rules for ASTER→ASTERDM / AVALONLABS→AVALON, fuzzy match for BIRLASOFT→BSOFT) and suggests only candidates verified to have data — section 5 of the report. Use `--no-probe --no-renames` for a pure report-only run, and `--json` for machine-readable output (the GUI's audit verdict also mentions how many renames were suggested).
+- **Audit every static universe & auto-suggest renames.** `python -m scanner.backend.audit_stale_members --all` checks every static universe in one union fetch (no repeat downloads) and prints a per-universe missing/members breakdown so a bad symbol is attributed to the exact list that carries it. Two safety passes run on any "no data" name before it is reported: a **live probe** re-attempts it through the per-ticker provider chain (bypassing the dead-symbol-cache skip that gates the batch fallback, so wrongly-marked symbols get a second chance), and a **rename search** matches it against the live NSE mainboard list (prefix rules for ASTER→ASTERDM / AVALONLABS→AVALON, fuzzy match for BIRLASOFT→BSOFT) and suggests only candidates verified to have data — section 5 of the report. Use `--no-probe --no-renames` for a pure report-only run, and `--json` for machine-readable output (the GUI's audit verdict also mentions how many renames were suggested).
 
-- **Apply fixes with `--fix`.** Re-running an audit with `--fix` applies section 1 + 5 + 3 findings directly to `scanner/universes.py`: verified renames are rewritten everywhere (universe lists and `SECTOR_MAP`, via quoted-symbol replacement so `ASTER→ASTERDM` can never corrupt `ASTERMINDS`), stale-unannotated names are inserted into `SUSPENDED_OR_DELISTED` in the same style as the hand-written entries, and annotated-but-fresh names are removed. The edited text is `ast.parse`-validated before an atomic write, and a `universes.py.bak` of the pre-fix file is kept. Report-only stays the default — nothing is written without the flag. Add `--dry-run` to preview the exact lines (unified diff) without writing.
+- **Apply fixes with `--fix`.** Re-running an audit with `--fix` applies section 1 + 5 + 3 findings directly to `scanner/shared/universes.py`: verified renames are rewritten everywhere (universe lists and `SECTOR_MAP`, via quoted-symbol replacement so `ASTER→ASTERDM` can never corrupt `ASTERMINDS`), stale-unannotated names are inserted into `SUSPENDED_OR_DELISTED` in the same style as the hand-written entries, and annotated-but-fresh names are removed. The edited text is `ast.parse`-validated before an atomic write, and a `universes.py.bak` of the pre-fix file is kept. Report-only stays the default — nothing is written without the flag. Add `--dry-run` to preview the exact lines (unified diff) without writing.
 
 - **Apply from the GUI too.** The Settings page ships an **Apply fixes** button next to **Check stale members**. After an audit the verdict shows `— fixes ready` when renames or annotation updates exist and the button enables; clicking it opens a confirmation dialog listing exactly what will change (renames / annotation adds / removals). Confirming runs the same `apply_fixes` path in a background thread, logs the full summary (including the `.bak` location), reloads `universes.py`, and automatically re-runs the audit to confirm the file is clean. Restarting the app re-reads `universes.py`, so the fix is durable.
 
@@ -156,7 +156,7 @@ The 10 categories and their maximum weights match the Pine Script:
 | 4 | MACD | 7 | 9 | Volatility | 5 |
 | 5 | Stochastic | 5 | 10 | Fundamentals | 20 |
 
-**Total = 100.** See `scanner/scoring.py` for the authoritative category-by-category mapping. The Python scorer shares indicator math with the Pine script but has also grown deliberate extensions (e.g. volume-profile POC participation, crossover-recentness points, weekly higher-timeframe checks); where it differs from the Pine v2 file, `scoring.py` documents the difference rather than claiming exact duplication.
+**Total = 100.** See `scanner/backend/scoring.py` for the authoritative category-by-category mapping. The Python scorer shares indicator math with the Pine script but has also grown deliberate extensions (e.g. volume-profile POC participation, crossover-recentness points, weekly higher-timeframe checks); where it differs from the Pine v2 file, `scoring.py` documents the difference rather than claiming exact duplication.
 
 ---
 
@@ -185,7 +185,7 @@ export FINNHUB_API_KEY=cxxxxxxx
 python -m scanner.setup_api_keys
 ```
 
-Every known key, its purpose, and its free tier is registered in `API_KEY_REGISTRY` in `scanner/settings_store.py`. Current registry:
+Every known key, its purpose, and its free tier is registered in `API_KEY_REGISTRY` in `scanner/backend/settings_store.py`. Current registry:
 
 | Category | Keys |
 |---|---|
@@ -202,12 +202,12 @@ Without keys, provider fetches return empty results and the scanner simply score
 
 ## Backtesting
 
-The **backtest engine** (`scanner/backtest.py`) simulates the full strategy on
+The **backtest engine** (`scanner/backend/backtest.py`) simulates the full strategy on
 historical daily data:
 
 ```bash
-python run_alpha_backtest.py           # NIFTY Alpha 50
-python -m scanner.backtest --years 3   # custom lookback
+python -m scanner.backend.run_alpha_backtest   # NIFTY Alpha 50
+python -m scanner.backend.backtest --years 3   # custom lookback
 ```
 
 Entry: fast MA crosses above slow MA + close above the crossover level + close
@@ -286,6 +286,6 @@ Test files live in `scanner/tests/`; external APIs are mocked for the offline su
 ## Troubleshooting
 
 - **GUI fails to start** — make sure `Pillow` is installed (`pip install Pillow`); the app imports it at startup.
-- **Scan returns few/no stocks** — check `scanner/scan.log` and `scanner/trace.log`. If Yahoo is rate-limiting, the batch fallback (jugaad-data/nselib) kicks in automatically; if all three providers fail the ticker is skipped and reported.
+- **Scan returns few/no stocks** — check `AppLog/scan.log` and `AppLog/trace.log`. If Yahoo is rate-limiting, the batch fallback (jugaad-data/nselib) kicks in automatically; if all three providers fail the ticker is skipped and reported.
 - **No data for a specific stock** — BSE-only symbols without NSE listings may be unavailable from the free providers.
 - **Reset everything** — Settings: delete `scanner/settings.json`. Cache: Settings → "Clear Cache" in the GUI, or delete `scanner/.cache/`.

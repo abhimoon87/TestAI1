@@ -28,12 +28,12 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-from ..shared.constants import NEWS_PREFETCH_TOP
 from ..backend.settings_store import (  # noqa: F401 — re-exported for tests
     DEFAULT_SETTINGS,
     load_settings,
     save_settings,
 )
+from ..shared.constants import NEWS_PREFETCH_TOP
 from ..shared.themes import THEMES
 from ..shared.universes import UNIVERSES
 from .views_layout import LayoutViewMixin
@@ -221,7 +221,10 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin):
         self.active_view = name
         logger.debug("view_switch: from=%s to=%s", old, name)
         for vname, pill in self._rail_pills.items():
-            pill.visible = (vname == name)
+            if vname == name:
+                pill.opacity = 1.0
+            else:
+                pill.opacity = 0.0
         if name == "dashboard":
             self._restore_main_area()
             self._render_current_page()
@@ -229,8 +232,8 @@ class ScannerApp(LayoutViewMixin, ResultsViewMixin, SettingsViewMixin):
 
     def _show_settings(self, e=None):
         self.active_view = "settings"
-        for pill in self._rail_pills.values():
-            pill.visible = False
+        for vname, pill in self._rail_pills.items():
+            pill.opacity = 1.0 if vname == "settings" else 0.0
         self.dashboard_view.visible = False
         self.settings_view.visible = True
         self.page.update()

@@ -45,8 +45,8 @@ def call_with_timeout(fn, timeout: float):
 
 def fetch_sentiment(ticker: str, api_config: dict) -> dict:
     """Market sentiment (news sentiment score)."""
-    from ..market_sentiment import fetch_sentiment as _fetch
     from ...backend.settings_store import get_api_key
+    from ..market_sentiment import fetch_sentiment as _fetch
     return _fetch(
         ticker,
         marketaux_key=get_api_key("MARKETAUX_API_KEY", api_config),
@@ -79,8 +79,8 @@ def fetch_indian_fundamentals(ticker: str) -> dict:
 
 def fetch_insider(ticker: str, api_config: dict) -> dict:
     """Insider activity data."""
-    from ..insider_data import fetch_insider_data as _fetch
     from ...backend.settings_store import get_api_key
+    from ..insider_data import fetch_insider_data as _fetch
     return _fetch(
         ticker,
         aletheia_key=get_api_key("ALETHEIA_API_KEY", api_config),
@@ -90,8 +90,8 @@ def fetch_insider(ticker: str, api_config: dict) -> dict:
 
 def fetch_shariah(ticker: str, api_config: dict) -> Any:
     """Shariah compliance data."""
-    from ..premium_finance import fetch_shariah_data as _fetch
     from ...backend.settings_store import get_api_key
+    from ..premium_finance import fetch_shariah_data as _fetch
     return _fetch(
         ticker,
         api_key=get_api_key("HALAL_API_KEY", api_config),

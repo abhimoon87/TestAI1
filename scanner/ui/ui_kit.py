@@ -14,6 +14,31 @@ from dataclasses import dataclass
 
 import flet as ft
 
+# ── Animation presets ───────────────────────────────────────────────
+ANIM_FAST = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
+ANIM_NORMAL = ft.Animation(300, ft.AnimationCurve.EASE_OUT)
+ANIM_SLOW = ft.Animation(500, ft.AnimationCurve.EASE_OUT)
+ANIM_BOUNCE = ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
+
+
+def shimmer_cell(width: int = 100, height: int = 14) -> ft.Container:
+    """A single shimmer skeleton block for loading placeholders."""
+    return ft.Container(
+        width=width, height=height,
+        bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.WHITE),
+        border_radius=4,
+    )
+
+
+def shimmer_row(num_cells: int = 4, row_height: int = 34) -> ft.Container:
+    """One skeleton row with ``num_cells`` shimmer blocks."""
+    cells = [shimmer_cell(width=w) for w in (40, 120, 60, 80)[:num_cells]]
+    return ft.Container(
+        content=ft.Row(controls=cells, spacing=12, alignment=ft.MainAxisAlignment.START),
+        height=row_height,
+        padding=ft.Padding(left=8, right=8, top=0, bottom=0),
+    )
+
 
 def _border_all(width: float, color: str) -> ft.Border:
     """Return a uniform ``ft.Border`` with ``ft.BorderSide`` on all sides."""

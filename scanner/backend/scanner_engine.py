@@ -8,7 +8,16 @@ import threading
 import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures.thread import _threads_queues, _worker
+
+try:
+    # Private CPython internals — used solely to spawn daemon worker threads
+    # so a hung provider can never block process exit (see the executor class
+    # below). Guarded so a CPython upgrade that moves/renames these names
+    # degrades to the standard executor instead of failing at import time.
+    from concurrent.futures.thread import _threads_queues, _worker
+    _HAS_TPE_INTERNALS = hasattr(ThreadPoolExecutor, "_adjust_thread_count")
+except ImportError:  # pragma: no cover - non-CPython or future CPython
+    _HAS_TPE_INTERNALS = False
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +34,14 @@ from ..api.cache_manager import (
     reset_enrichment_counts,
     reset_negative_skips,
 )
+from ..api.data_fetcher import (
+    fetch_batch_yfinance,
+    fetch_batch_yfinance_stream,
+    fetch_fundamentals,
+    fetch_index_data,
+)
+from ..api.providers import TIMEOUT as _TIMEOUT
+from ..api.providers import call_with_timeout as _call_with_timeout
 from ..shared.constants import (
     DIRECTIONAL_TREND_FILTERS,
     ENRICH_OVERALL_TIMEOUT,
@@ -36,15 +53,6 @@ from ..shared.constants import (
     STALE_MEMBER_MAX_AGE_DAYS,
     TICKER_TIMEOUT,
 )
-from ..api.data_fetcher import (
-    fetch_batch_yfinance,
-    fetch_batch_yfinance_stream,
-    fetch_fundamentals,
-    fetch_index_data,
-)
-from ..api.providers import TIMEOUT as _TIMEOUT, call_with_timeout as _call_with_timeout
-from .scoring import check_filter, compute_scores, get_direction
-from .settings_store import get_api_key, load_api_config
 from ..shared.trace import trace
 from ..shared.universes import (
     SUSPENDED_OR_DELISTED,
@@ -52,6 +60,8 @@ from ..shared.universes import (
     get_universe,
     strip_dead_members,
 )
+from .scoring import check_filter, compute_scores, get_direction
+from .settings_store import ScannerSettings, get_api_key, load_api_config
 
 logger = logging.getLogger(__name__)
 
@@ -318,36 +328,46 @@ def _parallel_score(items, score_fn, cancel_event, max_workers=8):
     return ordered, cancelled
 
 
-class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
-    """ThreadPoolExecutor that creates daemon threads.
+if _HAS_TPE_INTERNALS:
 
-    On cancel/timeout, running futures continue in background threads but
-    because they are daemon threads, they won't prevent process exit.
-    """
+    class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
+        """ThreadPoolExecutor that creates daemon threads.
 
-    def _adjust_thread_count(self):
-        # Identical to the base class, but sets daemon=True *before* start().
-        if self._idle_semaphore.acquire(timeout=0):
-            return
+        On cancel/timeout, running futures continue in background threads but
+        because they are daemon threads, they won't prevent process exit.
+        """
 
-        def weakref_cb(_, q=self._work_queue):
-            q.put(None)
+        def _adjust_thread_count(self):
+            # Identical to the base class, but sets daemon=True *before* start().
+            if self._idle_semaphore.acquire(timeout=0):
+                return
 
-        num_threads = len(self._threads)
-        if num_threads < self._max_workers:
-            thread_name = '%s_%d' % (self._thread_name_prefix or self,
-                                     num_threads)
-            t = threading.Thread(
-                name=thread_name, target=_worker,
-                args=(weakref.ref(self, weakref_cb),
-                      self._work_queue,
-                      self._initializer,
-                      self._initargs),
-                daemon=True,
-            )
-            t.start()
-            self._threads.add(t)
-            _threads_queues[t] = self._work_queue
+            def weakref_cb(_, q=self._work_queue):
+                q.put(None)
+
+            num_threads = len(self._threads)
+            if num_threads < self._max_workers:
+                thread_name = '%s_%d' % (self._thread_name_prefix or self,
+                                         num_threads)
+                t = threading.Thread(
+                    name=thread_name, target=_worker,
+                    args=(weakref.ref(self, weakref_cb),
+                          self._work_queue,
+                          self._initializer,
+                          self._initargs),
+                    daemon=True,
+                )
+                t.start()
+                self._threads.add(t)
+                _threads_queues[t] = self._work_queue
+
+else:  # pragma: no cover - only hit on interpreters lacking the private API
+    # Degraded fallback: workers are non-daemon, so a hung worker thread can
+    # delay (but not corrupt) interpreter shutdown after a cancel. Everything
+    # else — ordering, cancellation, timeouts — behaves identically.
+    logger.debug("concurrent.futures internals unavailable; "
+                 "falling back to standard ThreadPoolExecutor")
+    _DaemonThreadPoolExecutor = ThreadPoolExecutor
 
 
 def _enrich_rows_in_place(
@@ -933,7 +953,7 @@ class ScannerEngine:
     def scan(
         self,
         universe: str,
-        settings: dict[str, Any],
+        settings: ScannerSettings,
         period: str = "1y",
         timeframe: str = "D",
         trend_filter: str = "All",
@@ -1145,7 +1165,7 @@ class ScannerEngine:
     def scan_stream(
         self,
         universe: str,
-        settings: dict[str, Any],
+        settings: ScannerSettings,
         period: str = "1y",
         timeframe: str = "D",
         trend_filter: str = "All",

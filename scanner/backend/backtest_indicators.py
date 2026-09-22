@@ -8,7 +8,6 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from .backtest_models import WARMUP_BARS, StockData
 from ..shared.indicators import (
     adx,
     atr,
@@ -21,6 +20,7 @@ from ..shared.indicators import (
     stochastic,
     volume_profile_poc,
 )
+from .backtest_models import WARMUP_BARS, StockData
 from .scoring import get_ma, to_weekly
 
 

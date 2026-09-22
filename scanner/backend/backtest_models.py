@@ -8,8 +8,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from .settings_store import DEFAULT_SETTINGS as _SCANNER_DEFAULTS
 from ..shared.universes import SECTOR_MAP
+from .settings_store import DEFAULT_SETTINGS as _SCANNER_DEFAULTS
 
 logger = logging.getLogger(__name__)
 

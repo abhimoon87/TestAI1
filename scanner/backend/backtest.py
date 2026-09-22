@@ -6,8 +6,8 @@ Simulates the full pipeline on historical NIFTY 50 daily data:
   Exit:   2% stop loss -> +20% target -> 2% trailing stop after target
 
 Usage:
-    python -m scanner.backtest               # default: NIFTY 50, 3y
-    python -m scanner.backtest --years 5     # custom lookback
+    python -m scanner.backend.backtest               # default: NIFTY 50, 3y
+    python -m scanner.backend.backtest --years 5     # custom lookback
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ import sys
 import numpy as np
 import pandas as pd
 
+from ..api.data_fetcher import fetch_batch_yfinance, fetch_index_data
+from ..shared.universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
 from .backtest_indicators import (  # noqa: E402
     precompute_nifty,
     precompute_stock,
@@ -44,9 +46,7 @@ from .backtest_report import (  # noqa: E402
     save_trades_csv,
 )
 from .backtest_scoring import compute_score_at_bar  # noqa: E402
-from ..api.data_fetcher import fetch_batch_yfinance, fetch_index_data
 from .scoring import detect_crossover, get_ma
-from ..shared.universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
 
 logger = logging.getLogger(__name__)
 
@@ -81,33 +81,33 @@ class BacktestEngine:
 
     def load_data(self, tickers: list[str], period: str = "5y"):
         """Fetch and precompute indicators for all tickers."""
-        print()
-        print("=" * 60)
-        print("  BACKTEST: HMA/EMA Multi-Score Swing Strategy")
-        print("=" * 60)
-        print(f"  Stocks: {len(tickers)}")
-        print(f"  Period: {period} (daily)")
-        print(f"  Settings: HMA({self.settings['fast_ma_len']}) x "
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("  BACKTEST: HMA/EMA Multi-Score Swing Strategy")
+        logger.info("=" * 60)
+        logger.info(f"  Stocks: {len(tickers)}")
+        logger.info(f"  Period: {period} (daily)")
+        logger.info(f"  Settings: HMA({self.settings['fast_ma_len']}) x "
               f"EMA({self.settings['slow_ma_len']}), "
               f"RSI({self.settings['rsi_len']}), "
               f"Crossover lookback: {self.settings['crossover_lookback']}")
-        print(f"  Risk: {self.settings['stop_loss_pct']}% stop / "
+        logger.info(f"  Risk: {self.settings['stop_loss_pct']}% stop / "
               f"{self.settings['target_pct']}% target / "
               f"{self.settings['trail_pct']}% trail")
-        print("=" * 60)
-        print()
+        logger.info("=" * 60)
+        logger.info("")
 
         # Fetch batch data
-        print("  Downloading stock data...")
+        logger.info("  Downloading stock data...")
         all_data = fetch_batch_yfinance(tickers, period=period, timeframe="D")
 
         # Fetch NIFTY index
-        print("  Downloading NIFTY 50 index...")
+        logger.info("  Downloading NIFTY 50 index...")
         nifty_raw = fetch_index_data("^NSEI", period=period)
         self.nifty_df = precompute_nifty(nifty_raw)
 
         # Precompute indicators
-        print("  Computing indicators...")
+        logger.info("  Computing indicators...")
         for ticker in tickers:
             df = all_data.get(ticker)
             if df is not None:
@@ -115,24 +115,75 @@ class BacktestEngine:
                 if stock is not None:
                     self.stocks.append(stock)
 
-        print(f"  Ready: {len(self.stocks)}/{len(tickers)} stocks loaded")
-        print()
+        logger.info(f"  Ready: {len(self.stocks)}/{len(tickers)} stocks loaded")
+        logger.info("")
 
     def run(self) -> dict:
         """Run the full backtest simulation."""
         if not self.stocks:
-            print("  No stocks loaded. Aborting.")
+            logger.info("  No stocks loaded. Aborting.")
             return {}
 
         settings = self.settings
         capital = settings["initial_capital"]
-        cash = capital
-        max_pos = settings["max_positions"]
-        max_per_sector = settings.get("max_positions_per_sector", 999)
-        score_threshold = settings["score_threshold"]
-        stop_pct = settings["stop_loss_pct"]
-        target_pct = settings["target_pct"]
-        pos_size_pct = settings["position_size_pct"]
+        self._cash = capital
+        self._max_pos = settings["max_positions"]
+        self._max_per_sector = settings.get("max_positions_per_sector", 999)
+        self._score_threshold = settings["score_threshold"]
+        self._stop_pct = settings["stop_loss_pct"]
+        self._target_pct = settings["target_pct"]
+        self._pos_size_pct = settings["position_size_pct"]
+
+        backtest_dates = self._simulation_window()
+        if backtest_dates is None:
+            return {}
+
+        logger.info(f"  Simulation: {len(backtest_dates)} trading days")
+        logger.info(f"  {backtest_dates[0].strftime('%Y-%m-%d')} to "
+                    f"{backtest_dates[-1].strftime('%Y-%m-%d')}")
+        logger.info(f"  Initial capital: Rs.{capital:,.0f}")
+        logger.info("")
+
+        # -- Sector rotation config --
+        self._rotation_enabled = settings.get("sector_rotation_enabled", False)
+        self._rotation_boost = settings.get("sector_boost_weight", 0.5)
+        rotation_lookback = settings.get("sector_rotation_lookback", 8)
+        sector_block_threshold = settings.get("sector_block_threshold", -0.05)
+        self.sector_tracker.lookback = rotation_lookback
+        self.sector_tracker.block_threshold = sector_block_threshold
+
+        # -- Index regime gate config --
+        self._regime_close, self._regime_ema = self._index_regime_gate()
+
+        # -- Main simulation loop --
+        self._signals_generated = 0
+        self._signals_taken = 0
+        self._signals_blocked = 0
+        self._signals_boosted = 0
+        self._stock_map = {s.ticker: s for s in self.stocks}
+
+        for day in backtest_dates:
+            self._new_positions = set()
+            # 1. Check exits on open positions
+            self._check_exits(day)
+            # 2. Check for new entries (if we have room)
+            self._try_entries(day)
+            # 3. Record equity curve
+            self._record_equity(day)
+
+        # Close any remaining positions at the end of the simulated window
+        sim_last = backtest_dates[-1] if backtest_dates else None
+        self._close_all_positions(sim_last)
+
+        # -- Compute metrics --
+        return self._compute_metrics(capital, self._signals_generated,
+                                     self._signals_taken, self._signals_blocked,
+                                     self._signals_boosted)
+
+    def _simulation_window(self) -> list | None:
+        """Build the simulation date window (union calendar minus warmup,
+        restricted to the optional sim_start/sim_end range)."""
+        settings = self.settings
 
         # Get aligned trading dates across all stocks
         all_dates = set()
@@ -141,8 +192,8 @@ class BacktestEngine:
         trading_dates = sorted(all_dates)
 
         if len(trading_dates) <= WARMUP_BARS:
-            print("  Not enough data after warmup period. Aborting.")
-            return {}
+            logger.info("  Not enough data after warmup period. Aborting.")
+            return None
 
         # Skip first WARMUP_BARS days
         backtest_dates = trading_dates[WARMUP_BARS:]
@@ -157,24 +208,15 @@ class BacktestEngine:
         if sim_end is not None:
             backtest_dates = [d for d in backtest_dates if d <= sim_end]
         if not backtest_dates:
-            print("  No dates in the simulation window after filters. Aborting.")
-            return {}
+            logger.info("  No dates in the simulation window after filters. Aborting.")
+            return None
 
-        print(f"  Simulation: {len(backtest_dates)} trading days")
-        print(f"  {backtest_dates[0].strftime('%Y-%m-%d')} to "
-              f"{backtest_dates[-1].strftime('%Y-%m-%d')}")
-        print(f"  Initial capital: Rs.{capital:,.0f}")
-        print()
+        self._sim_end = sim_end
+        return backtest_dates
 
-        # -- Sector rotation config --
-        rotation_enabled = settings.get("sector_rotation_enabled", False)
-        rotation_lookback = settings.get("sector_rotation_lookback", 8)
-        rotation_boost = settings.get("sector_boost_weight", 0.5)
-        sector_block_threshold = settings.get("sector_block_threshold", -0.05)
-        self.sector_tracker.lookback = rotation_lookback
-        self.sector_tracker.block_threshold = sector_block_threshold
-
-        # -- Index regime gate config --
+    def _index_regime_gate(self) -> tuple:
+        """Resolve the NIFTY close/EMA series for the index regime gate."""
+        settings = self.settings
         regime_filter = settings.get("index_regime_filter", False)
         regime_ema_len = int(settings.get("index_regime_ema_len", 50))
         regime_close = None
@@ -184,257 +226,262 @@ class BacktestEngine:
                 regime_close = self.nifty_df["close"]
                 regime_ema = get_ma("EMA", regime_close, regime_ema_len)
             else:
-                print("  WARNING: index_regime_filter enabled but no usable NIFTY "
-                      "index loaded -- gate disabled (fail-open)")
+                logger.info("  WARNING: index_regime_filter enabled but no usable NIFTY "
+                            "index loaded -- gate disabled (fail-open)")
+        return regime_close, regime_ema
 
-        # -- Main simulation loop --
-        signals_generated = 0
-        signals_taken = 0
-        signals_blocked = 0
-        signals_boosted = 0
-        stock_map = {s.ticker: s for s in self.stocks}
-
-        for day in backtest_dates:
-            new_positions = set()
-            # 1. Check exits on open positions
-            closed_today = []
-            for pos in self.positions:
-                stock = stock_map.get(pos.ticker)
-                if stock is None or day not in stock.df.index:
-                    continue
-                bar_idx = stock.df.index.get_loc(day)
-                bar = stock.df.iloc[bar_idx]
-                result = update_position(pos, bar, bar_idx, settings)
-                if result:
-                    closed_today.append(result)
-                    cash += result.pnl + result.investment
-
-            for trade in closed_today:
-                self.trades.append(trade)
-                # Record in sector tracker for rotation
-                if rotation_enabled:
-                    self.sector_tracker.record_trade(trade)
-                self.positions = [p for p in self.positions if p.exit_date is None]
-
-            # 2. Check for new entries (if we have room)
-            # Index regime gate: only enter while NIFTY close > its EMA
-            regime_ok = True
-            if regime_ema is not None:
-                _ic = regime_close.asof(day)
-                _ie = regime_ema.asof(day)
-                regime_ok = not (pd.isna(_ic) or pd.isna(_ie)) and _ic > _ie
-            if len(self.positions) < max_pos and regime_ok:
-                for stock in self.stocks:
-                    if len(self.positions) >= max_pos:
-                        break
-
-                    # Skip if already in this stock
-                    if any(p.ticker == stock.ticker for p in self.positions):
-                        continue
-
-                    # Sector diversification check
-                    stock_sector = get_sector(stock.ticker)
-                    sector_count = sum(1 for p in self.positions if p.sector == stock_sector)
-                    if sector_count >= max_per_sector:
-                        continue
-
-                    if day not in stock.df.index:
-                        continue
-
-                    bar_idx = stock.df.index.get_loc(day)
-
-                    # Check if there was a crossover in the lookback window
-                    lookback = settings["crossover_lookback"]
-                    if bar_idx < lookback + 1:
-                        continue
-
-                    fast_slice = stock.fast_ma.iloc[bar_idx - lookback: bar_idx + 1]
-                    slow_slice = stock.slow_ma.iloc[bar_idx - lookback: bar_idx + 1]
-                    xo = detect_crossover(fast_slice, slow_slice, lookback)
-
-                    if not xo["crossed"]:
-                        continue
-
-                    # ── High-probability freshness & volume gates ────────────
-                    from .scoring import check_hp_freshness, check_hp_volume
-                    if not check_hp_freshness(xo, settings):
-                        continue
-                    # Slice to bar_idx so the volume gate is evaluated as-of
-                    # the signal bar (no look-ahead into future volume).
-                    if not check_hp_volume(
-                        stock.df["volume"].iloc[: bar_idx + 1], xo, settings
-                    ):
-                        continue
-
-                    signals_generated += 1
-                    crossover_level = xo["level"]
-
-                    close_val = stock.df["close"].iloc[bar_idx]
-                    if crossover_level is None or close_val <= crossover_level:
-                        continue  # Must close above crossover level
-
-                    # Min-ADX gate: require a real trend at the signal bar
-                    min_adx = settings.get("min_adx_entry", 0.0)
-                    if min_adx > 0:
-                        _adx = stock.adx_val.iloc[bar_idx]
-                        if np.isnan(_adx) or _adx < min_adx:
-                            continue
-
-                    # Compute full score
-                    score_result = compute_score_at_bar(
-                        stock, bar_idx, self.nifty_df, settings
-                    )
-
-                    if score_result is None:
-                        continue
-
-                    # Check all entry conditions
-                    if not score_result["above_poc"]:
-                        continue
-                    if score_result["is_sideways"]:
-                        continue
-
-                    base_score = score_result["total"]
-
-                    # -- SECTOR ROTATION --
-                    adjusted_score = base_score
-                    if rotation_enabled:
-                        sector_momentum = self.sector_tracker.get_sector_momentum(stock_sector)
-                        is_blocked = self.sector_tracker.is_sector_blocked(stock_sector)
-                        is_top = self.sector_tracker.is_top_sector(stock_sector, top_n=3)
-
-                        if is_blocked:
-                            # Skip this stock entirely — losing sector
-                            self.sector_tracker.log_decision(
-                                stock.ticker, stock_sector, "BLOCKED",
-                                sector_momentum, base_score
-                            )
-                            signals_blocked += 1
-                            continue
-
-                        if is_top and sector_momentum > 0:
-                            # Add fixed bonus for top sectors (capped at +15 pts)
-                            bonus = min(sector_momentum * rotation_boost, 15.0)
-                            adjusted_score = base_score + bonus
-                            signals_boosted += 1
-                            self.sector_tracker.log_decision(
-                                stock.ticker, stock_sector, "BOOSTED",
-                                sector_momentum, base_score
-                            )
-                        else:
-                            self.sector_tracker.log_decision(
-                                stock.ticker, stock_sector, "NEUTRAL",
-                                sector_momentum, base_score
-                            )
-
-                    if adjusted_score < score_threshold:
-                        continue
-
-                    # -- ENTRY SIGNAL CONFIRMED --
-
-                    # Entry on next day's open
-                    next_idx = bar_idx + 1
-                    if next_idx >= len(stock.df):
-                        continue
-                    entry_date = stock.df.index[next_idx]
-                    entry_price = stock.df["open"].iloc[next_idx]
-
-                    if np.isnan(entry_price) or entry_price <= 0:
-                        continue
-
-                    # Window gate: never enter beyond the sim end
-                    if sim_end is not None and entry_date > sim_end:
-                        continue
-
-                    # Weekday gate: skip entries landing on blocked weekdays
-                    blocked_wd = settings.get("blocked_entry_weekdays", [])
-                    if blocked_wd and entry_date.weekday() in blocked_wd:
-                        continue
-
-                    signals_taken += 1
-
-                    # Position sizing — ATR-based or fixed percentage stop
-                    atr_stop = settings.get("atr_stop_enabled", False)
-                    if atr_stop:
-                        atr_val = stock.atr_val.iloc[bar_idx]
-                        atr_mult = settings.get("atr_stop_multiplier", 2.0)
-                        if not np.isnan(atr_val) and atr_val > 0:
-                            stop_loss = entry_price - (atr_mult * atr_val)
-                        else:
-                            stop_loss = entry_price * (1 - stop_pct / 100)  # fallback
-                    else:
-                        stop_loss = entry_price * (1 - stop_pct / 100)
-                    target_price = entry_price * (1 + target_pct / 100)
-                    risk_per_share = entry_price - stop_loss
-
-                    # Position size based on CURRENT portfolio value (compounding)
-                    # Calculate current portfolio value for position sizing
-                    current_portfolio = cash
-                    for p in self.positions:
-                        stock_data = stock_map.get(p.ticker)
-                        if stock_data and day in stock_data.df.index:
-                            current_portfolio += stock_data.df.loc[day, "close"] * p.shares
-                        else:
-                            current_portfolio += p.entry_price * p.shares
-
-                    max_investment = current_portfolio * pos_size_pct / 100
-                    shares = int(max_investment / entry_price)
-                    if shares <= 0:
-                        continue
-
-                    # Verify risk is within budget (configurable % of current portfolio)
-                    max_risk_pct = settings.get("max_risk_per_trade", 0.02)
-                    total_risk = risk_per_share * shares
-                    if total_risk > current_portfolio * max_risk_pct:
-                        if risk_per_share <= 0:
-                            continue
-                        max_shares = int(current_portfolio * max_risk_pct / risk_per_share)
-                        shares = max_shares
-                        if shares <= 0:
-                            continue
-
-                    investment = entry_price * shares
-                    if investment > cash:
-                        continue  # Not enough cash
-
-                    # Store ATR at entry for ATR-based trailing stop
-                    atr_at_entry = stock.atr_val.iloc[bar_idx] if not np.isnan(stock.atr_val.iloc[bar_idx]) else 0.0
-
-                    pos = Position(
-                        ticker=stock.ticker,
-                        entry_date=entry_date,
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        target_price=target_price,
-                        shares=shares,
-                        peak_price=entry_price,
-                        trail_stop=0,
-                        entry_score=score_result["total"],
-                        sector=stock_sector,
-                        atr_at_entry=atr_at_entry,
-                    )
-                    self.positions.append(pos)
-                    cash -= investment
-                    new_positions.add(stock.ticker)
-
-            # 3. Record equity curve
-            portfolio_value = cash
-            for pos in self.positions:
-                stock = stock_map.get(pos.ticker)
-                if pos.ticker in new_positions:
-                    portfolio_value += pos.entry_price * pos.shares
-                elif stock and day in stock.df.index:
-                    current_price = stock.df.loc[day, "close"]
-                    portfolio_value += current_price * pos.shares
-                else:
-                    portfolio_value += pos.entry_price * pos.shares
-
-            self.equity_curve.append((day, portfolio_value))
-
-        # Close any remaining positions at the end of the simulated window
-        sim_last = backtest_dates[-1] if backtest_dates else None
+    def _check_exits(self, day):
+        """Check exits on open positions for the given day."""
+        closed_today = []
         for pos in self.positions:
-            stock = stock_map.get(pos.ticker)
+            stock = self._stock_map.get(pos.ticker)
+            if stock is None or day not in stock.df.index:
+                continue
+            bar_idx = stock.df.index.get_loc(day)
+            bar = stock.df.iloc[bar_idx]
+            result = update_position(pos, bar, bar_idx, self.settings)
+            if result:
+                closed_today.append(result)
+                self._cash += result.pnl + result.investment
+
+        for trade in closed_today:
+            self.trades.append(trade)
+            # Record in sector tracker for rotation
+            if self._rotation_enabled:
+                self.sector_tracker.record_trade(trade)
+            self.positions = [p for p in self.positions if p.exit_date is None]
+
+    def _try_entries(self, day):
+        """Scan all stocks for entry signals on the given day."""
+        settings = self.settings
+
+        # Index regime gate: only enter while NIFTY close > its EMA
+        regime_ok = True
+        if self._regime_ema is not None:
+            _ic = self._regime_close.asof(day)
+            _ie = self._regime_ema.asof(day)
+            regime_ok = not (pd.isna(_ic) or pd.isna(_ie)) and _ic > _ie
+        if len(self.positions) >= self._max_pos or not regime_ok:
+            return
+
+        for stock in self.stocks:
+            if len(self.positions) >= self._max_pos:
+                break
+
+            # Skip if already in this stock
+            if any(p.ticker == stock.ticker for p in self.positions):
+                continue
+
+            # Sector diversification check
+            stock_sector = get_sector(stock.ticker)
+            sector_count = sum(1 for p in self.positions if p.sector == stock_sector)
+            if sector_count >= self._max_per_sector:
+                continue
+
+            if day not in stock.df.index:
+                continue
+
+            bar_idx = stock.df.index.get_loc(day)
+
+            # Check if there was a crossover in the lookback window
+            lookback = settings["crossover_lookback"]
+            if bar_idx < lookback + 1:
+                continue
+
+            fast_slice = stock.fast_ma.iloc[bar_idx - lookback: bar_idx + 1]
+            slow_slice = stock.slow_ma.iloc[bar_idx - lookback: bar_idx + 1]
+            xo = detect_crossover(fast_slice, slow_slice, lookback)
+
+            if not xo["crossed"]:
+                continue
+
+            # ── High-probability freshness & volume gates ────────────
+            from .scoring import check_hp_freshness, check_hp_volume
+            if not check_hp_freshness(xo, settings):
+                continue
+            # Slice to bar_idx so the volume gate is evaluated as-of
+            # the signal bar (no look-ahead into future volume).
+            if not check_hp_volume(
+                stock.df["volume"].iloc[: bar_idx + 1], xo, settings
+            ):
+                continue
+
+            self._signals_generated += 1
+            crossover_level = xo["level"]
+
+            close_val = stock.df["close"].iloc[bar_idx]
+            if crossover_level is None or close_val <= crossover_level:
+                continue  # Must close above crossover level
+
+            # Min-ADX gate: require a real trend at the signal bar
+            min_adx = settings.get("min_adx_entry", 0.0)
+            if min_adx > 0:
+                _adx = stock.adx_val.iloc[bar_idx]
+                if np.isnan(_adx) or _adx < min_adx:
+                    continue
+
+            # Compute full score
+            score_result = compute_score_at_bar(
+                stock, bar_idx, self.nifty_df, settings
+            )
+
+            if score_result is None:
+                continue
+
+            # Check all entry conditions
+            if not score_result["above_poc"]:
+                continue
+            if score_result["is_sideways"]:
+                continue
+
+            base_score = score_result["total"]
+
+            # -- SECTOR ROTATION --
+            adjusted_score = base_score
+            if self._rotation_enabled:
+                sector_momentum = self.sector_tracker.get_sector_momentum(stock_sector)
+                is_blocked = self.sector_tracker.is_sector_blocked(stock_sector)
+                is_top = self.sector_tracker.is_top_sector(stock_sector, top_n=3)
+
+                if is_blocked:
+                    # Skip this stock entirely — losing sector
+                    self.sector_tracker.log_decision(
+                        stock.ticker, stock_sector, "BLOCKED",
+                        sector_momentum, base_score
+                    )
+                    self._signals_blocked += 1
+                    continue
+
+                if is_top and sector_momentum > 0:
+                    # Add fixed bonus for top sectors (capped at +15 pts)
+                    bonus = min(sector_momentum * self._rotation_boost, 15.0)
+                    adjusted_score = base_score + bonus
+                    self._signals_boosted += 1
+                    self.sector_tracker.log_decision(
+                        stock.ticker, stock_sector, "BOOSTED",
+                        sector_momentum, base_score
+                    )
+                else:
+                    self.sector_tracker.log_decision(
+                        stock.ticker, stock_sector, "NEUTRAL",
+                        sector_momentum, base_score
+                    )
+
+            if adjusted_score < self._score_threshold:
+                continue
+
+            # -- ENTRY SIGNAL CONFIRMED --
+            self._open_position(stock, bar_idx, day, stock_sector, score_result)
+
+    def _open_position(self, stock, bar_idx, day, stock_sector, score_result):
+        """Open a new position at the next day's open for a confirmed signal."""
+        settings = self.settings
+
+        # Entry on next day's open
+        next_idx = bar_idx + 1
+        if next_idx >= len(stock.df):
+            return
+        entry_date = stock.df.index[next_idx]
+        entry_price = stock.df["open"].iloc[next_idx]
+
+        if np.isnan(entry_price) or entry_price <= 0:
+            return
+
+        # Window gate: never enter beyond the sim end
+        if self._sim_end is not None and entry_date > self._sim_end:
+            return
+
+        # Weekday gate: skip entries landing on blocked weekdays
+        blocked_wd = settings.get("blocked_entry_weekdays", [])
+        if blocked_wd and entry_date.weekday() in blocked_wd:
+            return
+
+        self._signals_taken += 1
+
+        # Position sizing — ATR-based or fixed percentage stop
+        atr_stop = settings.get("atr_stop_enabled", False)
+        if atr_stop:
+            atr_val = stock.atr_val.iloc[bar_idx]
+            atr_mult = settings.get("atr_stop_multiplier", 2.0)
+            if not np.isnan(atr_val) and atr_val > 0:
+                stop_loss = entry_price - (atr_mult * atr_val)
+            else:
+                stop_loss = entry_price * (1 - self._stop_pct / 100)  # fallback
+        else:
+            stop_loss = entry_price * (1 - self._stop_pct / 100)
+        target_price = entry_price * (1 + self._target_pct / 100)
+        risk_per_share = entry_price - stop_loss
+
+        # Position size based on CURRENT portfolio value (compounding)
+        # Calculate current portfolio value for position sizing
+        current_portfolio = self._cash
+        for p in self.positions:
+            stock_data = self._stock_map.get(p.ticker)
+            if stock_data and day in stock_data.df.index:
+                current_portfolio += stock_data.df.loc[day, "close"] * p.shares
+            else:
+                current_portfolio += p.entry_price * p.shares
+
+        max_investment = current_portfolio * self._pos_size_pct / 100
+        shares = int(max_investment / entry_price)
+        if shares <= 0:
+            return
+
+        # Verify risk is within budget (configurable % of current portfolio)
+        max_risk_pct = settings.get("max_risk_per_trade", 0.02)
+        total_risk = risk_per_share * shares
+        if total_risk > current_portfolio * max_risk_pct:
+            if risk_per_share <= 0:
+                return
+            max_shares = int(current_portfolio * max_risk_pct / risk_per_share)
+            shares = max_shares
+            if shares <= 0:
+                return
+
+        investment = entry_price * shares
+        if investment > self._cash:
+            return  # Not enough cash
+
+        # Store ATR at entry for ATR-based trailing stop
+        atr_at_entry = stock.atr_val.iloc[bar_idx] if not np.isnan(stock.atr_val.iloc[bar_idx]) else 0.0
+
+        pos = Position(
+            ticker=stock.ticker,
+            entry_date=entry_date,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            target_price=target_price,
+            shares=shares,
+            peak_price=entry_price,
+            trail_stop=0,
+            entry_score=score_result["total"],
+            sector=stock_sector,
+            atr_at_entry=atr_at_entry,
+        )
+        self.positions.append(pos)
+        self._cash -= investment
+        self._new_positions.add(stock.ticker)
+
+    def _record_equity(self, day):
+        """Append the end-of-day portfolio value to the equity curve."""
+
+        portfolio_value = self._cash
+        for pos in self.positions:
+            stock = self._stock_map.get(pos.ticker)
+            if pos.ticker in self._new_positions:
+                portfolio_value += pos.entry_price * pos.shares
+            elif stock and day in stock.df.index:
+                current_price = stock.df.loc[day, "close"]
+                portfolio_value += current_price * pos.shares
+            else:
+                portfolio_value += pos.entry_price * pos.shares
+
+        self.equity_curve.append((day, portfolio_value))
+
+    def _close_all_positions(self, sim_last):
+        """Force-close any positions still open at the end of the window."""
+        for pos in self.positions:
+            stock = self._stock_map.get(pos.ticker)
             if stock is None:
                 continue
             if sim_last is not None and sim_last in stock.df.index:
@@ -447,10 +494,6 @@ class BacktestEngine:
             self.trades.append(result)
         self.positions.clear()
 
-        # -- Compute metrics --
-        return self._compute_metrics(capital, signals_generated, signals_taken,
-                                     signals_blocked, signals_boosted)
-
     def _compute_metrics(self, initial_capital: float,
                          signals_generated: int, signals_taken: int,
                          signals_blocked: int = 0, signals_boosted: int = 0) -> dict:
@@ -459,7 +502,7 @@ class BacktestEngine:
         eq = self.equity_curve
 
         if not trades:
-            print("  No trades executed.")
+            logger.info("  No trades executed.")
             return {"total_trades": 0}
 
         # Basic stats
@@ -627,131 +670,131 @@ class BacktestEngine:
     def print_report(self, metrics: dict):
         """Print a formatted performance report to console."""
         if not metrics or metrics.get("total_trades", 0) == 0:
-            print("  No trades to report.")
+            logger.info("  No trades to report.")
             return
 
         m = metrics
         sep = "=" * 60
 
-        print()
-        print(sep)
-        print("  BACKTEST RESULTS")
-        print(sep)
-        print()
+        logger.info("")
+        logger.info(sep)
+        logger.info("  BACKTEST RESULTS")
+        logger.info(sep)
+        logger.info("")
 
-        print(f"  Period: {m['years']:.1f} years")
-        print(f"  Stocks tested: {len(self.stocks)}")
-        print(f"  Initial capital: Rs.{m['initial_capital']:,.0f}")
-        print(f"  Final value: Rs.{m['final_value']:,.0f}")
-        print()
+        logger.info(f"  Period: {m['years']:.1f} years")
+        logger.info(f"  Stocks tested: {len(self.stocks)}")
+        logger.info(f"  Initial capital: Rs.{m['initial_capital']:,.0f}")
+        logger.info(f"  Final value: Rs.{m['final_value']:,.0f}")
+        logger.info("")
 
-        print(f"  {'-' * 56}")
-        print("  PERFORMANCE SUMMARY")
-        print(f"  {'-' * 56}")
-        print(f"  Total return:     {m['total_return_pct']:>+8.1f}%")
-        print(f"  Annual return:    {m['annual_return_pct']:>+8.1f}%")
-        print(f"  Total P&L:        Rs.{m['total_pnl']:>+12,.0f}")
-        print(f"  Max drawdown:     Rs.{m['max_drawdown']:>12,.0f} ({m['max_drawdown_pct']:.1f}%)")
-        print(f"  Sharpe ratio:     {m['sharpe_ratio']:>8.2f}")
-        print(f"  Sortino ratio:    {m['sortino_ratio']:>8.2f}")
-        print(f"  Profit factor:    {m['profit_factor']:>8.2f}")
-        print()
+        logger.info(f"  {'-' * 56}")
+        logger.info("  PERFORMANCE SUMMARY")
+        logger.info(f"  {'-' * 56}")
+        logger.info(f"  Total return:     {m['total_return_pct']:>+8.1f}%")
+        logger.info(f"  Annual return:    {m['annual_return_pct']:>+8.1f}%")
+        logger.info(f"  Total P&L:        Rs.{m['total_pnl']:>+12,.0f}")
+        logger.info(f"  Max drawdown:     Rs.{m['max_drawdown']:>12,.0f} ({m['max_drawdown_pct']:.1f}%)")
+        logger.info(f"  Sharpe ratio:     {m['sharpe_ratio']:>8.2f}")
+        logger.info(f"  Sortino ratio:    {m['sortino_ratio']:>8.2f}")
+        logger.info(f"  Profit factor:    {m['profit_factor']:>8.2f}")
+        logger.info("")
 
-        print(f"  {'-' * 56}")
-        print("  TRADE STATISTICS")
-        print(f"  {'-' * 56}")
-        print(f"  Total trades:     {m['total_trades']:>8d}")
-        print(f"  Win rate:         {m['win_rate']:>8.1f}%")
-        print(f"  Avg win:          {m['avg_win_pct']:>+8.1f}% ({m['avg_win_days']:.0f} days)")
-        print(f"  Avg loss:         {m['avg_loss_pct']:>+8.1f}% ({m['avg_loss_days']:.0f} days)")
-        print(f"  Best trade:       {m['best_trade'].ticker} {m['best_trade'].pnl_pct:+.1f}%")
-        print(f"  Worst trade:      {m['worst_trade'].ticker} {m['worst_trade'].pnl_pct:+.1f}%")
-        print(f"  Max consec wins:  {m['max_consec_wins']:>8d}")
-        print(f"  Max consec losses:{m['max_consec_losses']:>8d}")
-        print()
+        logger.info(f"  {'-' * 56}")
+        logger.info("  TRADE STATISTICS")
+        logger.info(f"  {'-' * 56}")
+        logger.info(f"  Total trades:     {m['total_trades']:>8d}")
+        logger.info(f"  Win rate:         {m['win_rate']:>8.1f}%")
+        logger.info(f"  Avg win:          {m['avg_win_pct']:>+8.1f}% ({m['avg_win_days']:.0f} days)")
+        logger.info(f"  Avg loss:         {m['avg_loss_pct']:>+8.1f}% ({m['avg_loss_days']:.0f} days)")
+        logger.info(f"  Best trade:       {m['best_trade'].ticker} {m['best_trade'].pnl_pct:+.1f}%")
+        logger.info(f"  Worst trade:      {m['worst_trade'].ticker} {m['worst_trade'].pnl_pct:+.1f}%")
+        logger.info(f"  Max consec wins:  {m['max_consec_wins']:>8d}")
+        logger.info(f"  Max consec losses:{m['max_consec_losses']:>8d}")
+        logger.info("")
 
-        print(f"  {'-' * 56}")
-        print("  ENTRY SIGNALS")
-        print(f"  {'-' * 56}")
-        print(f"  Signals generated:{m['signals_generated']:>8d}")
-        print(f"  Signals taken:    {m['signals_taken']:>8d}")
-        print(f"  Conversion rate:  {m['signal_conversion']:>8.1f}%")
-        print(f"  Avg winner score: {m['avg_winner_score']:>8.1f}")
-        print(f"  Avg loser score:  {m['avg_loser_score']:>8.1f}")
-        print()
+        logger.info(f"  {'-' * 56}")
+        logger.info("  ENTRY SIGNALS")
+        logger.info(f"  {'-' * 56}")
+        logger.info(f"  Signals generated:{m['signals_generated']:>8d}")
+        logger.info(f"  Signals taken:    {m['signals_taken']:>8d}")
+        logger.info(f"  Conversion rate:  {m['signal_conversion']:>8.1f}%")
+        logger.info(f"  Avg winner score: {m['avg_winner_score']:>8.1f}")
+        logger.info(f"  Avg loser score:  {m['avg_loser_score']:>8.1f}")
+        logger.info("")
 
-        print(f"  {'-' * 56}")
-        print("  EXIT REASONS")
-        print(f"  {'-' * 56}")
+        logger.info(f"  {'-' * 56}")
+        logger.info("  EXIT REASONS")
+        logger.info(f"  {'-' * 56}")
         for reason, count in sorted(m["exit_reasons"].items(),
                                      key=lambda x: -x[1]):
             pct = count / m["total_trades"] * 100
-            print(f"  {reason:<20s} {count:>5d} ({pct:.0f}%)")
-        print()
+            logger.info(f"  {reason:<20s} {count:>5d} ({pct:.0f}%)")
+        logger.info("")
 
         # Sector rotation summary
         if m.get("sector_rotation_enabled"):
             tracker = self.sector_tracker
             rot_summary = tracker.get_sector_summary()
             if rot_summary:
-                print(f"  {'-' * 56}")
-                print("  SECTOR ROTATION")
-                print(f"  {'-' * 56}")
-                print(f"  Signals blocked:  {m['signals_blocked']:>8d} (losing sectors)")
-                print(f"  Signals boosted:  {m['signals_boosted']:>8d} (top sectors)")
-                print()
-                print(f"  {'Sector':<14s} {'Mom':>6s} {'Status':>10s} {'Trades':>6s} {'Win%':>6s}")
-                print(f"  {'-' * 56}")
+                logger.info(f"  {'-' * 56}")
+                logger.info("  SECTOR ROTATION")
+                logger.info(f"  {'-' * 56}")
+                logger.info(f"  Signals blocked:  {m['signals_blocked']:>8d} (losing sectors)")
+                logger.info(f"  Signals boosted:  {m['signals_boosted']:>8d} (top sectors)")
+                logger.info("")
+                logger.info(f"  {'Sector':<14s} {'Mom':>6s} {'Status':>10s} {'Trades':>6s} {'Win%':>6s}")
+                logger.info(f"  {'-' * 56}")
                 for sec, info in rot_summary.items():
                     mom = info["momentum"]
                     status = "BLOCKED" if info["blocked"] else ("TOP" if mom > 0 and info["trades"] >= 3 else "NEUTRAL")
                     color_start = "\033[91m" if status == "BLOCKED" else ("\033[92m" if status == "TOP" else "")
                     color_end = "\033[0m" if color_start else ""
-                    print(f"  {sec:<14s} {mom:>+5.1f}% {color_start}{status:>10s}{color_end} {info['trades']:>6d} {info['win_rate']:>5.0f}%")
-                print()
+                    logger.info(f"  {sec:<14s} {mom:>+5.1f}% {color_start}{status:>10s}{color_end} {info['trades']:>6d} {info['win_rate']:>5.0f}%")
+                logger.info("")
 
         # Sector breakdown
         sector_stats = m.get("sector_stats", {})
         if sector_stats:
-            print(f"  {'-' * 56}")
-            print("  SECTOR BREAKDOWN")
-            print(f"  {'-' * 56}")
-            print(f"  {'Sector':<14s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Stocks':>7s}")
-            print(f"  {'-' * 56}")
+            logger.info(f"  {'-' * 56}")
+            logger.info("  SECTOR BREAKDOWN")
+            logger.info(f"  {'-' * 56}")
+            logger.info(f"  {'Sector':<14s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Stocks':>7s}")
+            logger.info(f"  {'-' * 56}")
             for sec in sorted(sector_stats, key=lambda s: -sector_stats[s]["total_pnl"]):
                 ss = sector_stats[sec]
-                print(f"  {sec:<14s} {ss['trades']:>6d} {ss['win_rate']:>5.0f}% "
+                logger.info(f"  {sec:<14s} {ss['trades']:>6d} {ss['win_rate']:>5.0f}% "
                       f"Rs.{ss['total_pnl']:>+10,.0f} {ss['stock_count']:>6d}")
-            print()
+            logger.info("")
 
         # Per-stock breakdown
-        print(f"  {'-' * 56}")
-        print("  PER-STOCK BREAKDOWN")
-        print(f"  {'-' * 56}")
-        print(f"  {'Ticker':<12s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Avg%':>8s}")
-        print(f"  {'-' * 56}")
+        logger.info(f"  {'-' * 56}")
+        logger.info("  PER-STOCK BREAKDOWN")
+        logger.info(f"  {'-' * 56}")
+        logger.info(f"  {'Ticker':<12s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Avg%':>8s}")
+        logger.info(f"  {'-' * 56}")
 
         stock_stats = m["stock_stats"]
         for ticker in sorted(stock_stats, key=lambda t: -stock_stats[t]["total_pnl"]):
             s = stock_stats[ticker]
-            print(f"  {ticker:<12s} {s['trades']:>6d} {s['win_rate']:>5.0f}% "
+            logger.info(f"  {ticker:<12s} {s['trades']:>6d} {s['win_rate']:>5.0f}% "
                   f"Rs.{s['total_pnl']:>+10,.0f} {s['avg_pnl_pct']:>+7.1f}%")
 
         # Top trades
-        print()
-        print(f"  {'-' * 56}")
-        print("  TOP 10 TRADES")
-        print(f"  {'-' * 56}")
+        logger.info("")
+        logger.info(f"  {'-' * 56}")
+        logger.info("  TOP 10 TRADES")
+        logger.info(f"  {'-' * 56}")
         sorted_trades = sorted(self.trades, key=lambda t: -t.pnl_pct)[:10]
-        print(f"  {'Ticker':<12s} {'Entry':>10s} {'Exit':>10s} {'P&L%':>8s} {'Days':>5s} {'Reason'}")
-        print(f"  {'-' * 56}")
+        logger.info(f"  {'Ticker':<12s} {'Entry':>10s} {'Exit':>10s} {'P&L%':>8s} {'Days':>5s} {'Reason'}")
+        logger.info(f"  {'-' * 56}")
         for t in sorted_trades:
-            print(f"  {t.ticker:<12s} Rs.{t.entry_price:>9,.0f} Rs.{t.exit_price:>9,.0f} "
+            logger.info(f"  {t.ticker:<12s} Rs.{t.entry_price:>9,.0f} Rs.{t.exit_price:>9,.0f} "
                   f"{t.pnl_pct:>+7.1f}% {t.days_held:>4d}  {t.exit_reason} [{t.sector}]")
 
-        print()
-        print(sep)
-        print()
+        logger.info("")
+        logger.info(sep)
+        logger.info("")
 
 
 # ============================================================
@@ -759,6 +802,7 @@ class BacktestEngine:
 # ============================================================
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(
         description="Backtest HMA/EMA Multi-Score Swing Strategy"
     )

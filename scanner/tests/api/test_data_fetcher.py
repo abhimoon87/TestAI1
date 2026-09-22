@@ -1080,6 +1080,7 @@ class TestScanStartStalePrune:
         import os as _os
         from datetime import datetime as _dt
         from datetime import timedelta as _td
+
         import pyarrow as _pa
         import pyarrow.parquet as _pq
         stale = (_dt.now() - _td(days=1)).isoformat()

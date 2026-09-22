@@ -1,0 +1,19 @@
+# Coverage config for the HMAxEMA Scanner.
+# Usage: python -m pytest --cov=scanner --cov-report=term-missing
+[run]
+source = scanner
+omit =
+    scanner/tests/*
+    scanner/setup_api_keys.py
+    scanner/backend/run_alpha_backtest.py
+    */__pycache__/*
+
+[report]
+show_missing = true
+skip_covered = true
+# Defensive provider-fallback style: partial branches and debug-level
+# exception logs are intentionally hard to hit offline.
+exclude_also =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError

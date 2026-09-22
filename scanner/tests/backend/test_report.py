@@ -225,8 +225,11 @@ class TestGenerateHtmlReport:
     def test_no_news_when_disabled(self):
         results = [_make_score_result()]
         html = generate_html_report(results, fetch_news=False)
-        # When fetch_news=False, no news data rows (with id=) should appear
-        assert 'id="news-' not in html
+        # When fetch_news=False, no news sentiment content should appear
+        # in the expandable panels (trade reasons panels are always shown)
+        assert ">Good<" not in html
+        assert ">Bad<" not in html
+        assert "No recent news found" not in html
 
     def test_empty_results(self):
         html = generate_html_report([], fetch_news=False)

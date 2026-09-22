@@ -20,13 +20,17 @@ from flet.canvas import Canvas, Path
 from flet.controls.alignment import Alignment
 
 logger = logging.getLogger(__name__)
-from ..shared.constants import RESULT_COLS, score_of as _score_of
+from ..shared.constants import RESULT_COLS
+from ..shared.constants import score_of as _score_of
 from .ui_kit import (
+    ANIM_FAST,
+    ANIM_NORMAL,
     _border_all,
     _margin_only,
     _padding_only,
     rating_color,
     score_color,
+    shimmer_row,
 )
 
 # Rating → theme-color-key accent used for row rails / washes.
@@ -112,6 +116,8 @@ class ResultsViewMixin:
                 row = self._make_data_row(r, rank, c, row_bg, threshold)
                 self.table_column.controls.append(row)
 
+            self._animate_rows_in()
+
             self.pagination_bar.visible = bool(shown and len(shown) > page_size)
             self.page_label.value = f"Page {self.current_page+1} / {total_pages}  ({len(shown)} stocks)"
 
@@ -132,6 +138,28 @@ class ResultsViewMixin:
         self._update_hero_status(results)
         self._render_topicks(shown[:5])
         self._render_chart(results)
+
+    def _animate_rows_in(self):
+        """Trigger fade-in on newly added data rows.
+
+        Rows are built with ``opacity=0`` + ``animate_opacity=ANIM_FAST``.
+        The caller's ``page.update()`` pushes them to the client at opacity 0,
+        then this method sets ``opacity=1`` so the client renders the fade-in
+        transition.
+        """
+        try:
+            rows = [
+                ctrl for ctrl in self.table_column.controls
+                if isinstance(ctrl, ft.Container) and hasattr(ctrl, "opacity")
+                and ctrl.opacity == 0
+            ]
+            if not rows:
+                return
+            for row in rows:
+                row.opacity = 1
+            self.page.update()
+        except Exception:
+            logger.debug("Row stagger animation failed", exc_info=True)
 
     def _make_header_row(self, c):
         headers = []
@@ -356,6 +384,8 @@ class ResultsViewMixin:
             height=34,
             padding=_padding_only(left=6, right=6),
             margin=_margin_only(bottom=1),
+            opacity=0,
+            animate_opacity=ANIM_FAST,
         )
         row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
         return row
@@ -369,10 +399,11 @@ class ResultsViewMixin:
                 return
             self._hover_last_ms = now_ms
             hover_bg = self.theme_colors["row_hover"]
-            new_bg = hover_bg if e.data == "true" else base_bg
-            if container.bgcolor != new_bg:
-                container.bgcolor = new_bg
-                container.update()
+            is_hover = e.data == "true"
+            container.bgcolor = hover_bg if is_hover else base_bg
+            container.scale = ft.Scale(1.005) if is_hover else ft.Scale(1.0)
+            container.animate_scale = ANIM_FAST
+            container.update()
         except Exception:
             logger.debug("Row hover update failed", exc_info=True)
 
@@ -556,10 +587,14 @@ class ResultsViewMixin:
         # "fetching…" placeholder; the worker replaces it once yfinance
         # responds.
         c = self.theme_colors
+        try:
+            from flet_spinkit import FadingCircle
+            spinner = FadingCircle(color=c["cyan"], size=14)
+        except ImportError:
+            spinner = ft.ProgressRing(width=14, height=14, stroke_width=2, color=c["cyan"])
         loading = ft.Container(
             content=ft.Row([
-                ft.ProgressRing(width=14, height=14, stroke_width=2,
-                                color=c["cyan"]),
+                spinner,
                 ft.Text("Loading news & sentiment…", size=11, color=c["text_dim"]),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             bgcolor=c["card2"],
@@ -659,7 +694,10 @@ class ResultsViewMixin:
         return inner if isinstance(inner, ft.Text) else None
 
     def _insert_news_frame(self, ticker, frame):
-        """Insert ``frame`` right under the given ticker's row (or at the end)."""
+        """Insert ``frame`` right under the given ticker's row."""
+        frame.animate_offset = ANIM_NORMAL
+        frame.animate_opacity = ANIM_NORMAL
+        frame.opacity = 1
         ctrls = self.table_column.controls
         insert_at = None
         for i, ctrl in enumerate(ctrls):
@@ -780,14 +818,22 @@ class ResultsViewMixin:
             self.page.update()
 
     def _make_scan_placeholder(self, headline="Scanning — fetching batches…"):
-        """Animated placeholder shown in the results area during a scan."""
+        """Animated shimmer skeleton shown in the results area during a scan."""
         c = self.theme_colors
+        skeleton_rows = [shimmer_row() for _ in range(8)]
+        try:
+            from flet_spinkit import DoubleBounce
+            spinner = DoubleBounce(color=c["green"], size=36)
+        except ImportError:
+            spinner = ft.ProgressRing(width=36, height=36, stroke_width=3, color=c["green"])
         return ft.Container(
             content=ft.Column([
-                ft.ProgressRing(width=44, height=44, stroke_width=3, color=c["green"]),
-                ft.Container(height=10),
+                spinner,
+                ft.Container(height=8),
                 ft.Text(headline, size=13, weight=ft.FontWeight.BOLD, color=c["green"]),
                 ft.Text("First results appear after ~1 batch (~20s)", size=11, color=c["text_dim"]),
+                ft.Container(height=12),
+                *skeleton_rows,
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
             alignment=Alignment.CENTER,
             padding=40,

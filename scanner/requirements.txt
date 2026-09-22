@@ -15,3 +15,6 @@ nselib>=2.5.0
 
 # HTTP requests (for API calls and news fetching)
 requests>=2.28.0
+
+# Animated loading spinners
+flet-spinkit>=1.0.0

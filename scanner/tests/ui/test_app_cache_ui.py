@@ -5,7 +5,7 @@ ScannerApp (``__new__``) and attaching recorder stand-ins for the Flet label,
 button and page, so no window or event loop is required.
 """
 
-from scanner.api import data_fetcher, cache_manager
+from scanner.api import cache_manager, data_fetcher
 from scanner.ui.app import ScannerApp
 
 
@@ -31,6 +31,26 @@ class _FakePage:
 
     def update(self):
         self.update_calls += 1
+
+    def run_task(self, handler):
+        """Run async coroutines synchronously in the test harness.
+
+        Flet's ``page.run_task(handler)`` calls ``handler()`` to obtain a
+        coroutine, then schedules it.  We replicate that here.
+        """
+        import asyncio
+        coro = handler()
+        if asyncio.iscoroutine(coro):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    pool.submit(asyncio.run, coro).result(timeout=2)
+            else:
+                asyncio.run(coro)
 
 
 def _make_app():
