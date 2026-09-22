@@ -13,8 +13,7 @@ def _frame_ending(days_ago, n=20):
 
 
 def _patch_fetch(monkeypatch, batch):
-    monkeypatch.setattr(audit, "fetch_batch_yfinance",
-                        lambda *a, **k: batch)
+    monkeypatch.setattr(audit, "fetch_batch_yfinance", lambda *a, **k: batch)
     # Keep every offline test hermetic: no per-ticker probe, no mainboard
     # lookup, no rename-verification download.
     monkeypatch.setattr(audit, "fetch_stock_data", lambda *a, **k: None)
@@ -23,9 +22,9 @@ def _patch_fetch(monkeypatch, batch):
 
 def test_splits_stale_into_annotated_and_not(monkeypatch):
     batch = {
-        "RELIANCE": _frame_ending(2),    # fresh
-        "GSPL": _frame_ending(120),      # stale, already annotated
-        "STALECO": _frame_ending(300),   # stale, NOT annotated
+        "RELIANCE": _frame_ending(2),  # fresh
+        "GSPL": _frame_ending(120),  # stale, already annotated
+        "STALECO": _frame_ending(300),  # stale, NOT annotated
     }
     _patch_fetch(monkeypatch, batch)
 
@@ -44,7 +43,7 @@ def test_annotated_but_fresh_is_flagged_for_removal(monkeypatch):
         {"GSPL": "suspended", "RESUMEDCO": "delisted"},
     )
     batch = {
-        "GSPL": _frame_ending(120),    # still stale -> stays annotated
+        "GSPL": _frame_ending(120),  # still stale -> stays annotated
         "RESUMEDCO": _frame_ending(3),  # trading again -> remove candidate
     }
     _patch_fetch(monkeypatch, batch)
@@ -59,7 +58,10 @@ def test_cutoff_respected(monkeypatch):
     batch = {"BORDER": _frame_ending(30)}
     _patch_fetch(monkeypatch, batch)
 
-    assert audit.audit_stale_members(["BORDER"], max_age_days=45)["unannotated_stale"] == []
+    assert (
+        audit.audit_stale_members(["BORDER"], max_age_days=45)["unannotated_stale"]
+        == []
+    )
     res = audit.audit_stale_members(["BORDER"], max_age_days=20)
     assert [t for t, _ in res["unannotated_stale"]] == ["BORDER"]
 
@@ -80,6 +82,7 @@ def test_missing_from_dead_symbol_cache_is_flagged(monkeypatch):
     import time
 
     import scanner.api.data_fetcher as df
+
     monkeypatch.setattr(df, "_negative_cache", {"GONE": time.time()})
     batch = {"RELIANCE": _frame_ending(1)}
     _patch_fetch(monkeypatch, batch)
@@ -173,9 +176,7 @@ def test_rank_rename_candidates_prefix_rules():
 
 def test_rank_rename_candidates_fuzzy_match():
     """BIRLASOFT -> BSOFT has no prefix relation — only fuzzy similarity."""
-    ranked = audit._rank_rename_candidates(
-        ["BIRLASOFT"], ["RELIANCE", "BSOFT", "TCS"]
-    )
+    ranked = audit._rank_rename_candidates(["BIRLASOFT"], ["RELIANCE", "BSOFT", "TCS"])
     assert ranked["BIRLASOFT"][0] == "BSOFT"
 
 
@@ -187,12 +188,13 @@ def test_rank_rename_candidates_valid_symbol_or_no_match():
 
 def test_suggest_renames_verifies_candidate_has_data(monkeypatch):
     """Only candidates that actually return data are suggested."""
+
     def fake_fetch(tickers, **k):
         return {"ASTERDM": _frame_ending(2)}  # ASTERMINDS has no data
+
     monkeypatch.setattr(audit, "fetch_batch_yfinance", fake_fetch)
     monkeypatch.setattr(audit, "fetch_stock_data", lambda *a, **k: None)
-    monkeypatch.setattr(audit, "_nse_mainboard",
-                        lambda: ["ASTERDM", "ASTERMINDS"])
+    monkeypatch.setattr(audit, "_nse_mainboard", lambda: ["ASTERDM", "ASTERMINDS"])
 
     res = audit.audit_stale_members(["ASTER"], period="3y")
 
@@ -203,8 +205,9 @@ def test_suggest_renames_verifies_candidate_has_data(monkeypatch):
 def test_suggest_renames_skips_when_mainboard_unavailable(monkeypatch):
     """No mainboard list -> no guesses, no extra download."""
     calls = []
-    monkeypatch.setattr(audit, "fetch_batch_yfinance",
-                        lambda t, **k: calls.append(list(t)) or {})
+    monkeypatch.setattr(
+        audit, "fetch_batch_yfinance", lambda t, **k: calls.append(list(t)) or {}
+    )
     monkeypatch.setattr(audit, "fetch_stock_data", lambda *a, **k: None)
     monkeypatch.setattr(audit, "_nse_mainboard", list)
 
@@ -220,11 +223,14 @@ def test_live_probe_recovers_symbol_marked_dead(monkeypatch):
     import time
 
     import scanner.api.data_fetcher as df
+
     monkeypatch.setattr(df, "_negative_cache", {"GONE": time.time()})
-    monkeypatch.setattr(audit, "fetch_batch_yfinance",
-                        lambda *a, **k: {"RELIANCE": _frame_ending(1)})
-    monkeypatch.setattr(audit, "fetch_stock_data",
-                        lambda *a, **k: _frame_ending(1, n=60))
+    monkeypatch.setattr(
+        audit, "fetch_batch_yfinance", lambda *a, **k: {"RELIANCE": _frame_ending(1)}
+    )
+    monkeypatch.setattr(
+        audit, "fetch_stock_data", lambda *a, **k: _frame_ending(1, n=60)
+    )
     monkeypatch.setattr(audit, "_nse_mainboard", list)
 
     res = audit.audit_stale_members(["RELIANCE", "GONE"], period="3y")
@@ -237,27 +243,32 @@ def test_live_probe_recovers_symbol_marked_dead(monkeypatch):
 def test_live_probe_parallel_recovers_all_and_reports_failures(monkeypatch):
     """Pooled probes recover every name with data; failures stay missing."""
     import scanner.api.data_fetcher as df
+
     monkeypatch.setattr(df, "_negative_cache", {})
-    monkeypatch.setattr(audit, "fetch_batch_yfinance",
-                        lambda *a, **k: {"RELIANCE": _frame_ending(1)})
     monkeypatch.setattr(
-        audit, "fetch_stock_data",
+        audit, "fetch_batch_yfinance", lambda *a, **k: {"RELIANCE": _frame_ending(1)}
+    )
+    monkeypatch.setattr(
+        audit,
+        "fetch_stock_data",
         lambda t, *a, **k: _frame_ending(1, n=60) if t in {"G1", "G2"} else None,
     )
     monkeypatch.setattr(audit, "_nse_mainboard", list)
 
     res = audit.audit_stale_members(
-        ["RELIANCE", "G1", "G2", "DEAD1", "DEAD2"], period="3y")
+        ["RELIANCE", "G1", "G2", "DEAD1", "DEAD2"], period="3y"
+    )
 
-    assert res["fetched"] == 3          # RELIANCE + G1 + G2 via the pool
+    assert res["fetched"] == 3  # RELIANCE + G1 + G2 via the pool
     assert res["missing"] == ["DEAD1", "DEAD2"]
     assert res["rename_suggestions"] == {}
 
 
 def test_live_probe_failed_names_still_reported_missing(monkeypatch):
     """Probe failure keeps the name in section 4 (with the dead-cache tag)."""
-    monkeypatch.setattr(audit, "fetch_batch_yfinance",
-                        lambda *a, **k: {"RELIANCE": _frame_ending(1)})
+    monkeypatch.setattr(
+        audit, "fetch_batch_yfinance", lambda *a, **k: {"RELIANCE": _frame_ending(1)}
+    )
     monkeypatch.setattr(audit, "fetch_stock_data", lambda *a, **k: None)
     monkeypatch.setattr(audit, "_nse_mainboard", list)
 
@@ -280,19 +291,19 @@ def test_live_probe_failed_names_still_reported_missing(monkeypatch):
 def _fake_universes_file(path):
     """A miniature universes.py with the same structural features."""
     path.write_text(
-        'SUSPENDED_OR_DELISTED = {\n'
+        "SUSPENDED_OR_DELISTED = {\n"
         '    "GSPL": "suspended — no trades since 2026-05-11",\n'
         '    "TATAMETALI": "delisted — merged into Tata Steel (last trade 2024-02-05)",\n'
-        '}\n'
-        '\n'
-        'NIFTY_SMALLCAP_100 = [\n'
+        "}\n"
+        "\n"
+        "NIFTY_SMALLCAP_100 = [\n"
         '    "AFFLE", "ASTER",\n'
         '    "BSOFT",\n'
-        ']\n'
-        '\n'
-        'SECTOR_MAP = {\n'
+        "]\n"
+        "\n"
+        "SECTOR_MAP = {\n"
         '    "ASTER": "Chemicals",\n'
-        '}\n',
+        "}\n",
         encoding="utf-8",
     )
 
@@ -308,9 +319,13 @@ def test_apply_fixes_inserts_keep_dict_keys_sorted(tmp_path):
     """New SUSPENDED_OR_DELISTED entries merge in alphabetical order."""
     p = tmp_path / "universes.py"
     _fake_universes_file(p)
-    res = {"unannotated_stale": [
-        ("ZZCO", "2026-01-02"), ("AAACO", "2026-01-01"), ("MIDCO", "2026-01-03"),
-    ]}
+    res = {
+        "unannotated_stale": [
+            ("ZZCO", "2026-01-02"),
+            ("AAACO", "2026-01-01"),
+            ("MIDCO", "2026-01-03"),
+        ]
+    }
 
     audit.apply_fixes(res, path=str(p))
 
@@ -339,7 +354,7 @@ def test_apply_fixes_dedupes_sector_map_after_rename(tmp_path):
     p = tmp_path / "universes.py"
     p.write_text(
         "SUSPENDED_OR_DELISTED = {\n}\n"
-        "NIFTY_SMALLCAP_100 = [\n    \"ASTER\",\n]\n"
+        'NIFTY_SMALLCAP_100 = [\n    "ASTER",\n]\n'
         "SECTOR_MAP = {\n"
         '    "ASTERDM": "Health", "ASTER": "Chemicals",\n'
         '    "RELIANCE": "OilGas",\n'
@@ -348,7 +363,8 @@ def test_apply_fixes_dedupes_sector_map_after_rename(tmp_path):
     )
 
     summary = audit.apply_fixes(
-        {"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p))
+        {"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p)
+    )
 
     out = p.read_text(encoding="utf-8")
     block = out.split("SECTOR_MAP = {", 1)[1].split("}", 1)[0]
@@ -373,7 +389,8 @@ def test_apply_fixes_sector_dedupe_last_entry_without_trailing_comma(tmp_path):
     )
 
     summary = audit.apply_fixes(
-        {"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p))
+        {"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p)
+    )
 
     out = p.read_text(encoding="utf-8")
     block = out.split("SECTOR_MAP = {", 1)[1].split("}", 1)[0]
@@ -388,7 +405,8 @@ def test_apply_fixes_no_sector_dup_no_dedupe_change(tmp_path):
     _fake_universes_file(p)  # SECTOR_MAP has only "ASTER" -> renamed, no dup
 
     summary = audit.apply_fixes(
-        {"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p))
+        {"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p)
+    )
 
     assert "sector_map_deduped" not in summary
     assert summary["renamed"] == [("ASTER", "ASTERDM", 2)]
@@ -401,18 +419,21 @@ def test_apply_fixes_renames_adds_and_removes(tmp_path):
     res = _FIX_RES
     res = dict(res)
     # Removal target inside the block:
-    p.write_text(p.read_text(encoding="utf-8").replace(
-        '    "TATAMETALI": "delisted — merged into Tata Steel (last trade 2024-02-05)",\n',
-        '    "RESUMEDCO": "delisted — old name",\n'
-        '    "TATAMETALI": "delisted — merged into Tata Steel (last trade 2024-02-05)",\n',
-    ), encoding="utf-8")
+    p.write_text(
+        p.read_text(encoding="utf-8").replace(
+            '    "TATAMETALI": "delisted — merged into Tata Steel (last trade 2024-02-05)",\n',
+            '    "RESUMEDCO": "delisted — old name",\n'
+            '    "TATAMETALI": "delisted — merged into Tata Steel (last trade 2024-02-05)",\n',
+        ),
+        encoding="utf-8",
+    )
 
     summary = audit.apply_fixes(res, path=str(p))
 
     out = p.read_text(encoding="utf-8")
-    assert '"ASTERDM"' in out and '"ASTER"' not in out       # renamed (list + sector)
-    assert '"STALECO": "no trades since 2025-11-10"' in out   # added
-    assert '"RESUMEDCO"' not in out                            # removed
+    assert '"ASTERDM"' in out and '"ASTER"' not in out  # renamed (list + sector)
+    assert '"STALECO": "no trades since 2025-11-10"' in out  # added
+    assert '"RESUMEDCO"' not in out  # removed
     assert summary["changed"] is True
     assert summary["renamed"] == [("ASTER", "ASTERDM", 2)]
     assert summary["annotated_added"] == [("STALECO", "2025-11-10")]
@@ -420,6 +441,7 @@ def test_apply_fixes_renames_adds_and_removes(tmp_path):
     assert summary["backup"] == str(p) + ".bak"
     assert (tmp_path / "universes.py.bak").exists()
     import ast
+
     ast.parse(out)  # still valid Python
 
 
@@ -427,12 +449,15 @@ def test_apply_fixes_rename_never_hits_longer_symbols(tmp_path):
     """Quoted replacement must not corrupt ASTERMINDS-style neighbours."""
     p = tmp_path / "universes.py"
     _fake_universes_file(p)
-    p.write_text(p.read_text(encoding="utf-8").replace(
-        '    "AFFLE", "ASTER",\n', '    "AFFLE", "ASTER", "ASTERMINDS",\n',
-    ), encoding="utf-8")
+    p.write_text(
+        p.read_text(encoding="utf-8").replace(
+            '    "AFFLE", "ASTER",\n',
+            '    "AFFLE", "ASTER", "ASTERMINDS",\n',
+        ),
+        encoding="utf-8",
+    )
 
-    audit.apply_fixes({"rename_suggestions": {"ASTER": "ASTERDM"}},
-                      path=str(p))
+    audit.apply_fixes({"rename_suggestions": {"ASTER": "ASTERDM"}}, path=str(p))
 
     out = p.read_text(encoding="utf-8")
     assert '"ASTERDM"' in out and '"ASTERMINDS"' in out
@@ -459,7 +484,8 @@ def test_apply_fixes_not_found_ticker_is_skipped(tmp_path):
     before = p.read_text(encoding="utf-8")
 
     summary = audit.apply_fixes(
-        {"rename_suggestions": {"AVALONLABS": "AVALON"}}, path=str(p))
+        {"rename_suggestions": {"AVALONLABS": "AVALON"}}, path=str(p)
+    )
 
     assert summary["not_found"] == ["AVALONLABS"]
     assert summary["changed"] is False
@@ -482,10 +508,14 @@ def test_apply_fixes_missing_block_only_renames(tmp_path):
 
 def test_format_fix_summary_lines():
     """Summary text covers each action type."""
-    s = {"changed": True, "renamed": [("ASTER", "ASTERDM", 2)],
-         "annotated_added": [("STALECO", "2025-11-10")],
-         "annotated_removed": ["RESUMEDCO"], "not_found": ["AVALONLABS"],
-         "backup": "/x/universes.py.bak"}
+    s = {
+        "changed": True,
+        "renamed": [("ASTER", "ASTERDM", 2)],
+        "annotated_added": [("STALECO", "2025-11-10")],
+        "annotated_removed": ["RESUMEDCO"],
+        "not_found": ["AVALONLABS"],
+        "backup": "/x/universes.py.bak",
+    }
     text = audit.format_fix_summary(s)
     assert "ASTER -> ASTERDM (2 occurrence" in text
     assert "STALECO to SUSPENDED_OR_DELISTED" in text
@@ -512,13 +542,18 @@ def test_all_universes_single_union_fetch_with_breakdown(monkeypatch):
     def fake_fetch(tickers, **k):
         calls.append(sorted(tickers))
         return {t: _frame_ending(2) for t in tickers if t != "GONE"}
+
     monkeypatch.setattr(audit, "fetch_batch_yfinance", fake_fetch)
     monkeypatch.setattr(audit, "fetch_stock_data", lambda *a, **k: None)
     monkeypatch.setattr(audit, "_nse_mainboard", list)
-    monkeypatch.setattr(audit, "_STATIC_UNIVERSES", {
-        "U1": ["A", "B", "GONE"],
-        "U2": ["B", "C"],
-    })
+    monkeypatch.setattr(
+        audit,
+        "_STATIC_UNIVERSES",
+        {
+            "U1": ["A", "B", "GONE"],
+            "U2": ["B", "C"],
+        },
+    )
 
     res = audit.audit_all_universes(period="3y")
 
@@ -533,17 +568,32 @@ def test_all_universes_single_union_fetch_with_breakdown(monkeypatch):
 def test_format_report_rename_section_and_per_universe():
     """Section 5 lists verified renames; --all prints the per-universe block."""
     res = {
-        "period": "3y", "max_age_days": 45.0,
-        "tickers": 4, "fetched": 3, "stale_total": 0,
-        "unannotated_stale": [], "annotated_stale": [],
-        "annotated_fresh": [], "missing": ["ASTER"],
-        "neg_cache_skipped": [], "rename_suggestions": {"ASTER": "ASTERDM"},
-        "membership": {}, "annotated": [],
+        "period": "3y",
+        "max_age_days": 45.0,
+        "tickers": 4,
+        "fetched": 3,
+        "stale_total": 0,
+        "unannotated_stale": [],
+        "annotated_stale": [],
+        "annotated_fresh": [],
+        "missing": ["ASTER"],
+        "neg_cache_skipped": [],
+        "rename_suggestions": {"ASTER": "ASTERDM"},
+        "membership": {},
+        "annotated": [],
         "per_universe": {
-            "NIFTY SMALLCAP 100": {"members": 51, "fetched": 50,
-                                    "missing": ["ASTER"], "stale_unannotated": []},
-            "NIFTY 50": {"members": 51, "fetched": 51,
-                          "missing": [], "stale_unannotated": []},
+            "NIFTY SMALLCAP 100": {
+                "members": 51,
+                "fetched": 50,
+                "missing": ["ASTER"],
+                "stale_unannotated": [],
+            },
+            "NIFTY 50": {
+                "members": 51,
+                "fetched": 51,
+                "missing": [],
+                "stale_unannotated": [],
+            },
         },
     }
 

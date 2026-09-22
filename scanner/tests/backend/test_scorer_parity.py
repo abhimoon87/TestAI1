@@ -32,6 +32,7 @@ from scanner.backend.settings_store import DEFAULT_SETTINGS as GUI_DEFAULTS
 # Synthetic fixtures (>= WARMUP_BARS=260 so precompute_stock accepts them)
 # ---------------------------------------------------------------------------
 
+
 def _ohlcv(n: int, seed: int, close_start: float = 100.0) -> pd.DataFrame:
     """Deterministic OHLCV: random walk with drift + volume bursts."""
     rng = np.random.RandomState(seed)
@@ -47,8 +48,7 @@ def _ohlcv(n: int, seed: int, close_start: float = 100.0) -> pd.DataFrame:
     volume[burst] = volume[burst] * 4
     dates = pd.bdate_range("2023-01-02", periods=n)
     return pd.DataFrame(
-        {"open": open_, "high": high, "low": low, "close": close,
-         "volume": volume},
+        {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
         index=dates,
     )
 
@@ -63,22 +63,30 @@ def index_ohlcv():
 def settings():
     """Merged settings with a fast/loose-ish MA config; both scorers see it."""
     s = {**BT_DEFAULTS, **GUI_DEFAULTS}
-    s.update({
-        "fast_ma_type": "HMA", "fast_ma_len": 20,
-        "slow_ma_type": "EMA", "slow_ma_len": 40,
-        "crossover_lookback": 20,
-        "vp_lookback": 50,            # keep VP window well under slice length
-        "adx_threshold": 20.0,
-        "chop_threshold": 61.8,
-        "flat_threshold": 0.5,
-        "sideways_strong_move_pct": 5.0,
-        "volume_participation_len": 5,
-    })
+    s.update(
+        {
+            "fast_ma_type": "HMA",
+            "fast_ma_len": 20,
+            "slow_ma_type": "EMA",
+            "slow_ma_len": 40,
+            "crossover_lookback": 20,
+            "vp_lookback": 50,  # keep VP window well under slice length
+            "adx_threshold": 20.0,
+            "chop_threshold": 61.8,
+            "flat_threshold": 0.5,
+            "sideways_strong_move_pct": 5.0,
+            "volume_participation_len": 5,
+        }
+    )
     return s
 
 
-def _score_both(df: pd.DataFrame, nifty_df: pd.DataFrame, settings: dict,
-                window_end: int | None = None):
+def _score_both(
+    df: pd.DataFrame,
+    nifty_df: pd.DataFrame,
+    settings: dict,
+    window_end: int | None = None,
+):
     """Score the window ending at ``window_end`` (default: last bar) with both
     scorers on identical inputs and return (backtest_total, live_total,
     backtest_sideways, live_sideways)."""
@@ -106,8 +114,10 @@ def _score_both(df: pd.DataFrame, nifty_df: pd.DataFrame, settings: dict,
     assert bt is not None and live is not None, "scorer returned None"
 
     return (
-        bt["total"], live["total"],
-        bool(bt["is_sideways"]), bool(live["is_sideways"]),
+        bt["total"],
+        live["total"],
+        bool(bt["is_sideways"]),
+        bool(live["is_sideways"]),
     )
 
 
@@ -115,33 +125,41 @@ def _score_both(df: pd.DataFrame, nifty_df: pd.DataFrame, settings: dict,
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestScorerParity:
     @pytest.mark.parametrize("seed", [1, 2, 3])
     def test_last_bar_total_and_sideways_match(self, seed, index_ohlcv, settings):
         """Whole-window (last bar) scoring agrees between both scorers."""
         df = _ohlcv(500, seed=seed)
         bt_t, live_t, bt_sw, live_sw = _score_both(df, index_ohlcv, settings)
-        assert round(bt_t, 1) == round(live_t, 1), \
+        assert round(bt_t, 1) == round(live_t, 1), (
             f"total mismatch: backtest={bt_t} live={live_t}"
-        assert bt_sw == live_sw, \
-            f"sideways mismatch: backtest={bt_sw} live={live_sw}"
+        )
+        assert bt_sw == live_sw, f"sideways mismatch: backtest={bt_sw} live={live_sw}"
 
     @pytest.mark.parametrize("window_end", [320, 400, 470])
     def test_mid_history_windows_match(self, window_end, index_ohlcv, settings):
         """Scoring an earlier window (bar not at the end) also agrees."""
         df = _ohlcv(500, seed=7)
         bt_t, live_t, bt_sw, live_sw = _score_both(
-            df, index_ohlcv, settings, window_end=window_end)
-        assert round(bt_t, 1) == round(live_t, 1), \
+            df, index_ohlcv, settings, window_end=window_end
+        )
+        assert round(bt_t, 1) == round(live_t, 1), (
             f"bar {window_end}: total mismatch: backtest={bt_t} live={live_t}"
-        assert bt_sw == live_sw, \
+        )
+        assert bt_sw == live_sw, (
             f"bar {window_end}: sideways mismatch: backtest={bt_sw} live={live_sw}"
+        )
 
     def test_fundamentals_attach_parity(self, index_ohlcv, settings):
         """When the frame carries _fundamentals, both scorers credit them."""
         df = _ohlcv(500, seed=5)
-        fund = {"pe_ratio": 12.0, "eps_growth": 25.0,
-                "rev_growth": 18.0, "roe": 22.0}  # -> 20/20 in both
+        fund = {
+            "pe_ratio": 12.0,
+            "eps_growth": 25.0,
+            "rev_growth": 18.0,
+            "roe": 22.0,
+        }  # -> 20/20 in both
         df.attrs["_fundamentals"] = fund
         bt_t, live_t, bt_sw, live_sw = _score_both(df, index_ohlcv, settings)
         assert round(bt_t, 1) == round(live_t, 1)
@@ -159,7 +177,9 @@ class TestScorerParity:
             s["volume_participation_len"] = vol_len
             s["sideways_strong_move_pct"] = move_pct
             bt_t, live_t, bt_sw, live_sw = _score_both(df, index_ohlcv, s)
-            assert round(bt_t, 1) == round(live_t, 1), \
+            assert round(bt_t, 1) == round(live_t, 1), (
                 f"vol_len={vol_len} move={move_pct}: totals differ"
-            assert bt_sw == live_sw, \
+            )
+            assert bt_sw == live_sw, (
                 f"vol_len={vol_len} move={move_pct}: sideways differ"
+            )

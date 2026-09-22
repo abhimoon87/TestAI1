@@ -37,11 +37,11 @@ def _ready_app():
 
 
 def _visible_views(app):
-    return [v for v in (app.dashboard_view, app.settings_view)
-            if v.visible]
+    return [v for v in (app.dashboard_view, app.settings_view) if v.visible]
 
 
 # ── Fuzzy matcher (pure, no page needed) ──────────────────────────────
+
 
 def test_fuzzy_exact_and_prefix_rank_first():
     actions = [
@@ -71,6 +71,7 @@ def test_fuzzy_score_none_on_missing_letter():
 
 # ── View-stack switching (exactly one pane visible) ───────────────────
 
+
 def test_build_shows_only_dashboard():
     app = _ready_app()
     assert [type(v).__name__ for v in _visible_views(app)] == ["Column"]
@@ -91,11 +92,13 @@ def test_show_view_toggles_exactly_one_pane():
 
 # ── Palette dialog ────────────────────────────────────────────────────
 
+
 def test_palette_opens_with_all_actions():
     app = _ready_app()
     app._open_palette()
     assert len(app.page.shown) == 1
     import flet as ft
+
     assert isinstance(app.page.shown[0], ft.AlertDialog)
     # List is capped at 8 of the 12 registered actions
     assert len(app._palette_state["shown"]) == 8
@@ -108,8 +111,7 @@ def test_palette_filters_on_typing():
     app._palette_query.value = "scan"
     app._palette_query.on_change(None)
     shown = app._palette_state["shown"]
-    assert shown and all(
-        "scan" in (a.title + a.action_id).lower() for a in shown)
+    assert shown and all("scan" in (a.title + a.action_id).lower() for a in shown)
     assert shown[0].action_id == "run-stop"
 
 
@@ -136,8 +138,10 @@ def test_palette_actions_cover_run_stop():
 
 # ── Toasts ────────────────────────────────────────────────────────────
 
+
 def test_toast_sets_snackbar_and_updates():
     import flet as ft
+
     app = _ready_app()
     before = app.page.update_calls
     app._toast("Scan complete — 5 results", "success")
@@ -156,6 +160,7 @@ def test_toast_error_uses_white_text():
 
 
 # ── Sidebar collapse + keyboard ───────────────────────────────────────
+
 
 def test_sidebar_toggle_flips_visibility():
     app = _ready_app()
@@ -212,6 +217,7 @@ def test_scroll_to_top_without_loop_warns_nothing():
     """scroll_to() is a coroutine: without a running loop it must close the
     coroutine instead of dropping it (no RuntimeWarning), and never raise."""
     import warnings
+
     app = _ready_app()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -223,6 +229,7 @@ def test_scroll_to_top_without_loop_warns_nothing():
 
 def test_dark_is_the_only_theme():
     from scanner.shared.themes import THEMES
+
     assert set(THEMES) == {"dark"}
 
 
@@ -257,6 +264,7 @@ def test_stream_batch_multi_removal_keeps_grid_updating():
 
 # ── Watchlist parsing (pure) ──────────────────────────────────────────
 
+
 def test_parse_plain_and_csv_lists():
     text = "Ticker,Price\nRELIANCE,2500\ntcs\nINFY.NS\n\n"
     assert parse_watchlist_text(text) == ["RELIANCE", "TCS", "INFY"]
@@ -275,6 +283,7 @@ def test_parse_empty_and_limit():
 
 
 # ── Copy ticker + watchlist import (1.0 client actions) ───────────────
+
 
 def test_news_stats_row_ends_with_copy_action():
     import flet as ft
@@ -295,7 +304,8 @@ def test_news_stats_row_ends_with_copy_action():
     token = _context_page.set(app.page)
     try:
         row = app._news_stats_row(
-            {"ticker": "TCS", "close": 2450.0, "rsi": 62.0, "pc1m": 4.2})
+            {"ticker": "TCS", "close": 2450.0, "rsi": 62.0, "pc1m": 4.2}
+        )
     finally:
         _context_page.reset(token)
     assert isinstance(row, ft.Row)
@@ -308,14 +318,15 @@ def test_news_stats_row_ends_with_copy_action():
 
 def test_news_stats_row_omits_copy_without_page_context():
     import flet as ft
+
     # Background flushes have no page context — chips render, button omitted.
     app = _ready_app()
     row = app._news_stats_row(
-        {"ticker": "TCS", "close": 2450.0, "rsi": 62.0, "pc1m": 4.2})
+        {"ticker": "TCS", "close": 2450.0, "rsi": 62.0, "pc1m": 4.2}
+    )
     assert isinstance(row, ft.Row)
     assert len(row.controls) == 3  # chips only, no copy button
     assert not any(isinstance(c, ft.IconButton) for c in row.controls)
-
 
 
 def test_watchlist_import_registers_universe(tmp_path):
@@ -324,14 +335,14 @@ def test_watchlist_import_registers_universe(tmp_path):
     import flet as ft
 
     from scanner.shared.universes import UNIVERSES
+
     app = _ready_app()
     assert isinstance(app.file_picker, ft.FilePicker)
     # Services register on page.services — never the overlay/control tree
     # (a Service there makes the client show "Unknown control").
     assert app.file_picker in app.page.services
     csv_file = tmp_path / "list.csv"
-    csv_file.write_text("Ticker,Price\nRELIANCE,2500\ntcs\nINFY.NS\n",
-                        encoding="utf-8")
+    csv_file.write_text("Ticker,Price\nRELIANCE,2500\ntcs\nINFY.NS\n", encoding="utf-8")
     event = SimpleNamespace(files=[SimpleNamespace(path=str(csv_file))])
     try:
         app._on_watchlist_picked(event)
@@ -345,11 +356,13 @@ def test_watchlist_import_registers_universe(tmp_path):
 
 def test_watchlist_import_rejects_empty_file(tmp_path):
     from types import SimpleNamespace
+
     app = _ready_app()
     csv_file = tmp_path / "empty.csv"
     csv_file.write_text("Ticker\n", encoding="utf-8")
     before = len(app.page.shown)
     app._on_watchlist_picked(
-        SimpleNamespace(files=[SimpleNamespace(path=str(csv_file))]))
+        SimpleNamespace(files=[SimpleNamespace(path=str(csv_file))])
+    )
     assert len(app.page.shown) == before + 1  # error toast shown
     assert "WATCHLIST (" not in str(getattr(app.universe_dd, "value", ""))

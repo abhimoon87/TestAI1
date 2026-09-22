@@ -49,6 +49,7 @@ class _FakePage:
         coroutine, then schedules it.  We replicate that here.
         """
         import asyncio
+
         coro = handler()
         if asyncio.iscoroutine(coro):
             try:
@@ -57,6 +58,7 @@ class _FakePage:
                 loop = None
             if loop and loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     pool.submit(asyncio.run, coro).result(timeout=2)
             else:
@@ -66,6 +68,7 @@ class _FakePage:
 def _make_app():
     """Un-initialized ScannerApp with the state view builders read."""
     import threading
+
     app = ScannerApp.__new__(ScannerApp)
     app.page = _FakePage()
     app.current_theme = "dark"
@@ -74,9 +77,68 @@ def _make_app():
     app.active_view = "dashboard"
     app.scanning = False
     app._scan_lock = threading.Lock()
+    app._results_lock = threading.RLock()
     app._scan_epoch = 0
     app.logged = []
     app._log = app.logged.append
+
+    # Result / view state normally set in ScannerApp.__init__
+    app.results = []
+    app.all_results = []
+    app.filtered_results = []
+    app._row_pool = {}
+    app._row_cells = {}
+    app.filter_text = ""
+    app.sort_col = None
+    app.sort_reverse = False
+    app.page_size = 100
+    app.current_page = 0
+    app._scan_cancelled = False
+    app._last_warnings = []
+    app._last_stream_render = 0.0
+
+    # Dropdown / pagination stubs (Flet controls need no window)
+    app.rating_filter_dd = type("DD", (), {"value": "All"})()
+    app.page_size_dd = type("DD", (), {"value": "100"})()
+    app.page_size_options = ["50", "100", "200", "500"]
+
+    # Lightweight controls read by _render_current_page / _scan_complete
+    app.table_column = ft.Column(spacing=0)
+    app.pagination_bar = ft.Container(visible=False)
+    app.page_label = ft.Text("Page 1 / 1")
+    app.result_count_label = ft.Text("no scan yet")
+    app.summary_cards = {
+        k: ft.Text("—")
+        for k in (
+            "total",
+            "passed",
+            "entry",
+            "avg",
+            "high",
+            "bull",
+            "bear",
+            "dead_skip",
+        )
+    }
+    app.hero_sub = ft.Text("")
+    app.topicks_column = ft.Column(spacing=0)
+    app.chart_card = ft.Container(visible=True)
+    app.chart_bars = ft.Row(spacing=2)
+    app.chart_sub = ft.Text("")
+    app.progress_label = ft.Text("Ready")
+    app.status_label = ft.Text("Status: Ready")
+    app.progress_bar = ft.ProgressBar(value=0)
+    app.action_btn = type("Btn", (), {"disabled": False, "bgcolor": None})()
+    app.action_btn_label = ft.Text("RUN")
+    app.html_btn = type("Btn", (), {"disabled": True})()
+    app.csv_btn = type("Btn", (), {"disabled": True})()
+    app.clear_btn = type("Btn", (), {"disabled": True})()
+
+    # Run deferred UI work inline (no Flet event loop in unit tests)
+    app._safe_update = lambda fn: fn()
+    # Don't spin real background work from _scan_complete in tests
+    app._warm_market = lambda: None
+    app._news_prefetcher = type("P", (), {"start": lambda self, *a, **k: None})()
     return app
 
 
@@ -102,20 +164,43 @@ class TestBuildDashboard:
         assert len(app.page.controls[0].controls) == 4  # rail/sidebar/main/right
 
         # Sidebar controls the rest of the app reads after build
-        for attr in ("universe_dd", "timeframe_dd", "period_dd", "trend_filter_dd",
-                     "rating_filter_dd", "threshold_slider", "action_btn",
-                     "progress_bar", "progress_label", "cache_status_lbl"):
+        for attr in (
+            "universe_dd",
+            "timeframe_dd",
+            "period_dd",
+            "trend_filter_dd",
+            "rating_filter_dd",
+            "threshold_slider",
+            "action_btn",
+            "progress_bar",
+            "progress_label",
+            "cache_status_lbl",
+        ):
             assert hasattr(app, attr), f"missing sidebar control {attr}"
 
         # Main-area controls
-        for attr in ("search_entry", "html_btn", "csv_btn", "clear_btn",
-                     "table_column", "main_area_box", "dashboard_content",
-                     "summary_cards", "chart_bars", "pagination_bar"):
+        for attr in (
+            "search_entry",
+            "html_btn",
+            "csv_btn",
+            "clear_btn",
+            "table_column",
+            "main_area_box",
+            "dashboard_content",
+            "summary_cards",
+            "chart_bars",
+            "pagination_bar",
+        ):
             assert hasattr(app, attr), f"missing main-area control {attr}"
 
         # Right panel + rail
-        for attr in ("status_label", "topicks_column", "log_column",
-                     "log_view", "_rail_pills"):
+        for attr in (
+            "status_label",
+            "topicks_column",
+            "log_column",
+            "log_view",
+            "_rail_pills",
+        ):
             assert hasattr(app, attr), f"missing panel control {attr}"
         # Dashboard pill is visible; settings page builds from it
         assert app._rail_pills["dashboard"].opacity == 1.0
@@ -127,7 +212,14 @@ class TestBuildDashboard:
         row = app._build_summary_row()
         assert len(row.controls) == 8
         assert set(app.summary_cards) == {
-            "total", "passed", "entry", "avg", "high", "bull", "bear", "dead_skip",
+            "total",
+            "passed",
+            "entry",
+            "avg",
+            "high",
+            "bull",
+            "bear",
+            "dead_skip",
         }
 
 
@@ -141,7 +233,9 @@ class TestBuildSettingsView:
         assert view is not None
         assert len(app._settings_inputs) == spec_fields > 0
         # The stale-member age input exists in the spec
-        assert app._settings_inputs["stale_member_max_age_days"]._settings_kind == "float"
+        assert (
+            app._settings_inputs["stale_member_max_age_days"]._settings_kind == "float"
+        )
         assert app._settings_inputs["stale_member_max_age_days"]._settings_lo == 7
         assert app._settings_inputs["stale_member_max_age_days"]._settings_hi == 730
         # spot-check representative keys are present and typed
@@ -175,15 +269,20 @@ class TestBuildSettingsView:
     def test_audit_report_core_runs_and_formats(self, monkeypatch):
         """_audit_report drives audit_stale_members and formats the table."""
         import scanner.backend.audit_stale_members as audit_mod
+
         fake_res = {
             "unannotated_stale": [("XXYYY", "2024-02-05")],
             "annotated_stale": [("GSPL", "2026-05-11")],
             "annotated_fresh": [],
             "missing": [],
             "neg_cache_skipped": [],
-            "period": "3y", "max_age_days": 45.0,
-            "tickers": 51, "fetched": 51, "stale_total": 2,
-            "membership": {}, "annotated": [],
+            "period": "3y",
+            "max_age_days": 45.0,
+            "tickers": 51,
+            "fetched": 51,
+            "stale_total": 2,
+            "membership": {},
+            "annotated": [],
         }
         monkeypatch.setattr(audit_mod, "audit_stale_members", lambda t: fake_res)
         app = _make_app()
@@ -198,8 +297,11 @@ class TestBuildSettingsView:
         """Verdict flags 'fixes ready' exactly when apply_fixes has work."""
         app = _make_app()
         res = {
-            "unannotated_stale": [], "annotated_stale": [], "missing": [],
-            "annotated_fresh": [], "rename_suggestions": {},
+            "unannotated_stale": [],
+            "annotated_stale": [],
+            "missing": [],
+            "annotated_fresh": [],
+            "rename_suggestions": {},
         }
         assert "fixes ready" not in app._audit_verdict(res)
 
@@ -215,10 +317,13 @@ class TestBuildSettingsView:
     def test_apply_fixes_core_runs_and_formats(self, monkeypatch):
         """_apply_fixes_core drives apply_fixes and formats the summary."""
         import scanner.backend.audit_stale_members as audit_mod
+
         fake_summary = {
-            "changed": True, "renamed": [("ASTER", "ASTERDM", 2)],
+            "changed": True,
+            "renamed": [("ASTER", "ASTERDM", 2)],
             "annotated_added": [("STALECO", "2025-11-10")],
-            "annotated_removed": [], "not_found": [],
+            "annotated_removed": [],
+            "not_found": [],
             "backup": "/x/universes.py.bak",
         }
         monkeypatch.setattr(audit_mod, "apply_fixes", lambda res: fake_summary)
@@ -232,8 +337,11 @@ class TestBuildSettingsView:
 
     def _audit_res(self, **over):
         res = {
-            "unannotated_stale": [], "annotated_stale": [], "missing": [],
-            "annotated_fresh": [], "rename_suggestions": {},
+            "unannotated_stale": [],
+            "annotated_stale": [],
+            "missing": [],
+            "annotated_fresh": [],
+            "rename_suggestions": {},
         }
         res.update(over)
         return res
@@ -271,8 +379,7 @@ class TestBuildSettingsView:
         """Cancel closes the dialog and never touches universes.py."""
         app = _make_app()
         app._safe_update = lambda fn: fn()
-        app._last_audit_res = self._audit_res(
-            rename_suggestions={"ASTER": "ASTERDM"})
+        app._last_audit_res = self._audit_res(rename_suggestions={"ASTER": "ASTERDM"})
         app._apply_stale_fixes()
         dlg = app.page.shown[0]
 
@@ -286,20 +393,31 @@ class TestBuildSettingsView:
         import time
 
         import scanner.backend.audit_stale_members as audit_mod
+
         app = _make_app()
         app._safe_update = lambda fn: fn()
         app._last_audit_res = self._audit_res(
-            unannotated_stale=[("STALECO", "2025-11-10")])
+            unannotated_stale=[("STALECO", "2025-11-10")]
+        )
         fake_summary = {
-            "changed": True, "renamed": [], "not_found": [],
+            "changed": True,
+            "renamed": [],
+            "not_found": [],
             "annotated_added": [("STALECO", "2025-11-10")],
-            "annotated_removed": [], "backup": "/x/universes.py.bak",
+            "annotated_removed": [],
+            "backup": "/x/universes.py.bak",
         }
         monkeypatch.setattr(audit_mod, "apply_fixes", lambda res: fake_summary)
-        monkeypatch.setattr(app_mod.ScannerApp, "_reload_universes",
-                            lambda self: self.logged.append("RELOAD"))
-        monkeypatch.setattr(app_mod.ScannerApp, "_run_stale_audit",
-                            lambda self, e=None: self.logged.append("REAUDIT"))
+        monkeypatch.setattr(
+            app_mod.ScannerApp,
+            "_reload_universes",
+            lambda self: self.logged.append("RELOAD"),
+        )
+        monkeypatch.setattr(
+            app_mod.ScannerApp,
+            "_run_stale_audit",
+            lambda self, e=None: self.logged.append("REAUDIT"),
+        )
 
         app._run_apply_fixes()
 
@@ -317,21 +435,31 @@ class TestBuildSettingsView:
         import time
 
         import scanner.backend.audit_stale_members as audit_mod
+
         app = _make_app()
         app._safe_update = lambda fn: fn()
         fresh = {"fresh": True}
         app._last_audit_res = self._audit_res(
-            unannotated_stale=[("STALECO", "2025-11-10")])
-        monkeypatch.setattr(audit_mod, "apply_fixes", lambda res: {
-            "changed": True, "renamed": [], "not_found": [],
-            "annotated_added": [("STALECO", "2025-11-10")],
-            "annotated_removed": [], "backup": "/x/universes.py.bak",
-        })
-        monkeypatch.setattr(app_mod.ScannerApp, "_reload_universes",
-                            lambda self: None)
+            unannotated_stale=[("STALECO", "2025-11-10")]
+        )
         monkeypatch.setattr(
-            app_mod.ScannerApp, "_run_stale_audit",
-            lambda self, e=None: setattr(self, "_last_audit_res", fresh))
+            audit_mod,
+            "apply_fixes",
+            lambda res: {
+                "changed": True,
+                "renamed": [],
+                "not_found": [],
+                "annotated_added": [("STALECO", "2025-11-10")],
+                "annotated_removed": [],
+                "backup": "/x/universes.py.bak",
+            },
+        )
+        monkeypatch.setattr(app_mod.ScannerApp, "_reload_universes", lambda self: None)
+        monkeypatch.setattr(
+            app_mod.ScannerApp,
+            "_run_stale_audit",
+            lambda self, e=None: setattr(self, "_last_audit_res", fresh),
+        )
 
         app._run_apply_fixes()
 
@@ -343,15 +471,16 @@ class TestBuildSettingsView:
     def test_failed_audit_clears_result_and_disables_apply(self, monkeypatch):
         """A failed audit never leaves a stale fixable result actionable."""
         import time
+
         app = _make_app()
         app._safe_update = lambda fn: fn()
         app._build_settings_view()  # creates stale_fix_btn
-        app._last_audit_res = self._audit_res(
-            rename_suggestions={"ASTER": "ASTERDM"})
+        app._last_audit_res = self._audit_res(rename_suggestions={"ASTER": "ASTERDM"})
         app.stale_fix_btn.disabled = False  # as if a prior good audit ran
 
         def boom(universe):
             raise RuntimeError("network down")
+
         monkeypatch.setattr(app, "_audit_report", boom)
 
         app._run_stale_audit()
@@ -370,13 +499,26 @@ class TestBuildSettingsView:
 
 def _row(**over):
     base = {
-        "ticker": "TCS", "total": 45.0, "combined_rating": "POOR",
-        "entry_signal": False, "close": 120.0, "trend": 8.0,
-        "momentum": 9.0, "rsi": 5.0, "macd": 4.0, "volume": 6.0,
-        "rel_str": 4.0, "fundamentals": 0.0, "pc1m": -2.5,
-        "trend_dir": "Bear", "adx_val": 18.0, "is_sideways": True,
-        "ma_crossed_above": False, "ma_bullish": False,
-        "crossover_bars_ago": -1, "crossover_count": 0,
+        "ticker": "TCS",
+        "total": 45.0,
+        "combined_rating": "POOR",
+        "entry_signal": False,
+        "close": 120.0,
+        "trend": 8.0,
+        "momentum": 9.0,
+        "rsi": 5.0,
+        "macd": 4.0,
+        "volume": 6.0,
+        "rel_str": 4.0,
+        "fundamentals": 0.0,
+        "pc1m": -2.5,
+        "trend_dir": "Bear",
+        "adx_val": 18.0,
+        "is_sideways": True,
+        "ma_crossed_above": False,
+        "ma_bullish": False,
+        "crossover_bars_ago": -1,
+        "crossover_count": 0,
     }
     base.update(over)
     return base
@@ -392,16 +534,21 @@ class TestGetSortKey:
     def test_sorts_by_rating_order(self):
         app = _make_app()
         key = app._get_sort_key(3)
-        rows = [_row(ticker="A", combined_rating="POOR"),
-                _row(ticker="B", combined_rating="EXCELLENT"),
-                _row(ticker="C", combined_rating="MODERATE")]
+        rows = [
+            _row(ticker="A", combined_rating="POOR"),
+            _row(ticker="B", combined_rating="EXCELLENT"),
+            _row(ticker="C", combined_rating="MODERATE"),
+        ]
         by_rating = sorted(rows, key=key, reverse=True)
         assert [r["ticker"] for r in by_rating] == ["B", "C", "A"]
 
     def test_entry_rows_sort_above_non_entry(self):
         app = _make_app()
         key = app._get_sort_key(4)
-        rows = [_row(ticker="A", entry_signal=False), _row(ticker="B", entry_signal=True)]
+        rows = [
+            _row(ticker="A", entry_signal=False),
+            _row(ticker="B", entry_signal=True),
+        ]
         ordered = sorted(rows, key=key, reverse=True)
         assert ordered[0]["ticker"] == "B"
 
@@ -421,10 +568,18 @@ class TestGetSortKey:
 class TestMaText:
     def test_ma_text_labels(self):
         app = _make_app()
-        assert app._ma_text(_row(ma_crossed_above=True, crossover_bars_ago=3,
-                                 crossover_count=1)) == "^ X3"
-        assert app._ma_text(_row(ma_crossed_above=True, crossover_bars_ago=3,
-                                 crossover_count=2)) == "^ X3(2)"
+        assert (
+            app._ma_text(
+                _row(ma_crossed_above=True, crossover_bars_ago=3, crossover_count=1)
+            )
+            == "^ X3"
+        )
+        assert (
+            app._ma_text(
+                _row(ma_crossed_above=True, crossover_bars_ago=3, crossover_count=2)
+            )
+            == "^ X3(2)"
+        )
         assert app._ma_text(_row(ma_bullish=True)) == "^ Bull"
         assert app._ma_text(_row()) == "v Bear"
 
@@ -461,9 +616,18 @@ class TestDataRowColoring:
         app = _make_app()
         c = app.theme_colors
         row = app._make_data_row(
-            _row(ticker="HDFC", combined_rating="EXCELLENT", entry_signal=True,
-                 is_sideways=False, trend_dir="Bull", pc1m=3.4),
-            1, c, c["card"], 50,
+            _row(
+                ticker="HDFC",
+                combined_rating="EXCELLENT",
+                entry_signal=True,
+                is_sideways=False,
+                trend_dir="Bull",
+                pc1m=3.4,
+            ),
+            1,
+            c,
+            c["card"],
+            50,
         )
         assert _cell(row, 3).value == "EXCELLENT"
         assert _cell(row, 3).color == c["green"]
@@ -506,6 +670,7 @@ class TestTopPicks:
         gauge_container = row.controls[2]
         stack = gauge_container.content
         from flet import Stack
+
         assert isinstance(stack, Stack)
         score_text = stack.controls[1].content  # the centered Text
         assert score_text.value == "90"
@@ -513,14 +678,26 @@ class TestTopPicks:
 
 def test_summary_cards_update_values():
     app = _make_app()
-    app.summary_cards = {k: ft.Text("—") for k in
-                         ("total", "passed", "entry", "avg", "high",
-                          "bull", "bear", "dead_skip")}
-    app._update_summary([
-        _row(ticker="A", total=70, entry_signal=True, trend_dir="Bull"),
-        _row(ticker="B", total=40, trend_dir="Bull"),
-        _row(ticker="C", total=30, trend_dir="Bear"),
-    ])
+    app.summary_cards = {
+        k: ft.Text("—")
+        for k in (
+            "total",
+            "passed",
+            "entry",
+            "avg",
+            "high",
+            "bull",
+            "bear",
+            "dead_skip",
+        )
+    }
+    app._update_summary(
+        [
+            _row(ticker="A", total=70, entry_signal=True, trend_dir="Bull"),
+            _row(ticker="B", total=40, trend_dir="Bull"),
+            _row(ticker="C", total=30, trend_dir="Bear"),
+        ]
+    )
     assert app.summary_cards["total"].value == "3"
     assert app.summary_cards["passed"].value == "1"  # 70 >= threshold 50
     assert app.summary_cards["entry"].value == "1"
@@ -552,8 +729,10 @@ class TestHeroWarningRendering:
         return ns
 
     def test_stale_member_warning_renders_amber(self):
-        stale = "1 universe member(s) have stale data (last bar > 45d old): " \
-                "GSPL (2026-05-11) — suspended/delisted?"
+        stale = (
+            "1 universe member(s) have stale data (last bar > 45d old): "
+            "GSPL (2026-05-11) — suspended/delisted?"
+        )
         ns = self._hero_ns([stale])
 
         ResultsViewMixin._update_hero_status(
@@ -592,7 +771,10 @@ class TestSentimentBadge:
         c = app.theme_colors
         row = app._make_data_row(
             _row(ticker="TCS", _article_count=4, _sentiment_score=0.6),
-            1, c, c["card"], 50,
+            1,
+            c,
+            c["card"],
+            50,
         )
         content = row.content.controls[1].content
         assert isinstance(content, ft.Row)
@@ -615,7 +797,10 @@ class TestSentimentBadge:
         c = app.theme_colors
         row = app._make_data_row(
             _row(ticker="XYZ", _article_count=2, _sentiment_score=-0.8),
-            1, c, c["card"], 50,
+            1,
+            c,
+            c["card"],
+            50,
         )
         content = row.content.controls[1].content
         badge = content.controls[1]
@@ -628,7 +813,10 @@ class TestSentimentBadge:
         c = app.theme_colors
         row = app._make_data_row(
             _row(ticker="HDFC", _article_count=3, _sentiment_score=0.0),
-            1, c, c["card"], 50,
+            1,
+            c,
+            c["card"],
+            50,
         )
         ticker_text = app._row_ticker_text(row.content.controls[1])
         assert ticker_text.value == "HDFC"
@@ -646,7 +834,7 @@ class TestUiPrefsPersistence:
     def test_save_ui_prefs_writes_sort_size_and_rating(self, monkeypatch):
         """Sort / page size / rating filter persist to settings.json."""
         app = self._app_with_pref_controls()
-        app.sort_col = 18      # the 1M sparkline column
+        app.sort_col = 18  # the 1M sparkline column
         app.sort_reverse = True
         app.page_size = 200
         app.rating_filter_dd.value = "Good"
@@ -663,9 +851,13 @@ class TestUiPrefsPersistence:
     def test_load_ui_prefs_restores_saved_view(self):
         """After a restart the saved sort/size/filter are re-applied."""
         app = self._app_with_pref_controls()
-        app.settings = {**app_mod.DEFAULT_SETTINGS,
-                        "ui_sort_col": 18, "ui_sort_reverse": True,
-                        "ui_page_size": 200, "ui_rating_filter": "GOOD"}
+        app.settings = {
+            **app_mod.DEFAULT_SETTINGS,
+            "ui_sort_col": 18,
+            "ui_sort_reverse": True,
+            "ui_page_size": 200,
+            "ui_rating_filter": "GOOD",
+        }
 
         app._load_ui_prefs()
 
@@ -713,6 +905,7 @@ class TestErrorPaths:
     def test_scan_failure_logs_error_with_deferred_update(self, monkeypatch):
         """A crashing scan logs \"ERROR: …\" even when the UI update is deferred."""
         import scanner.backend.scanner_engine as se_mod
+
         app = self._deferred_app()
         app.universe_dd = type("DD", (), {"value": "NIFTY 50"})()
         app._scan_complete = lambda: None
@@ -740,13 +933,16 @@ class TestErrorPaths:
     def test_html_export_failure_logs_error_with_deferred_update(self, monkeypatch):
         """A crashing export logs the failure even with a deferred UI update."""
         import time
+
         app = self._deferred_app()
         app.results = [{"ticker": "TCS"}]
         app.universe_dd = type("DD", (), {"value": "NIFTY 50"})()
 
         def _boom(*a, **k):
             raise RuntimeError("export boom")
+
         import scanner.backend.report as report_mod
+
         monkeypatch.setattr(report_mod, "generate_html_report", _boom)
 
         app._export_html()
@@ -763,10 +959,12 @@ class TestErrorPaths:
     def test_prune_price_cache_failure_is_logged(self, monkeypatch):
         """A failing prune logs the error (direct log path, no deferral)."""
         import scanner.api.cache_manager as cm_mod
+
         app = self._deferred_app()
 
         def _boom(*a, **k):
             raise RuntimeError("prune boom")
+
         monkeypatch.setattr(cm_mod, "prune_stale_cache", _boom)
 
         app._prune_price_cache()
@@ -776,29 +974,37 @@ class TestErrorPaths:
     def test_clear_negative_cache_failure_is_logged(self, monkeypatch):
         """A failing dead-symbol-cache clear logs the error."""
         import scanner.api.cache_manager as cm_mod
+
         app = self._deferred_app()
         monkeypatch.setattr(cm_mod, "negative_load", dict)
 
         def _boom(*a, **k):
             raise RuntimeError("neg boom")
+
         monkeypatch.setattr(cm_mod, "negative_update", _boom)
 
         app._clear_negative_cache()
 
-        assert any("Could not clear dead-symbol cache: neg boom" in m for m in app.logged)
+        assert any(
+            "Could not clear dead-symbol cache: neg boom" in m for m in app.logged
+        )
 
     def test_clear_enrichment_cache_failure_is_logged(self, monkeypatch):
         """A failing enrichment-cache clear logs the error."""
         import scanner.api.cache_manager as cm_mod
+
         app = self._deferred_app()
 
         def _boom(*a, **k):
             raise RuntimeError("enrich boom")
+
         monkeypatch.setattr(cm_mod, "enrichment_clear", _boom)
 
         app._clear_enrichment_cache()
 
-        assert any("Could not clear enrichment cache: enrich boom" in m for m in app.logged)
+        assert any(
+            "Could not clear enrichment cache: enrich boom" in m for m in app.logged
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -824,7 +1030,10 @@ class TestTickerNewsToggle:
     @staticmethod
     def _app_with_row(monkeypatch):
         import scanner.ui.views_results as vr_mod
-        monkeypatch.setattr(vr_mod.threading, "Thread", TestTickerNewsToggle._NoopThread)
+
+        monkeypatch.setattr(
+            vr_mod.threading, "Thread", TestTickerNewsToggle._NoopThread
+        )
         app = _make_app()
         app.table_column = ft.Column(spacing=0)
         c = app.theme_colors
@@ -883,9 +1092,18 @@ class TestTickerNewsToggle:
         app = self._app_with_row(monkeypatch)
         app._toggle_stock_news("TCS")
 
-        app._show_news("TCS", [{"title": "TCS beats estimates", "summary": "",
-                                 "date": "2026-08-01", "provider": "Reuters",
-                                 "sentiment": "Good"}])
+        app._show_news(
+            "TCS",
+            [
+                {
+                    "title": "TCS beats estimates",
+                    "summary": "",
+                    "date": "2026-08-01",
+                    "provider": "Reuters",
+                    "sentiment": "Good",
+                }
+            ],
+        )
 
         frames = self._frames(app)
         assert len(frames) == 1
@@ -910,8 +1128,18 @@ class TestTickerNewsToggle:
     def test_second_click_on_open_panel_collapses_it(self, monkeypatch):
         """Clicking a ticker whose panel is open closes it again (no re-fetch)."""
         app = self._app_with_row(monkeypatch)
-        app._show_news("TCS", [{"title": "T", "summary": "", "date": "",
-                                 "provider": "", "sentiment": "Neutral"}])
+        app._show_news(
+            "TCS",
+            [
+                {
+                    "title": "T",
+                    "summary": "",
+                    "date": "",
+                    "provider": "",
+                    "sentiment": "Neutral",
+                }
+            ],
+        )
         assert len(self._frames(app)) == 1
 
         app._toggle_stock_news("TCS")
@@ -932,6 +1160,7 @@ class TestNewsPrefetch:
         import threading
 
         from scanner.backend.news_prefetch import NewsPrefetcher
+
         app = _make_app()
         app._results_lock = threading.Lock()
         app.all_results = [dict(r) for r in rows]
@@ -953,16 +1182,28 @@ class TestNewsPrefetch:
 
     @staticmethod
     def _sample_items(n=2):
-        return [{"title": f"Story {i}", "summary": "", "date": "2026-08-01",
-                 "provider": "Reuters", "sentiment": "Good"} for i in range(n)]
+        return [
+            {
+                "title": f"Story {i}",
+                "summary": "",
+                "date": "2026-08-01",
+                "provider": "Reuters",
+                "sentiment": "Good",
+            }
+            for i in range(n)
+        ]
 
     def test_attaches_news_and_badge_fields_to_top_rows(self, monkeypatch):
-        rows = [_row(ticker="A", total=90), _row(ticker="B", total=80),
-                _row(ticker="C", total=20)]
+        rows = [
+            _row(ticker="A", total=90),
+            _row(ticker="B", total=80),
+            _row(ticker="C", total=20),
+        ]
         app = self._app(rows)
+
         def _mock_fetch(tickers, **_k):
-            return {t: ([] if t == "C" else self._sample_items())
-                    for t in tickers}
+            return {t: ([] if t == "C" else self._sample_items()) for t in tickers}
+
         monkeypatch.setattr(news_prefetch_mod, "fetch_news_batch", _mock_fetch)
 
         app._news_prefetcher.prefetch()
@@ -981,23 +1222,29 @@ class TestNewsPrefetch:
     def test_keeps_existing_enrichment_counts(self, monkeypatch):
         row = _row(ticker="A", total=90, _article_count=7, _sentiment_score=0.5)
         app = self._app([row])
-        monkeypatch.setattr(news_prefetch_mod, "fetch_news_batch",
-                            lambda tickers, **_k: {"A": self._sample_items()})
+        monkeypatch.setattr(
+            news_prefetch_mod,
+            "fetch_news_batch",
+            lambda tickers, **_k: {"A": self._sample_items()},
+        )
 
         app._news_prefetcher.prefetch()
 
         got = app.all_results[0]
-        assert got["_article_count"] == 7      # provider enrichment wins
+        assert got["_article_count"] == 7  # provider enrichment wins
         assert got["_sentiment_score"] == 0.5
-        assert len(got["_news_items"]) == 2    # stories still attached
+        assert len(got["_news_items"]) == 2  # stories still attached
 
     def test_skips_rows_that_already_have_stories(self, monkeypatch):
         row = _row(ticker="A", total=90)
         row["_news_items"] = []
         app = self._app([row])
         called = []
-        monkeypatch.setattr(news_prefetch_mod, "fetch_news_batch",
-                            lambda *a, **k: called.append(1) or {})
+        monkeypatch.setattr(
+            news_prefetch_mod,
+            "fetch_news_batch",
+            lambda *a, **k: called.append(1) or {},
+        )
 
         app._news_prefetcher.prefetch()
 
@@ -1009,6 +1256,7 @@ class TestNewsPrefetch:
         def _bump_epoch(tickers, **_k):
             app._scan_epoch = 2  # a new scan took over while we were fetching
             return {"A": self._sample_items()}
+
         monkeypatch.setattr(news_prefetch_mod, "fetch_news_batch", _bump_epoch)
 
         app._news_prefetcher.prefetch()
@@ -1018,8 +1266,11 @@ class TestNewsPrefetch:
     def test_attach_skipped_when_scan_cancelled(self, monkeypatch):
         app = self._app([_row(ticker="A", total=90)])
         app._scan_cancelled = True
-        monkeypatch.setattr(news_prefetch_mod, "fetch_news_batch",
-                            lambda tickers, **_k: {"A": self._sample_items()})
+        monkeypatch.setattr(
+            news_prefetch_mod,
+            "fetch_news_batch",
+            lambda tickers, **_k: {"A": self._sample_items()},
+        )
 
         app._news_prefetcher.prefetch()
 
@@ -1045,23 +1296,31 @@ class TestPrefetchedRowClick:
             app._make_data_row(dict(row), 1, c, c["card"], 50)
         )
         import scanner.ui.views_results as vr_mod
-        monkeypatch.setattr(vr_mod.threading, "Thread",
-                            TestPrefetchedRowClick._BoomThread)
+
+        monkeypatch.setattr(
+            vr_mod.threading, "Thread", TestPrefetchedRowClick._BoomThread
+        )
         return app
 
     def _open_panel(self, monkeypatch, items, **stats):
         app = self._app_with_prefetch(monkeypatch, items, **stats)
         app._toggle_stock_news("TCS")
-        frames = [x for x in app.table_column.controls
-                  if hasattr(x, "_news_ticker")]
+        frames = [x for x in app.table_column.controls if hasattr(x, "_news_ticker")]
         assert len(frames) == 1
         return frames[0]
 
     def test_stories_render_instantly(self, monkeypatch):
         frame = self._open_panel(
             monkeypatch,
-            [{"title": "TCS profit beat", "summary": "", "date": "2026-08-01",
-              "provider": "Reuters", "sentiment": "Good"}],
+            [
+                {
+                    "title": "TCS profit beat",
+                    "summary": "",
+                    "date": "2026-08-01",
+                    "provider": "Reuters",
+                    "sentiment": "Good",
+                }
+            ],
         )
         body = TestTickerNewsToggle._body_text(frame)
         assert "TCS profit beat" in body
@@ -1071,9 +1330,18 @@ class TestPrefetchedRowClick:
     def test_stats_chips_in_panel_header(self, monkeypatch):
         frame = self._open_panel(
             monkeypatch,
-            [{"title": "T", "summary": "", "date": "2026-08-01",
-              "provider": "", "sentiment": "Neutral"}],
-            close=2450.0, rsi=62.0, pc1m=4.2,
+            [
+                {
+                    "title": "T",
+                    "summary": "",
+                    "date": "2026-08-01",
+                    "provider": "",
+                    "sentiment": "Neutral",
+                }
+            ],
+            close=2450.0,
+            rsi=62.0,
+            pc1m=4.2,
         )
         body = TestTickerNewsToggle._body_text(frame)
         assert "2,450" in body
@@ -1084,3 +1352,80 @@ class TestPrefetchedRowClick:
         frame = self._open_panel(monkeypatch, [])
         assert "No recent news found" in TestTickerNewsToggle._body_text(frame)
         assert getattr(frame, "_news_loading", False) is False
+
+
+# ============================================================== =================
+# UX polish - empty states, loading placeholders, transitions, reduce-motion
+# ============================================================== =================
+
+
+class TestUxPolish:
+    def test_empty_state_has_run_cta(self, monkeypatch):
+        """The never-scanned empty state offers a RUN SCAN button + hint."""
+        app = _make_app()
+        app._build_ui()
+        col = app.empty_label.content
+        texts = [ctl.value for ctl in col.controls if isinstance(ctl, ft.Text)]
+        assert "No results yet" in texts
+        assert "or press Ctrl+R" in texts
+        buttons = [ctl for ctl in col.controls if isinstance(ctl, ft.Button)]
+        assert len(buttons) == 1
+        clicked = []
+        monkeypatch.setattr(app, "_on_action_click", lambda *a, **k: clicked.append(1))
+        buttons[0].on_click(None)
+        assert clicked == [1]
+
+    def test_market_loading_shown_until_first_snapshot(self):
+        """The hero shows a loading ring in the market slot before data lands."""
+        app = _make_app()
+        app._build_ui()
+        assert app.market_loading.visible is not False
+        assert app.market_box.visible is False
+        app._render_market(
+            {"level": 25012.4, "change": 85.2, "pct": 0.34, "quotes": []}
+        )
+        assert app.market_loading.visible is False
+        assert app.market_box.visible is True
+
+    def test_market_loading_dismissed_when_snapshot_fails(self):
+        """A failed fetch must not leave the hero spinner running forever."""
+        app = _make_app()
+        app._build_ui()
+        app._render_market(None)
+        assert app.market_loading.visible is False
+        assert app.market_box.visible is False
+
+    def test_view_switch_fades_when_motion_enabled(self):
+        """Views carry animate_opacity and the fade two-step runs on switch."""
+        app = _make_app()
+        app._build_ui()
+        assert app.settings_view.animate_opacity is not None
+        before = app.page.update_calls
+        app._show_settings()
+        # fade = two pushes (opacity 0 frame, then animate-to-1 frame)
+        assert app.page.update_calls == before + 2
+        assert app.settings_view.opacity == 1.0
+
+    def test_reduce_motion_collapses_fade_to_single_update(self):
+        """With reduce_motion on, a view switch is one plain update."""
+        app = _make_app()
+        app.settings["reduce_motion"] = True
+        app._build_ui()
+        before = app.page.update_calls
+        app._show_settings()
+        assert app.page.update_calls == before + 1
+        assert app.settings_view.visible is True
+
+    def test_reduce_motion_skips_row_fade(self):
+        """_animate_rows_in no-ops under reduce_motion (rows stay instant)."""
+        app = _make_app()
+        app.settings["reduce_motion"] = True
+        app.table_column = ft.Column(spacing=0)
+        row = ft.Container(
+            opacity=0, animate_opacity=ft.Animation(200, ft.AnimationCurve.EASE_OUT)
+        )
+        app.table_column.controls.append(row)
+        before = app.page.update_calls
+        app._animate_rows_in()
+        assert row.opacity == 0  # untouched - no animation scheduled
+        assert app.page.update_calls == before

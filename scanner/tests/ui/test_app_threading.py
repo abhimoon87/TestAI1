@@ -121,6 +121,8 @@ class TestSafeUpdateThreadMarshalling:
         finally:
             loop.call_soon_threadsafe(loop.stop)
             t.join(timeout=5)
+
+
 class TestNestedSafeUpdateReentrancy:
     """``_safe_update`` wrappers must be able to re-enter ``_safe_update``.
 
@@ -178,4 +180,3 @@ class TestNestedSafeUpdateReentrancy:
         finally:
             loop.call_soon_threadsafe(loop.stop)
             t.join(timeout=5)
-

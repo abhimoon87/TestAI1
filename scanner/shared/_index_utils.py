@@ -32,18 +32,21 @@ def _normalize_daily_index(df: pd.DataFrame) -> pd.DataFrame:
         try:
             idx = pd.DatetimeIndex(pd.to_datetime(idx))
         except Exception:
-            logger.debug("DatetimeIndex parse failed", exc_info=True)
+            logger.info("DatetimeIndex parse failed", exc_info=True)
             return df
     if idx.tz is None:
         try:
             idx = idx.tz_localize("UTC")
         except Exception:
-            logger.debug("Timezone localization to UTC failed", exc_info=True)
+            logger.info("Timezone localization to UTC failed", exc_info=True)
     try:
         dates = idx.tz_convert("Asia/Kolkata").tz_localize(None).normalize()
     except Exception:
-        dates = idx.normalize() if getattr(idx, "tz", None) is None \
+        dates = (
+            idx.normalize()
+            if getattr(idx, "tz", None) is None
             else idx.tz_localize(None).normalize()
+        )
     out = df.copy()
     out.index = dates
     out = out[~out.index.duplicated(keep="last")]

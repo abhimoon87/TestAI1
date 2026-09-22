@@ -31,12 +31,14 @@ from scanner.api.data_fetcher import (
 def _isolate_negative_cache(tmp_path, monkeypatch):
     """Point the on-disk negative cache at a temp file and reset it per test."""
     monkeypatch.setattr(
-        data_fetcher, "_NEGATIVE_CACHE_PATH",
+        data_fetcher,
+        "_NEGATIVE_CACHE_PATH",
         str(tmp_path / "dead_symbols.json"),
     )
     monkeypatch.setattr(data_fetcher, "_negative_cache", None)
     monkeypatch.setattr(
-        data_fetcher, "_negative_cache_ttl_hours",
+        data_fetcher,
+        "_negative_cache_ttl_hours",
         float(data_fetcher.NEGATIVE_CACHE_TTL_HOURS),
     )
     yield
@@ -47,12 +49,14 @@ def _isolate_negative_cache(tmp_path, monkeypatch):
 def _isolate_enrichment_cache(tmp_path, monkeypatch):
     """Point the on-disk enrichment cache at a temp file and reset per test."""
     monkeypatch.setattr(
-        data_fetcher, "_ENRICHMENT_CACHE_PATH",
+        data_fetcher,
+        "_ENRICHMENT_CACHE_PATH",
         str(tmp_path / "enrichment_cache.json"),
     )
     monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
     monkeypatch.setattr(
-        data_fetcher, "ENRICHMENT_CACHE_TTL_HOURS",
+        data_fetcher,
+        "ENRICHMENT_CACHE_TTL_HOURS",
         float(data_fetcher.ENRICHMENT_CACHE_TTL_HOURS),
     )
     yield
@@ -81,13 +85,16 @@ def _make_daily_ohlcv(n=200, start="2024-01-01"):
     dates = pd.bdate_range(start, periods=n)
     rng = np.random.RandomState(42)
     close = 500 + np.cumsum(rng.randn(n) * 2)
-    return pd.DataFrame({
-        "open": close + rng.randn(n),
-        "high": close + np.abs(rng.randn(n)) * 2,
-        "low": close - np.abs(rng.randn(n)) * 2,
-        "close": close,
-        "volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "open": close + rng.randn(n),
+            "high": close + np.abs(rng.randn(n)) * 2,
+            "low": close - np.abs(rng.randn(n)) * 2,
+            "close": close,
+            "volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
+        },
+        index=dates,
+    )
 
 
 def _make_yf_download_result(tickers, n=200, force_multi=False):
@@ -103,13 +110,16 @@ def _make_yf_download_result(tickers, n=200, force_multi=False):
 
     if len(tickers) == 1 and not force_multi:
         # Single ticker → flat DataFrame
-        return pd.DataFrame({
-            "Open": close + rng.randn(n),
-            "High": close + np.abs(rng.randn(n)) * 2,
-            "Low": close - np.abs(rng.randn(n)) * 2,
-            "Close": close,
-            "Volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
-        }, index=dates)
+        return pd.DataFrame(
+            {
+                "Open": close + rng.randn(n),
+                "High": close + np.abs(rng.randn(n)) * 2,
+                "Low": close - np.abs(rng.randn(n)) * 2,
+                "Close": close,
+                "Volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
+            },
+            index=dates,
+        )
 
     # Multiple tickers → MultiIndex columns
     arrays = []
@@ -121,10 +131,10 @@ def _make_yf_download_result(tickers, n=200, force_multi=False):
     for i, t in enumerate(tickers):
         rng2 = np.random.RandomState(42 + i)
         c = 500 + np.cumsum(rng2.randn(n) * 2)
-        data[:, i * 5] = c + rng2.randn(n)           # Open
+        data[:, i * 5] = c + rng2.randn(n)  # Open
         data[:, i * 5 + 1] = c + np.abs(rng2.randn(n)) * 2  # High
         data[:, i * 5 + 2] = c - np.abs(rng2.randn(n)) * 2  # Low
-        data[:, i * 5 + 3] = c                        # Close
+        data[:, i * 5 + 3] = c  # Close
         data[:, i * 5 + 4] = rng2.rand(n) * 1e6 + 5e5  # Volume
 
     return pd.DataFrame(data, index=dates, columns=multi_cols)
@@ -161,13 +171,16 @@ class TestResampleOhlcv:
         """Weekly open = first daily open, high = max, low = min, close = last."""
         # Create 10 daily bars in one week
         dates = pd.bdate_range("2024-01-01", periods=10)
-        df = pd.DataFrame({
-            "open":  [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
-            "high":  [12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
-            "low":   [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-            "close": [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-            "volume": [100] * 10,
-        }, index=dates)
+        df = pd.DataFrame(
+            {
+                "open": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+                "high": [12, 13, 14, 15, 16, 17, 18, 19, 20, 21],
+                "low": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+                "close": [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+                "volume": [100] * 10,
+            },
+            index=dates,
+        )
         result = resample_ohlcv(df, "W")
         assert result is not None
         # Should have 1-2 weekly bars
@@ -182,14 +195,16 @@ class TestResampleOhlcv:
 
     def test_non_datetime_index_with_date_column(self):
         """DataFrame with a 'date' column should be resampled."""
-        df = pd.DataFrame({
-            "date": pd.bdate_range("2024-01-01", periods=200),
-            "open": np.ones(200),
-            "high": np.ones(200) * 1.1,
-            "low": np.ones(200) * 0.9,
-            "close": np.ones(200),
-            "volume": np.ones(200) * 1000,
-        })
+        df = pd.DataFrame(
+            {
+                "date": pd.bdate_range("2024-01-01", periods=200),
+                "open": np.ones(200),
+                "high": np.ones(200) * 1.1,
+                "low": np.ones(200) * 0.9,
+                "close": np.ones(200),
+                "volume": np.ones(200) * 1000,
+            }
+        )
         result = resample_ohlcv(df, "W")
         assert result is not None
         assert len(result) < 200
@@ -272,7 +287,9 @@ class TestFetchBatchYfinance:
         mock_provider.fetch_stock.return_value = None
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE"], period="1y")
 
         assert result == {}
@@ -284,23 +301,24 @@ class TestFetchBatchYfinance:
         close = 500 + np.cumsum(rng.randn(200) * 2)
 
         # Good ticker data (200 rows)
-        good = np.column_stack([
-            close + rng.randn(200),
-            close + np.abs(rng.randn(200)),
-            close - np.abs(rng.randn(200)),
-            close,
-            rng.rand(200) * 1e6,
-        ])
+        good = np.column_stack(
+            [
+                close + rng.randn(200),
+                close + np.abs(rng.randn(200)),
+                close - np.abs(rng.randn(200)),
+                close,
+                rng.rand(200) * 1e6,
+            ]
+        )
 
         # Bad ticker data — same length but contains NaN so dropna leaves < 20 rows
         bad = np.full((200, 5), np.nan)
         bad[:10, :] = 100  # only 10 valid rows
 
-        multi_cols = pd.MultiIndex.from_tuples([
-            ("RELIANCE.NS", c) for c in ["Open", "High", "Low", "Close", "Volume"]
-        ] + [
-            ("TCS.NS", c) for c in ["Open", "High", "Low", "Close", "Volume"]
-        ])
+        multi_cols = pd.MultiIndex.from_tuples(
+            [("RELIANCE.NS", c) for c in ["Open", "High", "Low", "Close", "Volume"]]
+            + [("TCS.NS", c) for c in ["Open", "High", "Low", "Close", "Volume"]]
+        )
         data = np.hstack([good, bad])
         mock_data = pd.DataFrame(data, index=dates, columns=multi_cols)
 
@@ -311,7 +329,9 @@ class TestFetchBatchYfinance:
         mock_provider.fetch_stock.return_value = None
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
 
         assert "RELIANCE" in result
@@ -391,7 +411,10 @@ class TestBatchDownloadCache:
         def fake_set(ticker, period, provider, df):
             written[ticker] = (period, df)
 
-        with patch("scanner.api.data_fetcher._get_cached", side_effect=lambda t, p, pr: cached.get(t)):
+        with patch(
+            "scanner.api.data_fetcher._get_cached",
+            side_effect=lambda t, p, pr: cached.get(t),
+        ):
             with patch("scanner.api.data_fetcher._set_cached", side_effect=fake_set):
                 with patch.dict("sys.modules", {"yfinance": mock_yf}):
                     result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
@@ -402,7 +425,13 @@ class TestBatchDownloadCache:
         assert call_args[0][0] == ["TCS.NS"]
         # The fresh result was cached as daily bars under the download period
         assert written["TCS"][0] == "1y"
-        assert list(written["TCS"][1].columns) == ["open", "high", "low", "close", "volume"]
+        assert list(written["TCS"][1].columns) == [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        ]
         assert len(written["TCS"][1]) == 200
 
     def test_short_cached_frame_is_redownloaded(self):
@@ -413,13 +442,18 @@ class TestBatchDownloadCache:
         mock_yf = MagicMock()
         mock_yf.download.return_value = mock_data
 
-        with patch("scanner.api.data_fetcher._get_cached", side_effect=lambda t, p, pr: cached.get(t)):
+        with patch(
+            "scanner.api.data_fetcher._get_cached",
+            side_effect=lambda t, p, pr: cached.get(t),
+        ):
             with patch("scanner.api.data_fetcher._set_cached"):
                 with patch.dict("sys.modules", {"yfinance": mock_yf}):
                     result = fetch_batch_yfinance(["RELIANCE"], period="1y")
 
         assert "RELIANCE" in result
-        assert len(result["RELIANCE"]) == 200  # from the fresh download, not the stale cache
+        assert (
+            len(result["RELIANCE"]) == 200
+        )  # from the fresh download, not the stale cache
 
     def test_weekly_scan_replays_cached_daily_bars(self):
         """Cached daily bars are resampled for non-daily timeframes."""
@@ -435,7 +469,9 @@ class TestBatchDownloadCache:
         with patch("scanner.api.data_fetcher._get_cached", side_effect=fake_get):
             with patch("scanner.api.data_fetcher._set_cached"):
                 with patch.dict("sys.modules", {"yfinance": mock_yf}):
-                    result = fetch_batch_yfinance(["RELIANCE"], period="2y", timeframe="W")
+                    result = fetch_batch_yfinance(
+                        ["RELIANCE"], period="2y", timeframe="W"
+                    )
 
         assert "RELIANCE" in result
         df = result["RELIANCE"]
@@ -478,7 +514,9 @@ class TestFetchStockData:
         mock_provider.fetch_stock.return_value = df
         mock_provider.fetch_fundamentals.return_value = {"pe_ratio": 20.0}
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_stock_data("RELIANCE", period="1y")
 
         assert result is not None
@@ -490,7 +528,9 @@ class TestFetchStockData:
         mock_provider = MagicMock()
         mock_provider.fetch_stock.return_value = None
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_stock_data("INVALID", period="1y")
 
         assert result is None
@@ -502,7 +542,9 @@ class TestFetchStockData:
         mock_provider.fetch_stock.return_value = df
         mock_provider.fetch_fundamentals.return_value = {"pe_ratio": 15.0, "roe": 22.0}
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_stock_data("RELIANCE", period="1y")
 
         assert "_fundamentals" in result.attrs
@@ -511,9 +553,14 @@ class TestFetchStockData:
     def test_retries_on_exception(self):
         """Should retry on exception and eventually fail."""
         mock_provider = MagicMock()
-        mock_provider.fetch_stock.side_effect = [Exception("network"), Exception("network")]
+        mock_provider.fetch_stock.side_effect = [
+            Exception("network"),
+            Exception("network"),
+        ]
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             with patch("scanner.api.data_fetcher.time.sleep"):  # skip sleep in tests
                 result = fetch_stock_data("RELIANCE", period="1y", retries=2)
 
@@ -527,7 +574,9 @@ class TestFetchIndexData:
         mock_provider = MagicMock()
         mock_provider.fetch_index.return_value = df
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_index_data("^NSEI", period="1y")
 
         assert result is not None
@@ -537,7 +586,9 @@ class TestFetchIndexData:
         mock_provider = MagicMock()
         mock_provider.fetch_index.return_value = None
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_index_data("^NSEI", period="1y")
 
         assert result is None
@@ -548,7 +599,9 @@ class TestFetchFundamentals:
         mock_provider = MagicMock()
         mock_provider.fetch_fundamentals.return_value = {"pe_ratio": 20.0}
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_fundamentals("RELIANCE")
 
         assert result == {"pe_ratio": 20.0}
@@ -557,7 +610,9 @@ class TestFetchFundamentals:
         mock_provider = MagicMock()
         mock_provider.fetch_fundamentals.return_value = None
 
-        with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+        with patch(
+            "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+        ):
             result = fetch_fundamentals("INVALID")
 
         assert result is None
@@ -580,15 +635,19 @@ class TestFetchBatchFallback:
         mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
 
         assert "RELIANCE" in result  # from the yfinance chunk
-        assert "TCS" in result       # recovered via fallback
+        assert "TCS" in result  # recovered via fallback
         assert list(result["TCS"].columns) == ["open", "high", "low", "close", "volume"]
         # Fallback must skip yfinance — it just failed at batch level
         mock_provider.fetch_stock.assert_called_once_with(
-            "TCS", "1y", skip=("yfinance",),
+            "TCS",
+            "1y",
+            skip=("yfinance",),
             provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
         )
 
@@ -601,7 +660,9 @@ class TestFetchBatchFallback:
         mock_provider = MagicMock()
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
 
         assert len(result) == 2
@@ -617,7 +678,9 @@ class TestFetchBatchFallback:
         mock_provider.fetch_stock.return_value = None
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
 
         assert "RELIANCE" in result
@@ -645,13 +708,15 @@ class TestFetchBatchFallback:
         threading.Thread(target=_fire, daemon=True).start()
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(
                     ["RELIANCE", "TCS"], period="1y", cancel_event=cancel_event
                 )
 
         assert "RELIANCE" in result  # yfinance phase completed
-        assert "TCS" not in result   # slow fallback fetch aborted by cancel
+        assert "TCS" not in result  # slow fallback fetch aborted by cancel
 
     def test_weekly_fallback_resamples(self):
         """Fallback frames should be resampled like batch frames (W timeframe)."""
@@ -663,14 +728,20 @@ class TestFetchBatchFallback:
         mock_provider.fetch_stock.return_value = _make_daily_ohlcv(500)
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
-                result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y", timeframe="W")
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
+                result = fetch_batch_yfinance(
+                    ["RELIANCE", "TCS"], period="1y", timeframe="W"
+                )
 
         assert "RELIANCE" in result
         assert "TCS" in result
         # Weekly period 1y extends to 2y for the per-ticker fallback
         mock_provider.fetch_stock.assert_called_once_with(
-            "TCS", "2y", skip=("yfinance",),
+            "TCS",
+            "2y",
+            skip=("yfinance",),
             provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
         )
         assert len(result["TCS"]) < 500  # resampled to weekly bars
@@ -687,7 +758,9 @@ class TestFetchBatchFallback:
 
         tickers = ["RELIANCE", "TCS", "BSEONLYXYZ"]
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 with patch("scanner.api.data_fetcher.FALLBACK_FILTER_MIN_MISSING", 1):
                     with patch(
                         "scanner.api.data_fetcher._nse_membership_set",
@@ -695,12 +768,14 @@ class TestFetchBatchFallback:
                     ):
                         result = fetch_batch_yfinance(tickers, period="1y")
 
-        assert "RELIANCE" in result       # from the yfinance chunk
-        assert "TCS" in result            # NSE member → attempted & recovered
+        assert "RELIANCE" in result  # from the yfinance chunk
+        assert "TCS" in result  # NSE member → attempted & recovered
         assert "BSEONLYXYZ" not in result  # non-NSE → never attempted
         # Only the NSE-member miss reached the fallback providers
         mock_provider.fetch_stock.assert_called_once_with(
-            "TCS", "1y", skip=("yfinance",),
+            "TCS",
+            "1y",
+            skip=("yfinance",),
             provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
         )
 
@@ -715,13 +790,18 @@ class TestFetchBatchFallback:
 
         tickers = ["RELIANCE", "TCS", "BSEONLYXYZ"]
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 with patch("scanner.api.data_fetcher.FALLBACK_FILTER_MIN_MISSING", 1):
-                    with patch("scanner.api.data_fetcher._nse_membership_set", return_value=None):
+                    with patch(
+                        "scanner.api.data_fetcher._nse_membership_set",
+                        return_value=None,
+                    ):
                         result = fetch_batch_yfinance(tickers, period="1y")
 
         assert "RELIANCE" in result
-        assert "TCS" in result          # unfiltered → both misses attempted
+        assert "TCS" in result  # unfiltered → both misses attempted
         assert "BSEONLYXYZ" in result
         assert mock_provider.fetch_stock.call_count == 2
 
@@ -736,8 +816,12 @@ class TestFetchBatchFallback:
 
         # 1 missing ticker < FALLBACK_FILTER_MIN_MISSING (default 25)
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
-                with patch("scanner.api.data_fetcher._nse_membership_set") as mock_membership:
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
+                with patch(
+                    "scanner.api.data_fetcher._nse_membership_set"
+                ) as mock_membership:
                     result = fetch_batch_yfinance(["RELIANCE", "TCS"], period="1y")
 
         assert "TCS" in result
@@ -757,7 +841,9 @@ class TestNegativeCache:
         dead_provider = MagicMock()
         dead_provider.fetch_stock.return_value = None
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=dead_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=dead_provider
+            ):
                 result1 = fetch_batch_yfinance(["RELIANCE", "TCS", "ZZZ"], period="1y")
 
         assert "TCS" not in result1
@@ -770,7 +856,9 @@ class TestNegativeCache:
         alive_provider = MagicMock()
         alive_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=alive_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=alive_provider
+            ):
                 result2 = fetch_batch_yfinance(["RELIANCE", "TCS", "ZZZ"], period="1y")
 
         assert "RELIANCE" in result2
@@ -792,7 +880,9 @@ class TestNegativeCache:
         mock_provider.fetch_stock.return_value = _make_daily_ohlcv(200)
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE", "STALE"], period="1y")
 
         assert "STALE" in result  # re-attempted after TTL expiry
@@ -809,7 +899,9 @@ class TestNegativeCache:
         mock_provider.fetch_stock.return_value = _make_daily_ohlcv(30)  # < 50 bars
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=mock_provider):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=mock_provider
+            ):
                 result = fetch_batch_yfinance(["RELIANCE", "NEWIPO"], period="1y")
 
         assert "NEWIPO" not in result  # still a miss for this scan...
@@ -826,6 +918,7 @@ class TestNegativeCache:
 
         # An expired entry on disk is dropped on load
         import json
+
         with open(data_fetcher._NEGATIVE_CACHE_PATH, encoding="utf-8") as f:
             raw = json.load(f)
         raw["ANCIENT"] = time.time() - 48 * 3600
@@ -847,7 +940,10 @@ class TestNegativeCache:
         assert data_fetcher.negative_cache_ttl_hours() == 1.0
 
         data_fetcher.set_negative_cache_ttl_hours(None)  # back to default
-        assert data_fetcher.negative_cache_ttl_hours() == data_fetcher.NEGATIVE_CACHE_TTL_HOURS
+        assert (
+            data_fetcher.negative_cache_ttl_hours()
+            == data_fetcher.NEGATIVE_CACHE_TTL_HOURS
+        )
 
     def test_skip_count_reset_and_accumulate(self):
         """The per-scan skip counter resets and only accumulates positive skips."""
@@ -905,9 +1001,14 @@ class TestEnrichmentCache:
 
         # An expired entry on disk is dropped on load
         import json
+
         with open(data_fetcher._ENRICHMENT_CACHE_PATH, encoding="utf-8") as f:
             raw = json.load(f)
-        raw["ANCIENT"] = {"ts": time.time() - 48 * 3600, "providers": {}, "fundamentals": None}
+        raw["ANCIENT"] = {
+            "ts": time.time() - 48 * 3600,
+            "providers": {},
+            "fundamentals": None,
+        }
         with open(data_fetcher._ENRICHMENT_CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(raw, f)
         data_fetcher._enrichment_cache = None
@@ -947,7 +1048,9 @@ class TestAbortableBatchDownload:
         cancel_event = threading.Event()
         cancel_event.set()
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
                 result = fetch_batch_yfinance(
                     ["AAA", "BBB"], period="1y", cancel_event=cancel_event
                 )
@@ -956,6 +1059,7 @@ class TestAbortableBatchDownload:
 
     def test_cancel_mid_batch_returns_without_waiting_for_chunk(self):
         """Stop returns promptly even while a chunk download is still running."""
+
         def slow_download(*a, **kw):
             time.sleep(8)
             return _make_yf_download_result(["RELIANCE.NS"], n=200)
@@ -971,7 +1075,9 @@ class TestAbortableBatchDownload:
         threading.Thread(target=_fire, daemon=True).start()
         t0 = time.time()
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
                 result = fetch_batch_yfinance(
                     ["AAA", "BBB"], period="1y", cancel_event=cancel_event
                 )
@@ -1003,13 +1109,19 @@ class TestAbortableBatchDownload:
                 cancel_event.set()  # cancel lands between batch 1 and batch 2
 
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()):
-                with patch("scanner.api.data_fetcher.time.sleep", side_effect=sleep_then_cancel):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
+                with patch(
+                    "scanner.api.data_fetcher.time.sleep", side_effect=sleep_then_cancel
+                ):
                     result = fetch_batch_yfinance(
                         tickers, period="1y", cancel_event=cancel_event
                     )
 
-        assert calls["n"] == MAX_PARALLEL_CHUNKS  # batch 1 only — batch 2 never scheduled
+        assert (
+            calls["n"] == MAX_PARALLEL_CHUNKS
+        )  # batch 1 only — batch 2 never scheduled
         assert "T0" in result
 
 
@@ -1042,7 +1154,9 @@ class TestStreamYieldsPerChunk:
         mock_yf = MagicMock()
         mock_yf.download.side_effect = staggered_download
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
                 gen = fetch_batch_yfinance_stream(fast + slow, period="1y")
                 t0 = _time.perf_counter()
                 first = next(gen)
@@ -1068,7 +1182,9 @@ class TestStreamYieldsPerChunk:
         mock_yf.download.side_effect = flaky_download
         tickers = [f"T{i}" for i in range(200)] + [f"BAD{i}" for i in range(200)]
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
                 yields = list(fetch_batch_yfinance_stream(tickers, period="1y"))
 
         got = {t for chunk in yields for t in chunk}
@@ -1087,6 +1203,7 @@ class TestScanStartStalePrune:
 
         import pyarrow as _pa
         import pyarrow.parquet as _pq
+
         stale = (_dt.now() - _td(days=1)).isoformat()
         _os.makedirs(str(d), exist_ok=True)
         path = _os.path.join(str(d), name + ".parquet")
@@ -1111,14 +1228,16 @@ class TestScanStartStalePrune:
         mock_yf = MagicMock()
         mock_yf.download.return_value = _make_yf_download_result(["RELIANCE.NS"], n=200)
         with patch.dict("sys.modules", {"yfinance": mock_yf}):
-            with patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
                 result = fetch_batch_yfinance(["RELIANCE"], period="1y")
 
         assert "RELIANCE" in result
-        assert not _os.path.exists(stale_pkl)         # stale pair pruned...
+        assert not _os.path.exists(stale_pkl)  # stale pair pruned...
         assert not _os.path.exists(stale_pkl[:-9] + ".meta")
         fresh = [f for f in _os.listdir(cache_dir) if f.endswith(".parquet")]
-        assert len(fresh) == 1                        # ...today's new entry kept
+        assert len(fresh) == 1  # ...today's new entry kept
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1135,13 +1254,16 @@ def _ohlcv_like(days, seed=0):
     """OHLCV frame indexed by the given timestamps (values are irrelevant)."""
     rng = np.random.RandomState(seed)
     close = 500 + np.cumsum(rng.randn(len(days)) * 2)
-    return pd.DataFrame({
-        "open": close + rng.randn(len(days)),
-        "high": close + np.abs(rng.randn(len(days))) * 2,
-        "low": close - np.abs(rng.randn(len(days))) * 2,
-        "close": close,
-        "volume": (rng.rand(len(days)) * 1e6 + 5e5).astype(int),
-    }, index=pd.DatetimeIndex(days))
+    return pd.DataFrame(
+        {
+            "open": close + rng.randn(len(days)),
+            "high": close + np.abs(rng.randn(len(days))) * 2,
+            "low": close - np.abs(rng.randn(len(days))) * 2,
+            "close": close,
+            "volume": (rng.rand(len(days)) * 1e6 + 5e5).astype(int),
+        },
+        index=pd.DatetimeIndex(days),
+    )
 
 
 def _trade_days(n=200, start="2024-01-01"):

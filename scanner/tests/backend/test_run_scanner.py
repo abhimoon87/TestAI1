@@ -46,7 +46,9 @@ def cli_mocks(recent_crossover_ohlcv, flat_ohlcv, monkeypatch):
         return "<html>"
 
     monkeypatch.setattr(run_scanner, "load_settings", lambda: {"min_score": 50.0})
-    monkeypatch.setattr(run_scanner, "select_universe", lambda: ("TEST", ["AAA", "BBB"]))
+    monkeypatch.setattr(
+        run_scanner, "select_universe", lambda: ("TEST", ["AAA", "BBB"])
+    )
     monkeypatch.setattr(run_scanner, "select_threshold", lambda: 50.0)
     monkeypatch.setattr(run_scanner, "select_period", lambda: "1y")
     monkeypatch.setattr(run_scanner, "select_timeframe", lambda: "D")
@@ -59,7 +61,9 @@ def cli_mocks(recent_crossover_ohlcv, flat_ohlcv, monkeypatch):
     monkeypatch.setattr(scanner_engine, "fetch_fundamentals", lambda *a, **kw: None)
 
     stock_data = {"AAA": recent_crossover_ohlcv, "BBB": flat_ohlcv}
-    monkeypatch.setattr(run_scanner, "fetch_batch_yfinance", lambda *a, **kw: stock_data)
+    monkeypatch.setattr(
+        run_scanner, "fetch_batch_yfinance", lambda *a, **kw: stock_data
+    )
     return stock_data, captured
 
 
@@ -72,9 +76,13 @@ class TestCliScoringLoop:
         def fake_score_ticker(ticker, df, **kw):
             calls.append((ticker, kw))
             if ticker == "AAA":
-                return {"total": 62.0, "trend_dir": "Bull",
-                        "trend_color": "bull", "combined_rating": "GOOD",
-                        "ticker": ticker}, "Bull"
+                return {
+                    "total": 62.0,
+                    "trend_dir": "Bull",
+                    "trend_color": "bull",
+                    "combined_rating": "GOOD",
+                    "ticker": ticker,
+                }, "Bull"
             if ticker == "BBB":
                 return None, "filtered"
             return None, "no_score"
@@ -84,10 +92,15 @@ class TestCliScoringLoop:
         run_scanner.run_scan()
 
         # Only the scored ticker reaches the report
-        assert captured["results"] == [{"total": 62.0, "trend_dir": "Bull",
-                                        "trend_color": "bull",
-                                        "combined_rating": "GOOD",
-                                        "ticker": "AAA"}]
+        assert captured["results"] == [
+            {
+                "total": 62.0,
+                "trend_dir": "Bull",
+                "trend_color": "bull",
+                "combined_rating": "GOOD",
+                "ticker": "AAA",
+            }
+        ]
         # Helper called with CLI semantics: no directional filter, no enrichment
         ticker0, kw0 = calls[0]
         assert ticker0 == "AAA"
@@ -96,8 +109,11 @@ class TestCliScoringLoop:
         assert kw0["global_data"] is None
         assert kw0["timeframe"] == "D"
         assert callable(kw0["enrich"])
-        assert kw0["settings"] == {"min_score": 50.0, "data_period": "1y",
-                                   "timeframe": "D"}
+        assert kw0["settings"] == {
+            "min_score": 50.0,
+            "data_period": "1y",
+            "timeframe": "D",
+        }
 
     def test_loop_matches_direct_helper_call(self, cli_mocks, monkeypatch):
         """The loop appends exactly what _score_ticker returns — no re-derivation."""
@@ -109,9 +125,14 @@ class TestCliScoringLoop:
         # Reproduce the exact helper result the loop should have appended
         df = stock_data["AAA"]
         expected, direction = scanner_engine._score_ticker(
-            "AAA", df,
-            settings=settings, timeframe="D", index_df=None,
-            trend_filter="All", is_large=False, global_data=None,
+            "AAA",
+            df,
+            settings=settings,
+            timeframe="D",
+            index_df=None,
+            trend_filter="All",
+            is_large=False,
+            global_data=None,
             enrich=lambda _t, s, _g: dict(s),
         )
         assert direction == "Bull"
@@ -155,5 +176,7 @@ class TestCliScoringLoop:
 
     def test_small_universe_skips_engine_setup(self, cli_mocks, monkeypatch):
         """Small lists must not instantiate the engine or fetch global data."""
-        monkeypatch.setattr(run_scanner, "ScannerEngine", lambda: pytest.fail("no engine needed"))
+        monkeypatch.setattr(
+            run_scanner, "ScannerEngine", lambda: pytest.fail("no engine needed")
+        )
         run_scanner.run_scan()  # 2-ticker TEST universe -> small path

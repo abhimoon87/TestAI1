@@ -21,9 +21,11 @@ _INSIDER_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="insider_data"
 
 # ── Aletheia Provider ──────────────────────────────────────────────────────
 
+
 @dataclass
 class InsiderTrade:
     """Single insider trade record."""
+
     insider_name: str
     title: str  # CEO, CFO, Director, etc.
     transaction_type: str  # "buy" | "sell"
@@ -37,6 +39,7 @@ class InsiderTrade:
 @dataclass
 class AletheiaInsider:
     """Insider trading data from Aletheia."""
+
     ticker: str
     net_insider_activity: float  # positive = net buying, negative = net selling
     total_buys: int
@@ -55,12 +58,12 @@ def fetch_aletheia_insider(
 ) -> AletheiaInsider | None:
     """
     Fetch insider trading data from Aletheia.
-    
+
     Args:
         ticker: Stock ticker
         api_key: Aletheia API key (or env ALETHEIA_API_KEY)
         days: Lookback period
-    
+
     Returns:
         AletheiaInsider or None
     """
@@ -69,7 +72,9 @@ def fetch_aletheia_insider(
         logger.debug("Aletheia: no API key, skipping")
         return None
 
-    cache_k = hashlib.md5(f"aletheia:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"aletheia:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _INSIDER_CACHE.get(cache_k)
     if cached:
         return AletheiaInsider(**cached, cached=True)
@@ -138,28 +143,31 @@ def fetch_aletheia_insider(
             cached=False,
         )
 
-        _INSIDER_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "net_insider_activity": result.net_insider_activity,
-            "total_buys": result.total_buys,
-            "total_sells": result.total_sells,
-            "buy_value": result.buy_value,
-            "sell_value": result.sell_value,
-            "recent_trades": [
-                {
-                    "insider_name": t.insider_name,
-                    "title": t.title,
-                    "transaction_type": t.transaction_type,
-                    "shares": t.shares,
-                    "price": t.price,
-                    "value": t.value,
-                    "date": t.date,
-                    "filing_url": t.filing_url,
-                }
-                for t in trades[:10]
-            ],
-            "insider_score": result.insider_score,
-        })
+        _INSIDER_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "net_insider_activity": result.net_insider_activity,
+                "total_buys": result.total_buys,
+                "total_sells": result.total_sells,
+                "buy_value": result.buy_value,
+                "sell_value": result.sell_value,
+                "recent_trades": [
+                    {
+                        "insider_name": t.insider_name,
+                        "title": t.title,
+                        "transaction_type": t.transaction_type,
+                        "shares": t.shares,
+                        "price": t.price,
+                        "value": t.value,
+                        "date": t.date,
+                        "filing_url": t.filing_url,
+                    }
+                    for t in trades[:10]
+                ],
+                "insider_score": result.insider_score,
+            },
+        )
 
         return result
 
@@ -170,9 +178,11 @@ def fetch_aletheia_insider(
 
 # ── CongressInvests Provider ───────────────────────────────────────────────
 
+
 @dataclass
 class CongressionalTrade:
     """Single congressional stock trade."""
+
     member: str
     party: str
     transaction_type: str  # "purchase" | "sale"
@@ -186,6 +196,7 @@ class CongressionalTrade:
 @dataclass
 class CongressInvestsData:
     """Congressional trading data."""
+
     ticker: str
     recent_trades: list[CongressionalTrade] = field(default_factory=list)
     net_congressional_activity: float = 0.0  # positive = net buying
@@ -201,11 +212,11 @@ def fetch_congress_invests(
 ) -> CongressInvestsData | None:
     """
     Fetch congressional stock trade data from CongressInvests.
-    
+
     Args:
         ticker: Stock ticker
         api_key: CongressInvests API key (or env CONGRESS_API_KEY)
-    
+
     Returns:
         CongressInvestsData or None
     """
@@ -214,7 +225,9 @@ def fetch_congress_invests(
         logger.debug("CongressInvests: no API key, skipping")
         return None
 
-    cache_k = hashlib.md5(f"congress:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"congress:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _INSIDER_CACHE.get(cache_k)
     if cached:
         return CongressInvestsData(**cached, cached=True)
@@ -243,7 +256,9 @@ def fetch_congress_invests(
                 asset=t.get("asset_description", t.get("asset", "")),
                 amount_range=t.get("amount_range", t.get("amount", "")),
                 disclosure_date=t.get("disclosure_date", ""),
-                transaction_date=t.get("transaction_date", t.get("disclosure_date", "")),
+                transaction_date=t.get(
+                    "transaction_date", t.get("disclosure_date", "")
+                ),
                 url=t.get("url", t.get("source_url", "")),
             )
             trades.append(trade)
@@ -269,26 +284,29 @@ def fetch_congress_invests(
             cached=False,
         )
 
-        _INSIDER_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "recent_trades": [
-                {
-                    "member": t.member,
-                    "party": t.party,
-                    "transaction_type": t.transaction_type,
-                    "asset": t.asset,
-                    "amount_range": t.amount_range,
-                    "disclosure_date": t.disclosure_date,
-                    "transaction_date": t.transaction_date,
-                    "url": t.url,
-                }
-                for t in trades[:10]
-            ],
-            "net_congressional_activity": result.net_congressional_activity,
-            "buy_count": result.buy_count,
-            "sell_count": result.sell_count,
-            "congressional_score": result.congressional_score,
-        })
+        _INSIDER_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "recent_trades": [
+                    {
+                        "member": t.member,
+                        "party": t.party,
+                        "transaction_type": t.transaction_type,
+                        "asset": t.asset,
+                        "amount_range": t.amount_range,
+                        "disclosure_date": t.disclosure_date,
+                        "transaction_date": t.transaction_date,
+                        "url": t.url,
+                    }
+                    for t in trades[:10]
+                ],
+                "net_congressional_activity": result.net_congressional_activity,
+                "buy_count": result.buy_count,
+                "sell_count": result.sell_count,
+                "congressional_score": result.congressional_score,
+            },
+        )
 
         return result
 
@@ -299,9 +317,11 @@ def fetch_congress_invests(
 
 # ── SEC EDGAR Provider (Free, no key) ──────────────────────────────────────
 
+
 @dataclass
 class SECFiling:
     """SEC EDGAR filing record."""
+
     form_type: str
     filed_date: str
     description: str
@@ -311,6 +331,7 @@ class SECFiling:
 @dataclass
 class SECEdgData:
     """SEC EDGAR data for a ticker."""
+
     ticker: str
     cik: str
     recent_filings: list[SECFiling] = field(default_factory=list)
@@ -329,15 +350,17 @@ def fetch_sec_edgar(
     """
     Fetch SEC EDGAR data (free, no API key).
     Only works for US-listed Indian companies (e.g., INFY, WIT, HDB).
-    
+
     Args:
         ticker: Stock ticker
         company_name: Company name for CIK lookup (optional)
-    
+
     Returns:
         SECEdgData or None
     """
-    cache_k = hashlib.md5(f"sec_edgar:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"sec_edgar:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _INSIDER_CACHE.get(cache_k)
     if cached:
         return SECEdgData(**cached, cached=True)
@@ -358,8 +381,13 @@ def fetch_sec_edgar(
         tickers_data = resp.json()
 
         cik = None
-        for item in tickers_data.values() if isinstance(tickers_data, dict) else tickers_data:
-            if isinstance(item, dict) and item.get("ticker", "").upper() == symbol.upper():
+        for item in (
+            tickers_data.values() if isinstance(tickers_data, dict) else tickers_data
+        ):
+            if (
+                isinstance(item, dict)
+                and item.get("ticker", "").upper() == symbol.upper()
+            ):
                 cik = str(item.get("cik_str", "")).zfill(10)
                 break
 
@@ -431,24 +459,27 @@ def fetch_sec_edgar(
             cached=False,
         )
 
-        _INSIDER_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "cik": cik,
-            "recent_filings": [
-                {
-                    "form_type": f.form_type,
-                    "filed_date": f.filed_date,
-                    "description": f.description,
-                    "url": f.url,
-                }
-                for f in filings[:10]
-            ],
-            "has_10k": has_10k,
-            "has_10q": has_10q,
-            "has_8k": has_8k,
-            "insider_filings": insider_count,
-            "filing_score": result.filing_score,
-        })
+        _INSIDER_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "cik": cik,
+                "recent_filings": [
+                    {
+                        "form_type": f.form_type,
+                        "filed_date": f.filed_date,
+                        "description": f.description,
+                        "url": f.url,
+                    }
+                    for f in filings[:10]
+                ],
+                "has_10k": has_10k,
+                "has_10q": has_10q,
+                "has_8k": has_8k,
+                "insider_filings": insider_count,
+                "filing_score": result.filing_score,
+            },
+        )
 
         return result
 
@@ -459,6 +490,7 @@ def fetch_sec_edgar(
 
 # ── Unified Insider Fetcher ────────────────────────────────────────────────
 
+
 def fetch_insider_data(
     ticker: str,
     aletheia_key: str | None = None,
@@ -467,7 +499,7 @@ def fetch_insider_data(
 ) -> dict:
     """
     Fetch insider + institutional data from multiple sources.
-    
+
     Returns:
         {
             "insider_score": float,  # -1.0 to 1.0

@@ -34,7 +34,13 @@ jobs:
           pip install pytest pytest-cov
       # Offline unit suite (external APIs are mocked); integration tests are
       # deselected by pytest.ini and run only in the scheduled job below.
-      - run: python -m pytest --cov=scanner --cov-report=xml --cov-report=term-missing
+      # Gate: fail if overall coverage drops below 50% (currently ~53%).
+      - run: >-
+          python -m pytest
+          --cov=scanner
+          --cov-report=xml
+          --cov-report=term
+          --cov-fail-under=50
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report

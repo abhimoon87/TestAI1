@@ -33,8 +33,8 @@ def test_volume_scores_breakout_week_participation():
     n = 130
     close = 100.0 + np.arange(n) * 0.05  # gentle drift, nothing weird
     volume = np.full(n, 1_000_000.0)
-    volume[-6:-1] = 2_400_000.0   # 5 expanding bars...
-    volume[-1] = 600_000.0        # ...then a quiet closing day
+    volume[-6:-1] = 2_400_000.0  # 5 expanding bars...
+    volume[-1] = 600_000.0  # ...then a quiet closing day
     df = _ohlcv(close, volume)
 
     result = compute_scores(df, timeframe="D", settings={})
@@ -47,7 +47,7 @@ def test_volume_still_zero_when_participation_is_low():
     """No volume expansion anywhere -> the category stays at zero."""
     n = 130
     close = 100.0 + np.arange(n) * 0.05
-    volume = np.full(n, 500_000.0)   # flat, and below nothing meaningful
+    volume = np.full(n, 500_000.0)  # flat, and below nothing meaningful
     volume[-1] = 300_000.0
     df = _ohlcv(close, volume)
     result = compute_scores(df, timeframe="D", settings={})

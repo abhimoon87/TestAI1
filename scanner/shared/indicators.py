@@ -31,6 +31,7 @@ import pandas as pd
 
 # ── Moving Averages ─────────────────────────────────────────────────────────
 
+
 def _wma_vectorized(series: pd.Series, length: int) -> pd.Series:
     """Weighted Moving Average using vectorized numpy convolution.
 
@@ -52,8 +53,10 @@ def _wma_vectorized(series: pd.Series, length: int) -> pd.Series:
     weights = np.arange(n, 0, -1, dtype=np.float64)  # reversed: [n, n-1, ..., 1]
     norm = n * (n + 1) / 2.0
 
-    full_conv = np.convolve(vals, weights, mode='full')
-    conv_vals = full_conv[n - 1:] / norm  # N values: conv_vals[i] = WMA ending at index n-1+i
+    full_conv = np.convolve(vals, weights, mode="full")
+    conv_vals = (
+        full_conv[n - 1 :] / norm
+    )  # N values: conv_vals[i] = WMA ending at index n-1+i
 
     # Build output: NaN first n-1 positions, valid from n-1 onward.
     # conv_vals[0..N-n] → output[n-1..N-1]
@@ -61,7 +64,7 @@ def _wma_vectorized(series: pd.Series, length: int) -> pd.Series:
     result = np.full(N, np.nan, dtype=np.float64)
     valid_count = N - n + 1
     if valid_count > 0:
-        result[n - 1:n - 1 + valid_count] = conv_vals[:valid_count]
+        result[n - 1 : n - 1 + valid_count] = conv_vals[:valid_count]
 
     return pd.Series(result, index=series.index, name=series.name)
 
@@ -103,7 +106,9 @@ def vwma(series: pd.Series, volume: pd.Series, length: int) -> pd.Series:
     return (series * volume).rolling(length).sum() / vol_sum.replace(0, np.nan)
 
 
-def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int = 30) -> pd.Series:
+def kama(
+    series: pd.Series, length: int, fast_length: int = 2, slow_length: int = 30
+) -> pd.Series:
     """Kaufman's Adaptive Moving Average (vectorized).
 
     Uses pandas rolling operations and np.where for the adaptive smoothing,
@@ -123,7 +128,7 @@ def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int 
     # ── Momentum: |price[i] − price[i−length]| (vectorized) ──
     shifted = np.empty(n, dtype=np.float64)
     shifted[:length] = np.nan
-    shifted[length:] = vals[:n - length]
+    shifted[length:] = vals[: n - length]
     mom = np.abs(vals - shifted)
 
     # ── Volatility: Σ|diff| over rolling window of length+1 (vectorized) ──
@@ -154,6 +159,7 @@ def kama(series: pd.Series, length: int, fast_length: int = 2, slow_length: int 
 
 # ── Oscillators ─────────────────────────────────────────────────────────────
 
+
 def rsi(series: pd.Series, length: int = 14) -> pd.Series:
     """Relative Strength Index."""
     delta = series.diff()
@@ -175,8 +181,13 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
     return macd_line, signal_line, histogram
 
 
-def stochastic(high: pd.Series, low: pd.Series, close: pd.Series,
-               k_length: int = 14, d_length: int = 3) -> pd.Series:
+def stochastic(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    k_length: int = 14,
+    d_length: int = 3,
+) -> pd.Series:
     """Stochastic %K."""
     lowest = low.rolling(k_length).min()
     highest = high.rolling(k_length).max()
@@ -192,44 +203,64 @@ def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (volume * direction).cumsum()
 
 
-def atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+def atr(
+    high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14
+) -> pd.Series:
     """Average True Range."""
     prev_close = close.shift(1)
-    tr = pd.concat([
-        high - low,
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
     return tr.ewm(alpha=1 / length, min_periods=length).mean()
 
 
-def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
+def adx(
+    high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14
+) -> pd.Series:
     """Average Directional Index."""
     prev_high = high.shift(1)
     prev_low = low.shift(1)
 
-    plus_dm = np.where((high - prev_high) > (prev_low - low), np.maximum(high - prev_high, 0), 0)
-    minus_dm = np.where((prev_low - low) > (high - prev_high), np.maximum(prev_low - low, 0), 0)
+    plus_dm = np.where(
+        (high - prev_high) > (prev_low - low), np.maximum(high - prev_high, 0), 0
+    )
+    minus_dm = np.where(
+        (prev_low - low) > (high - prev_high), np.maximum(prev_low - low, 0), 0
+    )
 
-    tr = pd.concat([
-        high - low,
-        (high - close.shift(1)).abs(),
-        (low - close.shift(1)).abs()
-    ], axis=1).max(axis=1)
+    tr = pd.concat(
+        [high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()],
+        axis=1,
+    ).max(axis=1)
 
     atr_val = tr.ewm(alpha=1 / length, min_periods=length).mean()
-    plus_di = 100 * pd.Series(plus_dm, index=high.index).ewm(alpha=1 / length, min_periods=length).mean() / atr_val
-    minus_di = 100 * pd.Series(minus_dm, index=high.index).ewm(alpha=1 / length, min_periods=length).mean() / atr_val
+    plus_di = (
+        100
+        * pd.Series(plus_dm, index=high.index)
+        .ewm(alpha=1 / length, min_periods=length)
+        .mean()
+        / atr_val
+    )
+    minus_di = (
+        100
+        * pd.Series(minus_dm, index=high.index)
+        .ewm(alpha=1 / length, min_periods=length)
+        .mean()
+        / atr_val
+    )
 
     dx = np.where(
         (plus_di + minus_di) != 0,
         100 * (plus_di - minus_di).abs() / (plus_di + minus_di),
-        0.0
+        0.0,
     )
-    return pd.Series(dx, index=high.index).ewm(alpha=1 / length, min_periods=length).mean()
+    return (
+        pd.Series(dx, index=high.index).ewm(alpha=1 / length, min_periods=length).mean()
+    )
 
 
 # ── Derived Metrics ─────────────────────────────────────────────────────────
+
 
 def price_change(series: pd.Series, period: int) -> pd.Series:
     """Percentage price change over N periods (0-base → NaN, never inf)."""
@@ -248,8 +279,13 @@ def lowest(series: pd.Series, length: int) -> pd.Series:
     return series.rolling(length).min()
 
 
-def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
-                       volume: pd.Series, lookback: int = 55) -> pd.Series:
+def volume_profile_poc(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    volume: pd.Series,
+    lookback: int = 55,
+) -> pd.Series:
     """
     Volume Profile Point of Control (POC) - the price level with highest volume.
 
@@ -294,9 +330,9 @@ def volume_profile_poc(high: pd.Series, low: pd.Series, close: pd.Series,
 
         # Extract lookback window as numpy arrays (no iloc overhead)
         start = i - lookback + 1
-        w_high = high_arr[start:i + 1]
-        w_low = low_arr[start:i + 1]
-        w_vol = vol_arr[start:i + 1]
+        w_high = high_arr[start : i + 1]
+        w_low = low_arr[start : i + 1]
+        w_vol = vol_arr[start : i + 1]
 
         # Vectorized: compute overlap of all bars × all bins at once
         # Shapes: bars=(B,), bins=(N+1,)

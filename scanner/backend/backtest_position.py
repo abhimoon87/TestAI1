@@ -12,8 +12,9 @@ from .backtest_models import Position, TradeResult
 logger = logging.getLogger(__name__)
 
 
-def update_position(pos: Position, bar: pd.Series,
-                    bar_idx: int, settings: dict) -> TradeResult | None:
+def update_position(
+    pos: Position, bar: pd.Series, bar_idx: int, settings: dict
+) -> TradeResult | None:
     """Check if a position should be exited on this bar. Returns TradeResult if closed."""
     high = bar["high"]
     low = bar["low"]
@@ -61,8 +62,9 @@ def update_position(pos: Position, bar: pd.Series,
     return None
 
 
-def _close_position(pos: Position, exit_price: float,
-                    exit_date: datetime, reason: str) -> TradeResult:
+def _close_position(
+    pos: Position, exit_price: float, exit_date: datetime, reason: str
+) -> TradeResult:
     """Close a position and return the trade result."""
     pos.exit_price = exit_price
     pos.exit_date = exit_date

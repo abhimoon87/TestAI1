@@ -57,12 +57,13 @@ if sys.platform == "win32":
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
-            logger.debug("stdout UTF-8 reconfigure failed", exc_info=True)
+            logger.info("stdout UTF-8 reconfigure failed", exc_info=True)
 
 
 # ============================================================
 # BACKTEST ENGINE
 # ============================================================
+
 
 class BacktestEngine:
     """Run the HMA/EMA multi-score swing strategy backtest."""
@@ -87,13 +88,17 @@ class BacktestEngine:
         logger.info("=" * 60)
         logger.info(f"  Stocks: {len(tickers)}")
         logger.info(f"  Period: {period} (daily)")
-        logger.info(f"  Settings: HMA({self.settings['fast_ma_len']}) x "
-              f"EMA({self.settings['slow_ma_len']}), "
-              f"RSI({self.settings['rsi_len']}), "
-              f"Crossover lookback: {self.settings['crossover_lookback']}")
-        logger.info(f"  Risk: {self.settings['stop_loss_pct']}% stop / "
-              f"{self.settings['target_pct']}% target / "
-              f"{self.settings['trail_pct']}% trail")
+        logger.info(
+            f"  Settings: HMA({self.settings['fast_ma_len']}) x "
+            f"EMA({self.settings['slow_ma_len']}), "
+            f"RSI({self.settings['rsi_len']}), "
+            f"Crossover lookback: {self.settings['crossover_lookback']}"
+        )
+        logger.info(
+            f"  Risk: {self.settings['stop_loss_pct']}% stop / "
+            f"{self.settings['target_pct']}% target / "
+            f"{self.settings['trail_pct']}% trail"
+        )
         logger.info("=" * 60)
         logger.info("")
 
@@ -139,8 +144,10 @@ class BacktestEngine:
             return {}
 
         logger.info(f"  Simulation: {len(backtest_dates)} trading days")
-        logger.info(f"  {backtest_dates[0].strftime('%Y-%m-%d')} to "
-                    f"{backtest_dates[-1].strftime('%Y-%m-%d')}")
+        logger.info(
+            f"  {backtest_dates[0].strftime('%Y-%m-%d')} to "
+            f"{backtest_dates[-1].strftime('%Y-%m-%d')}"
+        )
         logger.info(f"  Initial capital: Rs.{capital:,.0f}")
         logger.info("")
 
@@ -176,9 +183,13 @@ class BacktestEngine:
         self._close_all_positions(sim_last)
 
         # -- Compute metrics --
-        return self._compute_metrics(capital, self._signals_generated,
-                                     self._signals_taken, self._signals_blocked,
-                                     self._signals_boosted)
+        return self._compute_metrics(
+            capital,
+            self._signals_generated,
+            self._signals_taken,
+            self._signals_blocked,
+            self._signals_boosted,
+        )
 
     def _simulation_window(self) -> list | None:
         """Build the simulation date window (union calendar minus warmup,
@@ -226,8 +237,10 @@ class BacktestEngine:
                 regime_close = self.nifty_df["close"]
                 regime_ema = get_ma("EMA", regime_close, regime_ema_len)
             else:
-                logger.info("  WARNING: index_regime_filter enabled but no usable NIFTY "
-                            "index loaded -- gate disabled (fail-open)")
+                logger.info(
+                    "  WARNING: index_regime_filter enabled but no usable NIFTY "
+                    "index loaded -- gate disabled (fail-open)"
+                )
         return regime_close, regime_ema
 
     def _check_exits(self, day):
@@ -288,8 +301,8 @@ class BacktestEngine:
             if bar_idx < lookback + 1:
                 continue
 
-            fast_slice = stock.fast_ma.iloc[bar_idx - lookback: bar_idx + 1]
-            slow_slice = stock.slow_ma.iloc[bar_idx - lookback: bar_idx + 1]
+            fast_slice = stock.fast_ma.iloc[bar_idx - lookback : bar_idx + 1]
+            slow_slice = stock.slow_ma.iloc[bar_idx - lookback : bar_idx + 1]
             xo = detect_crossover(fast_slice, slow_slice, lookback)
 
             if not xo["crossed"]:
@@ -297,6 +310,7 @@ class BacktestEngine:
 
             # ── High-probability freshness & volume gates ────────────
             from .scoring import check_hp_freshness, check_hp_volume
+
             if not check_hp_freshness(xo, settings):
                 continue
             # Slice to bar_idx so the volume gate is evaluated as-of
@@ -321,9 +335,7 @@ class BacktestEngine:
                     continue
 
             # Compute full score
-            score_result = compute_score_at_bar(
-                stock, bar_idx, self.nifty_df, settings
-            )
+            score_result = compute_score_at_bar(stock, bar_idx, self.nifty_df, settings)
 
             if score_result is None:
                 continue
@@ -346,8 +358,11 @@ class BacktestEngine:
                 if is_blocked:
                     # Skip this stock entirely — losing sector
                     self.sector_tracker.log_decision(
-                        stock.ticker, stock_sector, "BLOCKED",
-                        sector_momentum, base_score
+                        stock.ticker,
+                        stock_sector,
+                        "BLOCKED",
+                        sector_momentum,
+                        base_score,
                     )
                     self._signals_blocked += 1
                     continue
@@ -358,13 +373,19 @@ class BacktestEngine:
                     adjusted_score = base_score + bonus
                     self._signals_boosted += 1
                     self.sector_tracker.log_decision(
-                        stock.ticker, stock_sector, "BOOSTED",
-                        sector_momentum, base_score
+                        stock.ticker,
+                        stock_sector,
+                        "BOOSTED",
+                        sector_momentum,
+                        base_score,
                     )
                 else:
                     self.sector_tracker.log_decision(
-                        stock.ticker, stock_sector, "NEUTRAL",
-                        sector_momentum, base_score
+                        stock.ticker,
+                        stock_sector,
+                        "NEUTRAL",
+                        sector_momentum,
+                        base_score,
                     )
 
             if adjusted_score < self._score_threshold:
@@ -443,7 +464,11 @@ class BacktestEngine:
             return  # Not enough cash
 
         # Store ATR at entry for ATR-based trailing stop
-        atr_at_entry = stock.atr_val.iloc[bar_idx] if not np.isnan(stock.atr_val.iloc[bar_idx]) else 0.0
+        atr_at_entry = (
+            stock.atr_val.iloc[bar_idx]
+            if not np.isnan(stock.atr_val.iloc[bar_idx])
+            else 0.0
+        )
 
         pos = Position(
             ticker=stock.ticker,
@@ -494,9 +519,14 @@ class BacktestEngine:
             self.trades.append(result)
         self.positions.clear()
 
-    def _compute_metrics(self, initial_capital: float,
-                         signals_generated: int, signals_taken: int,
-                         signals_blocked: int = 0, signals_boosted: int = 0) -> dict:
+    def _compute_metrics(
+        self,
+        initial_capital: float,
+        signals_generated: int,
+        signals_taken: int,
+        signals_blocked: int = 0,
+        signals_boosted: int = 0,
+    ) -> dict:
         """Compute comprehensive backtest performance metrics."""
         trades = self.trades
         eq = self.equity_curve
@@ -551,7 +581,9 @@ class BacktestEngine:
                 # Sortino: downside deviation uses sqrt(mean(min(r, 0)^2))
                 downside_sq = [min(r, 0) ** 2 for r in daily_rets]
                 downside_std = np.sqrt(np.mean(downside_sq)) if downside_sq else 0.001
-                sortino = (avg_daily / downside_std) * np.sqrt(252) if downside_std > 0 else 0
+                sortino = (
+                    (avg_daily / downside_std) * np.sqrt(252) if downside_std > 0 else 0
+                )
             else:
                 sharpe = sortino = 0
         else:
@@ -613,12 +645,15 @@ class BacktestEngine:
             "avg_loser_score": avg_loser_score,
             "signals_generated": signals_generated,
             "signals_taken": signals_taken,
-            "signal_conversion": (signals_taken / signals_generated * 100
-                                  if signals_generated > 0 else 0),
+            "signal_conversion": (
+                signals_taken / signals_generated * 100 if signals_generated > 0 else 0
+            ),
             "years": years,
             "signals_blocked": signals_blocked,
             "signals_boosted": signals_boosted,
-            "sector_rotation_enabled": self.settings.get("sector_rotation_enabled", False),
+            "sector_rotation_enabled": self.settings.get(
+                "sector_rotation_enabled", False
+            ),
         }
 
         # Per-stock breakdown
@@ -626,7 +661,10 @@ class BacktestEngine:
         for t in trades:
             if t.ticker not in stock_stats:
                 stock_stats[t.ticker] = {
-                    "trades": 0, "wins": 0, "total_pnl": 0, "total_pnl_pct": 0
+                    "trades": 0,
+                    "wins": 0,
+                    "total_pnl": 0,
+                    "total_pnl_pct": 0,
                 }
             s = stock_stats[t.ticker]
             s["trades"] += 1
@@ -637,7 +675,9 @@ class BacktestEngine:
 
         for s in stock_stats.values():
             s["win_rate"] = s["wins"] / s["trades"] * 100 if s["trades"] > 0 else 0
-            s["avg_pnl_pct"] = s["total_pnl_pct"] / s["trades"] if s["trades"] > 0 else 0
+            s["avg_pnl_pct"] = (
+                s["total_pnl_pct"] / s["trades"] if s["trades"] > 0 else 0
+            )
 
         metrics["stock_stats"] = stock_stats
 
@@ -647,7 +687,10 @@ class BacktestEngine:
             sec = t.sector
             if sec not in sector_stats:
                 sector_stats[sec] = {
-                    "trades": 0, "wins": 0, "total_pnl": 0, "total_pnl_pct": 0,
+                    "trades": 0,
+                    "wins": 0,
+                    "total_pnl": 0,
+                    "total_pnl_pct": 0,
                     "stocks": set(),
                 }
             ss = sector_stats[sec]
@@ -660,7 +703,9 @@ class BacktestEngine:
 
         for sec, ss in sector_stats.items():
             ss["win_rate"] = ss["wins"] / ss["trades"] * 100 if ss["trades"] > 0 else 0
-            ss["avg_pnl_pct"] = ss["total_pnl_pct"] / ss["trades"] if ss["trades"] > 0 else 0
+            ss["avg_pnl_pct"] = (
+                ss["total_pnl_pct"] / ss["trades"] if ss["trades"] > 0 else 0
+            )
             ss["stock_count"] = len(ss["stocks"])
             del ss["stocks"]  # remove set for serialization
 
@@ -694,7 +739,9 @@ class BacktestEngine:
         logger.info(f"  Total return:     {m['total_return_pct']:>+8.1f}%")
         logger.info(f"  Annual return:    {m['annual_return_pct']:>+8.1f}%")
         logger.info(f"  Total P&L:        Rs.{m['total_pnl']:>+12,.0f}")
-        logger.info(f"  Max drawdown:     Rs.{m['max_drawdown']:>12,.0f} ({m['max_drawdown_pct']:.1f}%)")
+        logger.info(
+            f"  Max drawdown:     Rs.{m['max_drawdown']:>12,.0f} ({m['max_drawdown_pct']:.1f}%)"
+        )
         logger.info(f"  Sharpe ratio:     {m['sharpe_ratio']:>8.2f}")
         logger.info(f"  Sortino ratio:    {m['sortino_ratio']:>8.2f}")
         logger.info(f"  Profit factor:    {m['profit_factor']:>8.2f}")
@@ -705,10 +752,18 @@ class BacktestEngine:
         logger.info(f"  {'-' * 56}")
         logger.info(f"  Total trades:     {m['total_trades']:>8d}")
         logger.info(f"  Win rate:         {m['win_rate']:>8.1f}%")
-        logger.info(f"  Avg win:          {m['avg_win_pct']:>+8.1f}% ({m['avg_win_days']:.0f} days)")
-        logger.info(f"  Avg loss:         {m['avg_loss_pct']:>+8.1f}% ({m['avg_loss_days']:.0f} days)")
-        logger.info(f"  Best trade:       {m['best_trade'].ticker} {m['best_trade'].pnl_pct:+.1f}%")
-        logger.info(f"  Worst trade:      {m['worst_trade'].ticker} {m['worst_trade'].pnl_pct:+.1f}%")
+        logger.info(
+            f"  Avg win:          {m['avg_win_pct']:>+8.1f}% ({m['avg_win_days']:.0f} days)"
+        )
+        logger.info(
+            f"  Avg loss:         {m['avg_loss_pct']:>+8.1f}% ({m['avg_loss_days']:.0f} days)"
+        )
+        logger.info(
+            f"  Best trade:       {m['best_trade'].ticker} {m['best_trade'].pnl_pct:+.1f}%"
+        )
+        logger.info(
+            f"  Worst trade:      {m['worst_trade'].ticker} {m['worst_trade'].pnl_pct:+.1f}%"
+        )
         logger.info(f"  Max consec wins:  {m['max_consec_wins']:>8d}")
         logger.info(f"  Max consec losses:{m['max_consec_losses']:>8d}")
         logger.info("")
@@ -726,8 +781,7 @@ class BacktestEngine:
         logger.info(f"  {'-' * 56}")
         logger.info("  EXIT REASONS")
         logger.info(f"  {'-' * 56}")
-        for reason, count in sorted(m["exit_reasons"].items(),
-                                     key=lambda x: -x[1]):
+        for reason, count in sorted(m["exit_reasons"].items(), key=lambda x: -x[1]):
             pct = count / m["total_trades"] * 100
             logger.info(f"  {reason:<20s} {count:>5d} ({pct:.0f}%)")
         logger.info("")
@@ -740,17 +794,33 @@ class BacktestEngine:
                 logger.info(f"  {'-' * 56}")
                 logger.info("  SECTOR ROTATION")
                 logger.info(f"  {'-' * 56}")
-                logger.info(f"  Signals blocked:  {m['signals_blocked']:>8d} (losing sectors)")
-                logger.info(f"  Signals boosted:  {m['signals_boosted']:>8d} (top sectors)")
+                logger.info(
+                    f"  Signals blocked:  {m['signals_blocked']:>8d} (losing sectors)"
+                )
+                logger.info(
+                    f"  Signals boosted:  {m['signals_boosted']:>8d} (top sectors)"
+                )
                 logger.info("")
-                logger.info(f"  {'Sector':<14s} {'Mom':>6s} {'Status':>10s} {'Trades':>6s} {'Win%':>6s}")
+                logger.info(
+                    f"  {'Sector':<14s} {'Mom':>6s} {'Status':>10s} {'Trades':>6s} {'Win%':>6s}"
+                )
                 logger.info(f"  {'-' * 56}")
                 for sec, info in rot_summary.items():
                     mom = info["momentum"]
-                    status = "BLOCKED" if info["blocked"] else ("TOP" if mom > 0 and info["trades"] >= 3 else "NEUTRAL")
-                    color_start = "\033[91m" if status == "BLOCKED" else ("\033[92m" if status == "TOP" else "")
+                    status = (
+                        "BLOCKED"
+                        if info["blocked"]
+                        else ("TOP" if mom > 0 and info["trades"] >= 3 else "NEUTRAL")
+                    )
+                    color_start = (
+                        "\033[91m"
+                        if status == "BLOCKED"
+                        else ("\033[92m" if status == "TOP" else "")
+                    )
                     color_end = "\033[0m" if color_start else ""
-                    logger.info(f"  {sec:<14s} {mom:>+5.1f}% {color_start}{status:>10s}{color_end} {info['trades']:>6d} {info['win_rate']:>5.0f}%")
+                    logger.info(
+                        f"  {sec:<14s} {mom:>+5.1f}% {color_start}{status:>10s}{color_end} {info['trades']:>6d} {info['win_rate']:>5.0f}%"
+                    )
                 logger.info("")
 
         # Sector breakdown
@@ -759,26 +829,36 @@ class BacktestEngine:
             logger.info(f"  {'-' * 56}")
             logger.info("  SECTOR BREAKDOWN")
             logger.info(f"  {'-' * 56}")
-            logger.info(f"  {'Sector':<14s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Stocks':>7s}")
+            logger.info(
+                f"  {'Sector':<14s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Stocks':>7s}"
+            )
             logger.info(f"  {'-' * 56}")
-            for sec in sorted(sector_stats, key=lambda s: -sector_stats[s]["total_pnl"]):
+            for sec in sorted(
+                sector_stats, key=lambda s: -sector_stats[s]["total_pnl"]
+            ):
                 ss = sector_stats[sec]
-                logger.info(f"  {sec:<14s} {ss['trades']:>6d} {ss['win_rate']:>5.0f}% "
-                      f"Rs.{ss['total_pnl']:>+10,.0f} {ss['stock_count']:>6d}")
+                logger.info(
+                    f"  {sec:<14s} {ss['trades']:>6d} {ss['win_rate']:>5.0f}% "
+                    f"Rs.{ss['total_pnl']:>+10,.0f} {ss['stock_count']:>6d}"
+                )
             logger.info("")
 
         # Per-stock breakdown
         logger.info(f"  {'-' * 56}")
         logger.info("  PER-STOCK BREAKDOWN")
         logger.info(f"  {'-' * 56}")
-        logger.info(f"  {'Ticker':<12s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Avg%':>8s}")
+        logger.info(
+            f"  {'Ticker':<12s} {'Trades':>6s} {'Win%':>6s} {'Total P&L':>12s} {'Avg%':>8s}"
+        )
         logger.info(f"  {'-' * 56}")
 
         stock_stats = m["stock_stats"]
         for ticker in sorted(stock_stats, key=lambda t: -stock_stats[t]["total_pnl"]):
             s = stock_stats[ticker]
-            logger.info(f"  {ticker:<12s} {s['trades']:>6d} {s['win_rate']:>5.0f}% "
-                  f"Rs.{s['total_pnl']:>+10,.0f} {s['avg_pnl_pct']:>+7.1f}%")
+            logger.info(
+                f"  {ticker:<12s} {s['trades']:>6d} {s['win_rate']:>5.0f}% "
+                f"Rs.{s['total_pnl']:>+10,.0f} {s['avg_pnl_pct']:>+7.1f}%"
+            )
 
         # Top trades
         logger.info("")
@@ -786,11 +866,15 @@ class BacktestEngine:
         logger.info("  TOP 10 TRADES")
         logger.info(f"  {'-' * 56}")
         sorted_trades = sorted(self.trades, key=lambda t: -t.pnl_pct)[:10]
-        logger.info(f"  {'Ticker':<12s} {'Entry':>10s} {'Exit':>10s} {'P&L%':>8s} {'Days':>5s} {'Reason'}")
+        logger.info(
+            f"  {'Ticker':<12s} {'Entry':>10s} {'Exit':>10s} {'P&L%':>8s} {'Days':>5s} {'Reason'}"
+        )
         logger.info(f"  {'-' * 56}")
         for t in sorted_trades:
-            logger.info(f"  {t.ticker:<12s} Rs.{t.entry_price:>9,.0f} Rs.{t.exit_price:>9,.0f} "
-                  f"{t.pnl_pct:>+7.1f}% {t.days_held:>4d}  {t.exit_reason} [{t.sector}]")
+            logger.info(
+                f"  {t.ticker:<12s} Rs.{t.entry_price:>9,.0f} Rs.{t.exit_price:>9,.0f} "
+                f"{t.pnl_pct:>+7.1f}% {t.days_held:>4d}  {t.exit_reason} [{t.sector}]"
+            )
 
         logger.info("")
         logger.info(sep)
@@ -801,59 +885,125 @@ class BacktestEngine:
 # MAIN
 # ============================================================
 
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(
         description="Backtest HMA/EMA Multi-Score Swing Strategy"
     )
-    parser.add_argument("--years", type=float, default=3,
-                        help="Years of historical data (default: 3)")
-    parser.add_argument("--tickers", type=str, nargs="*",
-                        help="Specific tickers to test (default: NIFTY 50)")
-    parser.add_argument("--score", type=float, default=50,
-                        help="Minimum score threshold (default: 50)")
-    parser.add_argument("--stop", type=float, default=2.0,
-                        help="Stop loss %% (default: 2.0)")
-    parser.add_argument("--target", type=float, default=20.0,
-                        help="Target profit %% (default: 20.0)")
-    parser.add_argument("--trail", type=float, default=2.0,
-                        help="Trailing stop %% (default: 2.0)")
-    parser.add_argument("--capital", type=float, default=1_000_000,
-                        help="Initial capital in Rs. (default: 1000000)")
-    parser.add_argument("--crossover-lookback", type=int, default=6,
-                        help="Crossover detection lookback bars (default: 6)")
-    parser.add_argument("--max-per-sector", type=int, default=2,
-                        help="Max positions per sector (default: 2)")
-    parser.add_argument("--atr-stop", action="store_true",
-                        help="Use ATR-based stop loss instead of fixed percentage")
-    parser.add_argument("--atr-mult", type=float, default=2.0,
-                        help="ATR stop multiplier (default: 2.0)")
-    parser.add_argument("--max-risk", type=float, default=0.02,
-                        help="Max risk per trade as fraction of capital (default: 0.02 = 2%%)")
-    parser.add_argument("--atr-trail", action="store_true",
-                        help="Use ATR-based trailing stop instead of fixed percentage")
-    parser.add_argument("--atr-trail-mult", type=float, default=2.5,
-                        help="ATR trailing stop multiplier (default: 2.5)")
-    parser.add_argument("--sector-rotation", action="store_true",
-                        help="Enable sector rotation (avoid losers, boost winners)")
-    parser.add_argument("--rotation-lookback", type=int, default=8,
-                        help="Sector rotation lookback trades (default: 8)")
-    parser.add_argument("--rotation-boost", type=float, default=0.5,
-                        help="Score bonus factor for top sectors (default: 0.5)")
-    parser.add_argument("--rotation-block", type=float, default=-5.0,
-                        help="Block sector if momentum below this %% (default: -5.0)")
-    parser.add_argument("--html", type=str, default="Reports/backtest_report.html",
-                        help="HTML report path")
-    parser.add_argument("--csv", type=str, default="Reports/backtest_trades.csv",
-                        help="Trades CSV path")
-    parser.add_argument("--no-html", action="store_true",
-                        help="Skip HTML report generation")
-    parser.add_argument("--universe", type=str, default="nifty50",
-                        choices=["nifty50", "fno", "all"],
-                        help="Stock universe: nifty50, fno, or all (default: nifty50)")
-    parser.add_argument("--entry-mode", type=str, default="classic",
-                        choices=["classic", "high_probability", "custom"],
-                        help="Entry mode: classic (default), high_probability, or custom")
+    parser.add_argument(
+        "--years", type=float, default=3, help="Years of historical data (default: 3)"
+    )
+    parser.add_argument(
+        "--tickers",
+        type=str,
+        nargs="*",
+        help="Specific tickers to test (default: NIFTY 50)",
+    )
+    parser.add_argument(
+        "--score", type=float, default=50, help="Minimum score threshold (default: 50)"
+    )
+    parser.add_argument(
+        "--stop", type=float, default=2.0, help="Stop loss %% (default: 2.0)"
+    )
+    parser.add_argument(
+        "--target", type=float, default=20.0, help="Target profit %% (default: 20.0)"
+    )
+    parser.add_argument(
+        "--trail", type=float, default=2.0, help="Trailing stop %% (default: 2.0)"
+    )
+    parser.add_argument(
+        "--capital",
+        type=float,
+        default=1_000_000,
+        help="Initial capital in Rs. (default: 1000000)",
+    )
+    parser.add_argument(
+        "--crossover-lookback",
+        type=int,
+        default=6,
+        help="Crossover detection lookback bars (default: 6)",
+    )
+    parser.add_argument(
+        "--max-per-sector",
+        type=int,
+        default=2,
+        help="Max positions per sector (default: 2)",
+    )
+    parser.add_argument(
+        "--atr-stop",
+        action="store_true",
+        help="Use ATR-based stop loss instead of fixed percentage",
+    )
+    parser.add_argument(
+        "--atr-mult", type=float, default=2.0, help="ATR stop multiplier (default: 2.0)"
+    )
+    parser.add_argument(
+        "--max-risk",
+        type=float,
+        default=0.02,
+        help="Max risk per trade as fraction of capital (default: 0.02 = 2%%)",
+    )
+    parser.add_argument(
+        "--atr-trail",
+        action="store_true",
+        help="Use ATR-based trailing stop instead of fixed percentage",
+    )
+    parser.add_argument(
+        "--atr-trail-mult",
+        type=float,
+        default=2.5,
+        help="ATR trailing stop multiplier (default: 2.5)",
+    )
+    parser.add_argument(
+        "--sector-rotation",
+        action="store_true",
+        help="Enable sector rotation (avoid losers, boost winners)",
+    )
+    parser.add_argument(
+        "--rotation-lookback",
+        type=int,
+        default=8,
+        help="Sector rotation lookback trades (default: 8)",
+    )
+    parser.add_argument(
+        "--rotation-boost",
+        type=float,
+        default=0.5,
+        help="Score bonus factor for top sectors (default: 0.5)",
+    )
+    parser.add_argument(
+        "--rotation-block",
+        type=float,
+        default=-5.0,
+        help="Block sector if momentum below this %% (default: -5.0)",
+    )
+    parser.add_argument(
+        "--html",
+        type=str,
+        default="Reports/backtest_report.html",
+        help="HTML report path",
+    )
+    parser.add_argument(
+        "--csv", type=str, default="Reports/backtest_trades.csv", help="Trades CSV path"
+    )
+    parser.add_argument(
+        "--no-html", action="store_true", help="Skip HTML report generation"
+    )
+    parser.add_argument(
+        "--universe",
+        type=str,
+        default="nifty50",
+        choices=["nifty50", "fno", "all"],
+        help="Stock universe: nifty50, fno, or all (default: nifty50)",
+    )
+    parser.add_argument(
+        "--entry-mode",
+        type=str,
+        default="classic",
+        choices=["classic", "high_probability", "custom"],
+        help="Entry mode: classic (default), high_probability, or custom",
+    )
     args = parser.parse_args()
 
     # Build settings

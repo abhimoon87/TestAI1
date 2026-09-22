@@ -49,7 +49,9 @@ def build_trade_reasons(row: dict, max_reasons: int = 8) -> list[str]:
         except (TypeError, ValueError):
             bars_n = None
         if bars_n is not None and bars_n >= 0:
-            reasons.append(f"Fresh HMA×EMA bullish crossover ({bars_n} bar{'s' if bars_n != 1 else ''} ago)")
+            reasons.append(
+                f"Fresh HMA×EMA bullish crossover ({bars_n} bar{'s' if bars_n != 1 else ''} ago)"
+            )
         else:
             reasons.append("Bullish HMA×EMA crossover active")
     if row.get("weekly_entry_signal"):

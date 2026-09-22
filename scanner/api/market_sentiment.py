@@ -18,27 +18,133 @@ logger = logging.getLogger(__name__)
 # ── Sentiment Word Lists ────────────────────────────────────────────────────
 
 POSITIVE_WORDS = {
-    "surge", "surges", "surging", "rally", "rallies", "rallying", "gain", "gains",
-    "gaining", "bullish", "buy", "buying", "upgrade", "upgrades", "outperform",
-    "beat", "beats", "beating", "record", "high", "strong", "strength", "profit",
-    "profits", "profitable", "growth", "growing", "positive", "optimistic",
-    "recovery", "recovering", "breakout", "momentum", "upside", "boom", "soar",
-    "soars", "soaring", "jump", "jumps", "jumping", "climb", "climbs", "climbing",
-    "advance", "advances", "rising", "upbeat", "exceeds", "exceed", "superior",
-    "dividend", "buyback", "expansion", "innovative", "leader", "dominant",
+    "surge",
+    "surges",
+    "surging",
+    "rally",
+    "rallies",
+    "rallying",
+    "gain",
+    "gains",
+    "gaining",
+    "bullish",
+    "buy",
+    "buying",
+    "upgrade",
+    "upgrades",
+    "outperform",
+    "beat",
+    "beats",
+    "beating",
+    "record",
+    "high",
+    "strong",
+    "strength",
+    "profit",
+    "profits",
+    "profitable",
+    "growth",
+    "growing",
+    "positive",
+    "optimistic",
+    "recovery",
+    "recovering",
+    "breakout",
+    "momentum",
+    "upside",
+    "boom",
+    "soar",
+    "soars",
+    "soaring",
+    "jump",
+    "jumps",
+    "jumping",
+    "climb",
+    "climbs",
+    "climbing",
+    "advance",
+    "advances",
+    "rising",
+    "upbeat",
+    "exceeds",
+    "exceed",
+    "superior",
+    "dividend",
+    "buyback",
+    "expansion",
+    "innovative",
+    "leader",
+    "dominant",
 }
 
 NEGATIVE_WORDS = {
-    "crash", "crashes", "crashing", "plunge", "plunges", "plunging", "drop",
-    "drops", "dropping", "bearish", "sell", "selling", "downgrade", "downgrades",
-    "underperform", "miss", "misses", "missing", "loss", "losses", "loss-making",
-    "decline", "declines", "declining", "negative", "pessimistic", "recession",
-    "recessionary", "breakdown", "weakness", "weak", "downside", "bust", "slump",
-    "slumps", "slumping", "fall", "falls", "falling", "retreat", "retreats",
-    "downturn", "crisis", "debt", "default", "bankruptcy", "insolvent",
-    "fraud", "scandal", "investigation", "lawsuit", "penalty", "fine", "warning",
-    "cut", "cuts", "cutting", "reduce", "reduces", "reducing", "layoff", "layoffs",
-    "restructure", "restructuring", "impairment", "write-down", "overvalued",
+    "crash",
+    "crashes",
+    "crashing",
+    "plunge",
+    "plunges",
+    "plunging",
+    "drop",
+    "drops",
+    "dropping",
+    "bearish",
+    "sell",
+    "selling",
+    "downgrade",
+    "downgrades",
+    "underperform",
+    "miss",
+    "misses",
+    "missing",
+    "loss",
+    "losses",
+    "loss-making",
+    "decline",
+    "declines",
+    "declining",
+    "negative",
+    "pessimistic",
+    "recession",
+    "recessionary",
+    "breakdown",
+    "weakness",
+    "weak",
+    "downside",
+    "bust",
+    "slump",
+    "slumps",
+    "slumping",
+    "fall",
+    "falls",
+    "falling",
+    "retreat",
+    "retreats",
+    "downturn",
+    "crisis",
+    "debt",
+    "default",
+    "bankruptcy",
+    "insolvent",
+    "fraud",
+    "scandal",
+    "investigation",
+    "lawsuit",
+    "penalty",
+    "fine",
+    "warning",
+    "cut",
+    "cuts",
+    "cutting",
+    "reduce",
+    "reduces",
+    "reducing",
+    "layoff",
+    "layoffs",
+    "restructure",
+    "restructuring",
+    "impairment",
+    "write-down",
+    "overvalued",
 }
 
 # ── Cache ───────────────────────────────────────────────────────────────────
@@ -52,11 +158,12 @@ def _cache_key(ticker: str, source: str) -> str:
 
 # ── Simple Keyword Sentiment ───────────────────────────────────────────────
 
+
 def _keyword_sentiment(text: str) -> float:
     """Compute sentiment from text using keyword matching. Returns -1.0 to 1.0."""
     if not text:
         return 0.0
-    words = set(re.findall(r'\b\w+\b', text.lower()))
+    words = set(re.findall(r"\b\w+\b", text.lower()))
     pos = len(words & POSITIVE_WORDS)
     neg = len(words & NEGATIVE_WORDS)
     total = pos + neg
@@ -67,9 +174,11 @@ def _keyword_sentiment(text: str) -> float:
 
 # ── MarketAux Provider ─────────────────────────────────────────────────────
 
+
 @dataclass
 class MarketAuxSentiment:
     """News sentiment from MarketAux API (ticker-tagged)."""
+
     ticker: str
     sentiment_score: float  # -1.0 to 1.0
     article_count: int
@@ -84,12 +193,12 @@ def fetch_marketaux_sentiment(
 ) -> MarketAuxSentiment | None:
     """
     Fetch news sentiment for a ticker from MarketAux.
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE.NS")
         api_key: MarketAux API key (or env MARKETAUX_API_KEY)
         days: Lookback period in days
-    
+
     Returns:
         MarketAuxSentiment or None on failure
     """
@@ -109,6 +218,7 @@ def fetch_marketaux_sentiment(
 
     try:
         from datetime import datetime, timedelta
+
         date_from = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
         url = "https://api.marketaux.com/v1/entity/search"
@@ -141,8 +251,11 @@ def fetch_marketaux_sentiment(
         articles = news_data.get("data", [])
         if not articles:
             return MarketAuxSentiment(
-                ticker=ticker, sentiment_score=0.0,
-                article_count=0, sources=[], cached=False,
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                sources=[],
+                cached=False,
             )
 
         # Compute sentiment from article titles + descriptions
@@ -167,12 +280,15 @@ def fetch_marketaux_sentiment(
             cached=False,
         )
 
-        _SENTIMENT_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "sentiment_score": result.sentiment_score,
-            "article_count": result.article_count,
-            "sources": result.sources,
-        })
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "sources": result.sources,
+            },
+        )
 
         return result
 
@@ -183,9 +299,11 @@ def fetch_marketaux_sentiment(
 
 # ── NewsAPI Provider ───────────────────────────────────────────────────────
 
+
 @dataclass
 class NewsAPISentiment:
     """News sentiment from NewsAPI.org."""
+
     ticker: str
     sentiment_score: float
     article_count: int
@@ -200,12 +318,12 @@ def fetch_newsapi_sentiment(
 ) -> NewsAPISentiment | None:
     """
     Fetch news sentiment from NewsAPI.org.
-    
+
     Args:
         ticker: Stock ticker
         api_key: NewsAPI key (or env NEWSAPI_KEY)
         days: Lookback days
-    
+
     Returns:
         NewsAPISentiment or None
     """
@@ -223,6 +341,7 @@ def fetch_newsapi_sentiment(
 
     try:
         from datetime import datetime, timedelta
+
         from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
         url = "https://newsapi.org/v2/everything"
@@ -241,8 +360,11 @@ def fetch_newsapi_sentiment(
         articles = data.get("articles", [])
         if not articles:
             return NewsAPISentiment(
-                ticker=ticker, sentiment_score=0.0,
-                article_count=0, top_headlines=[], cached=False,
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                top_headlines=[],
+                cached=False,
             )
 
         sentiments = []
@@ -265,12 +387,15 @@ def fetch_newsapi_sentiment(
             cached=False,
         )
 
-        _SENTIMENT_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "sentiment_score": result.sentiment_score,
-            "article_count": result.article_count,
-            "top_headlines": result.top_headlines,
-        })
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "top_headlines": result.top_headlines,
+            },
+        )
 
         return result
 
@@ -281,9 +406,11 @@ def fetch_newsapi_sentiment(
 
 # ── GNews Provider (Free, no key) ──────────────────────────────────────────
 
+
 @dataclass
 class GNewsSentiment:
     """News sentiment from GNews API (free tier)."""
+
     ticker: str
     sentiment_score: float
     article_count: int
@@ -297,12 +424,12 @@ def fetch_gnews_sentiment(
 ) -> GNewsSentiment | None:
     """
     Fetch news sentiment from GNews (free, 100 requests/day).
-    
+
     Args:
         ticker: Stock ticker
         api_key: GNews API key (or env GNEWS_API_KEY)
         days: Lookback days
-    
+
     Returns:
         GNewsSentiment or None
     """
@@ -320,6 +447,7 @@ def fetch_gnews_sentiment(
 
     try:
         from datetime import datetime, timedelta
+
         when = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
 
         url = "https://gnews.io/api/v4/search"
@@ -337,8 +465,10 @@ def fetch_gnews_sentiment(
         articles = data.get("articles", [])
         if not articles:
             return GNewsSentiment(
-                ticker=ticker, sentiment_score=0.0,
-                article_count=0, cached=False,
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                cached=False,
             )
 
         sentiments = []
@@ -357,11 +487,14 @@ def fetch_gnews_sentiment(
             cached=False,
         )
 
-        _SENTIMENT_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "sentiment_score": result.sentiment_score,
-            "article_count": result.article_count,
-        })
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+            },
+        )
 
         return result
 
@@ -372,9 +505,11 @@ def fetch_gnews_sentiment(
 
 # ── Yahoo Finance News Provider (Free, No Key) ─────────────────────────────
 
+
 @dataclass
 class YFinanceNewsSentiment:
     """News sentiment from Yahoo Finance (free, no API key required)."""
+
     ticker: str
     sentiment_score: float
     article_count: int
@@ -385,10 +520,10 @@ class YFinanceNewsSentiment:
 def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
     """
     Fetch news sentiment from Yahoo Finance (free, no API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE.NS")
-    
+
     Returns:
         YFinanceNewsSentiment or None
     """
@@ -406,8 +541,11 @@ def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
 
         if not news:
             return YFinanceNewsSentiment(
-                ticker=ticker, sentiment_score=0.0,
-                article_count=0, top_headlines=[], cached=False,
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                top_headlines=[],
+                cached=False,
             )
 
         sentiments = []
@@ -434,21 +572,25 @@ def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
             cached=False,
         )
 
-        _SENTIMENT_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "sentiment_score": result.sentiment_score,
-            "article_count": result.article_count,
-            "top_headlines": result.top_headlines,
-        })
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "top_headlines": result.top_headlines,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Yahoo Finance news failed for %s: %s", ticker, e)
+        logger.info("Yahoo Finance news failed for %s: %s", ticker, e)
         return None
 
 
 # ── Unified Sentiment Fetcher ──────────────────────────────────────────────
+
 
 def fetch_sentiment(
     ticker: str,
@@ -458,13 +600,13 @@ def fetch_sentiment(
 ) -> dict:
     """
     Fetch news sentiment from multiple sources with fallback.
-    
+
     Priority:
       1. MarketAux (ticker-tagged, best quality)
       2. NewsAPI (80k+ sources)
       3. GNews (free tier)
       4. Yahoo Finance (free, no key - fallback)
-    
+
     Returns:
         {
             "sentiment_score": float,  # -1.0 to 1.0
@@ -516,6 +658,7 @@ def fetch_sentiment(
     # ── Noozra RSS (free, no key) ──────────────────────────────────────
     try:
         from .free_apis import fetch_noozra_news
+
         noozra = fetch_noozra_news(query=ticker, max_items=10)
         if noozra:
             # Keyword sentiment on headlines
@@ -530,7 +673,7 @@ def fetch_sentiment(
                     "top_headlines": headlines[:5],
                 }
     except Exception as e:
-        logger.debug("Noozra news fetch failed for %s: %s", ticker, e)
+        logger.info("Noozra news fetch failed for %s: %s", ticker, e)
 
     # No sentiment data
     return {

@@ -154,9 +154,13 @@ def run_scan():
     logger.info("  Threshold:  %s+", threshold)
     logger.info("  Period:     %s", period)
     logger.info("  Timeframe:  %s", tf_names.get(timeframe, timeframe))
-    logger.info("  FastMA:     %s%d  SlowMA: %s%d",
-                settings.get("fast_ma_type", "HMA"), settings.get("fast_ma_len", 40),
-                settings.get("slow_ma_type", "EMA"), settings.get("slow_ma_len", 50))
+    logger.info(
+        "  FastMA:     %s%d  SlowMA: %s%d",
+        settings.get("fast_ma_type", "HMA"),
+        settings.get("fast_ma_len", 40),
+        settings.get("slow_ma_type", "EMA"),
+        settings.get("slow_ma_len", 50),
+    )
     logger.info("")
 
     # ── Fetch index for relative strength ──────────────────────────────────
@@ -171,7 +175,9 @@ def run_scan():
     # ── Fetch stock data ─────────────────────────────────────────────────────
     logger.info("━━━ Fetching stock data ━━━")
     stock_data = fetch_batch_yfinance(tickers, period=period)
-    logger.info("\n  Fetched %d/%d stocks successfully.\n", len(stock_data), len(tickers))
+    logger.info(
+        "\n  Fetched %d/%d stocks successfully.\n", len(stock_data), len(tickers)
+    )
 
     if not stock_data:
         logger.error("  ✗ No data fetched. Check your internet connection.")
@@ -191,8 +197,10 @@ def run_scan():
     # totals/ratings include fundamentals.
     is_large = len(tickers) > 500
     if is_large:
-        logger.info("  Large universe (%d stocks) — fast technical pass, enrich top 200 at end",
-                    len(tickers))
+        logger.info(
+            "  Large universe (%d stocks) — fast technical pass, enrich top 200 at end",
+            len(tickers),
+        )
         _engine = ScannerEngine()
         global_data = _engine._fetch_global_enrichment(settings)
         enrich = _engine._enrich_with_providers
@@ -207,8 +215,11 @@ def run_scan():
 
         # Crossover filter -> direction -> fundamentals -> score -> rating gate
         scores, reason = _score_ticker(
-            ticker, df,
-            settings=settings, timeframe=timeframe, index_df=index_df,
+            ticker,
+            df,
+            settings=settings,
+            timeframe=timeframe,
+            index_df=index_df,
             trend_filter="All",  # CLI has no directional filter
             is_large=is_large,
             global_data=global_data,
@@ -231,7 +242,11 @@ def run_scan():
 
         total = scores["total"]
         dir_icon = "▲" if direction == "Bull" else "▼"
-        icon = "🟢" if total >= 70 else ("🟡" if total >= 50 else ("🟠" if total >= 30 else "🔴"))
+        icon = (
+            "🟢"
+            if total >= 70
+            else ("🟡" if total >= 50 else ("🟠" if total >= 30 else "🔴"))
+        )
         tag = "✓" if total >= min_score_threshold else "✗"
         sideways = " [CHOP]" if scores.get("is_sideways") else ""
         logger.info("    %s %s %s %.1f%s", dir_icon, tag, icon, total, sideways)
@@ -242,18 +257,23 @@ def run_scan():
         top_n = min(ENRICH_TOP_N, len(results))
         top = results[:top_n]
         rest = results[top_n:]
-        logger.info("Enriching top %d of %d with fundamentals/sentiment...",
-                    top_n, len(results))
+        logger.info(
+            "Enriching top %d of %d with fundamentals/sentiment...", top_n, len(results)
+        )
         enriched_top = _enrich_rows_in_place(
-            top, stock_data,
-            settings=settings, global_data=global_data,
-            timeframe=timeframe, index_df=index_df,
+            top,
+            stock_data,
+            settings=settings,
+            global_data=global_data,
+            timeframe=timeframe,
+            index_df=index_df,
             enrich=enrich,
         )
         results = enriched_top + rest
         results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-        logger.info("Top %d enrichment complete — scores re-computed with fundamentals",
-                    top_n)
+        logger.info(
+            "Top %d enrichment complete — scores re-computed with fundamentals", top_n
+        )
 
     if not results:
         logger.warning("\n  ✗ No stocks passed the filter.")
@@ -263,14 +283,20 @@ def run_scan():
     logger.info("\n━━━ Pipeline Summary ━━━")
     logger.info("  Total stocks:  %d", len(stock_data))
     logger.info("  Filtered out:  %d (no recent crossover)", filtered_out)
-    logger.info("  Passed filter: %d (%d Bull, %d Bear)",
-                len(results), direction_counts.get('Bull', 0), direction_counts.get('Bear', 0))
+    logger.info(
+        "  Passed filter: %d (%d Bull, %d Bear)",
+        len(results),
+        direction_counts.get("Bull", 0),
+        direction_counts.get("Bear", 0),
+    )
     passed = len([r for r in results if r["total"] >= min_score_threshold])
     logger.info("  Scored %s+: %d", min_score_threshold, passed)
 
     # ── Generate report ──────────────────────────────────────────────────────
     logger.info("\n━━━ Generating report ━━━")
-    html = generate_html_report(results, title=f"HMAxEMA Scanner — {universe_name}", threshold=threshold)
+    html = generate_html_report(
+        results, title=f"HMAxEMA Scanner — {universe_name}", threshold=threshold
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"scanner_report_{timestamp}.html"
@@ -284,14 +310,32 @@ def run_scan():
     # ── Summary ──────────────────────────────────────────────────────────────
     logger.info("━━━ Top 10 Results ━━━")
     results.sort(key=lambda x: x["total"], reverse=True)
-    logger.info("  %-5s %-15s %6s %-12s %8s %-8s", "Rank", "Ticker", "Score", "Rating", "1M Chg", "Trend")
-    logger.info("  %s %s %s %s %s %s", "─"*5, "─"*15, "─"*6, "─"*12, "─"*8, "─"*8)
+    logger.info(
+        "  %-5s %-15s %6s %-12s %8s %-8s",
+        "Rank",
+        "Ticker",
+        "Score",
+        "Rating",
+        "1M Chg",
+        "Trend",
+    )
+    logger.info(
+        "  %s %s %s %s %s %s", "─" * 5, "─" * 15, "─" * 6, "─" * 12, "─" * 8, "─" * 8
+    )
 
     for i, r in enumerate(results[:10], 1):
         score = r["total"]
         rating = r.get("combined_rating", "POOR")
         pc1m = f"{r.get('pc1m', 0) or 0:+.1f}%"
-        logger.info("  %-5d %-15s %5.1f  %-12s %8s %-8s", i, r['ticker'], score, rating, pc1m, r['trend_dir'])
+        logger.info(
+            "  %-5d %-15s %5.1f  %-12s %8s %-8s",
+            i,
+            r["ticker"],
+            score,
+            rating,
+            pc1m,
+            r["trend_dir"],
+        )
 
     # ── Open report ──────────────────────────────────────────────────────────
     open_report = input("\n  Open report in browser? [Y/n]: ").strip().lower()

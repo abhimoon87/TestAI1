@@ -15,6 +15,7 @@ try:
     # below). Guarded so a CPython upgrade that moves/renames these names
     # degrades to the standard executor instead of failing at import time.
     from concurrent.futures.thread import _threads_queues, _worker
+
     _HAS_TPE_INTERNALS = hasattr(ThreadPoolExecutor, "_adjust_thread_count")
 except ImportError:  # pragma: no cover - non-CPython or future CPython
     _HAS_TPE_INTERNALS = False
@@ -86,6 +87,7 @@ def _find_stale_members(batch_data: dict, max_age_days: float | None = None):
             last = df.index[-1]
             if not isinstance(last, datetime):
                 import pandas as pd
+
                 last = pd.Timestamp(last)
             if last.date() < cutoff:
                 stale.append((str(t), last.date().isoformat()))
@@ -172,11 +174,17 @@ def _score_ticker(
             enriched = {**settings, **(global_data or {}), "_skip_vp": True}
         else:
             enriched = _enrich_small_cached(
-                ticker, df, settings, global_data, enrich,
+                ticker,
+                df,
+                settings,
+                global_data,
+                enrich,
                 use_cache=use_enrichment_cache,
             )
             enriched["_skip_vp"] = False
-        scores = compute_scores(df, timeframe=timeframe, index_df=index_df, settings=enriched)
+        scores = compute_scores(
+            df, timeframe=timeframe, index_df=index_df, settings=enriched
+        )
         if scores is None:
             return None, "no_score"
         if not rating_ok_for_trend_filter(trend_filter, scores.get("combined_rating")):
@@ -202,7 +210,7 @@ def _score_ticker(
                     scores[k] = v
         return scores, direction
     except Exception as e:
-        logger.debug("Scoring failed for %s: %s", ticker, e)
+        logger.info("Scoring failed for %s: %s", ticker, e)
         return None, "error"
 
 
@@ -283,7 +291,7 @@ def _guarded_score(score_fn, item):
         return score_fn(item)
     except Exception as e:
         ticker = item[0] if item else "?"
-        logger.debug("Scoring failed for %s: %s", ticker, e)
+        logger.info("Scoring failed for %s: %s", ticker, e)
         return None, "error"
 
 
@@ -321,7 +329,7 @@ def _parallel_score(items, score_fn, cancel_event, max_workers=8):
             try:
                 ordered[futs[fut]] = fut.result()
             except Exception as e:  # e.g. CancelledError after a late cancel
-                logger.debug("Parallel scoring worker failed: %s", e)
+                logger.info("Parallel scoring worker failed: %s", e)
                 ordered[futs[fut]] = (None, "error")
     if not cancelled:
         executor.shutdown(wait=True)
@@ -347,14 +355,16 @@ if _HAS_TPE_INTERNALS:
 
             num_threads = len(self._threads)
             if num_threads < self._max_workers:
-                thread_name = '%s_%d' % (self._thread_name_prefix or self,
-                                         num_threads)
+                thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
                 t = threading.Thread(
-                    name=thread_name, target=_worker,
-                    args=(weakref.ref(self, weakref_cb),
-                          self._work_queue,
-                          self._initializer,
-                          self._initargs),
+                    name=thread_name,
+                    target=_worker,
+                    args=(
+                        weakref.ref(self, weakref_cb),
+                        self._work_queue,
+                        self._initializer,
+                        self._initargs,
+                    ),
                     daemon=True,
                 )
                 t.start()
@@ -365,8 +375,10 @@ else:  # pragma: no cover - only hit on interpreters lacking the private API
     # Degraded fallback: workers are non-daemon, so a hung worker thread can
     # delay (but not corrupt) interpreter shutdown after a cancel. Everything
     # else — ordering, cancellation, timeouts — behaves identically.
-    logger.debug("concurrent.futures internals unavailable; "
-                 "falling back to standard ThreadPoolExecutor")
+    logger.debug(
+        "concurrent.futures internals unavailable; "
+        "falling back to standard ThreadPoolExecutor"
+    )
     _DaemonThreadPoolExecutor = ThreadPoolExecutor
 
 
@@ -419,13 +431,16 @@ def _enrich_rows_in_place(
             else:
                 record_enrichment_miss()
                 try:
-                    enriched = enrich(ticker, settings, global_data,
-                                      executor=_provider_executor)
+                    enriched = enrich(
+                        ticker, settings, global_data, executor=_provider_executor
+                    )
                 except TypeError:
                     enriched = enrich(ticker, settings, global_data)
                 provider_keys = {
-                    k: v for k, v in enriched.items()
-                    if k.startswith("_") and k not in settings
+                    k: v
+                    for k, v in enriched.items()
+                    if k.startswith("_")
+                    and k not in settings
                     and k not in (global_data or {})
                 }
             for k, v in enriched.items():
@@ -435,11 +450,13 @@ def _enrich_rows_in_place(
             # them now and recompute so totals/ratings reflect real data.
             df = batch_data.get(ticker)
             if df is not None and not df.empty:
-                if df.attrs.get('_fundamentals') is None:
+                if df.attrs.get("_fundamentals") is None:
                     fund = None
                     try:
                         if cached is not None:
-                            fund = cached.get("fundamentals")  # may be None = known-none
+                            fund = cached.get(
+                                "fundamentals"
+                            )  # may be None = known-none
                         else:
                             fund = _call_with_timeout(
                                 lambda: fetch_fundamentals(ticker),
@@ -449,25 +466,30 @@ def _enrich_rows_in_place(
                                 if provider_keys:
                                     enrichment_put(ticker, provider_keys, fund)
                         if fund is not None and fund is not _TIMEOUT:
-                            df.attrs['_fundamentals'] = fund
+                            df.attrs["_fundamentals"] = fund
                     except (RequestException, ValueError, KeyError) as e:
                         logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
                 try:
                     recomputed = _call_with_timeout(
                         lambda: compute_scores(
-                            df, timeframe=timeframe, index_df=index_df,
-                            settings={**settings, **(global_data or {}),
-                                       "_skip_vp": True},
+                            df,
+                            timeframe=timeframe,
+                            index_df=index_df,
+                            settings={
+                                **settings,
+                                **(global_data or {}),
+                                "_skip_vp": True,
+                            },
                         ),
                         timeout=TICKER_TIMEOUT,
                     )
                 except Exception:
-                    logger.debug("Re-score failed for %s", ticker, exc_info=True)
+                    logger.info("Re-score failed for %s", ticker, exc_info=True)
                     recomputed = None
                 if recomputed is not None and recomputed is not _TIMEOUT:
                     r.update(recomputed)
         except Exception as e:
-            logger.debug("Top enrichment failed for %s: %s", ticker, e)
+            logger.info("Top enrichment failed for %s: %s", ticker, e)
         return r
 
     import time as _time
@@ -490,7 +512,8 @@ def _enrich_rows_in_place(
                 "Phase-2 enrichment exceeded %ds deadline — "
                 "returning %d/%d enriched rows",
                 ENRICH_OVERALL_TIMEOUT,
-                done_count, total,
+                done_count,
+                total,
             )
             executor.shutdown(wait=False, cancel_futures=True)
             break
@@ -510,7 +533,7 @@ def _enrich_rows_in_place(
                     f"Enriching {done_count}/{total} with fundamentals…",
                 )
             except Exception:
-                logger.debug("Enrichment progress callback failed", exc_info=True)
+                logger.info("Enrichment progress callback failed", exc_info=True)
     if not cancelled:
         executor.shutdown(wait=True)
     _provider_executor.shutdown(wait=False)
@@ -519,18 +542,20 @@ def _enrich_rows_in_place(
     if hits or misses:
         logger.info(
             "Enrichment cache: %d/%d rows served from cache",
-            hits, hits + misses,
+            hits,
+            hits + misses,
         )
     if progress_callback:
         try:
             progress_callback(0.99, "Finalizing scan…")
         except Exception:
-            logger.debug("Finalizing progress callback failed", exc_info=True)
+            logger.info("Finalizing progress callback failed", exc_info=True)
     return rows  # mutated in place; unfinished rows keep phase-1 scores
 
 
 class ScanResult:
     """Container for scan results."""
+
     def __init__(self):
         self.results: list[dict[str, Any]] = []
         self.filtered_out = 0
@@ -540,8 +565,13 @@ class ScanResult:
         self.warnings: list[str] = []
 
 
-def _build_scan_warnings(settings: dict, total: int, results: list,
-                         passed: int, min_score_default: float = 50.0) -> list[str]:
+def _build_scan_warnings(
+    settings: dict,
+    total: int,
+    results: list,
+    passed: int,
+    min_score_default: float = 50.0,
+) -> list[str]:
     """Warn when the crossover filter is broad but the candidate set is weak.
 
     A large passed set with few scored / entry names is the signature of a
@@ -579,12 +609,12 @@ def _build_scan_warnings(settings: dict, total: int, results: list,
 class ScannerEngine:
     """
     Headless scanner engine for HMA/EMA multi-score swing strategy.
-    
+
     Usage:
         engine = ScannerEngine()
         progress_cb = lambda p, t: print(f"{p:.0%}: {t}")
         log_cb = lambda msg: print(msg)
-        result = engine.scan(universe="NIFTY 50", settings=settings, 
+        result = engine.scan(universe="NIFTY 50", settings=settings,
                             progress_callback=progress_cb, log_callback=log_cb)
     """
 
@@ -616,7 +646,7 @@ class ScannerEngine:
                 self._progress_callback(value, text)
             except Exception as e:
                 # A failing progress sink must never kill the scan.
-                logger.debug("Progress callback failed: %s", e)
+                logger.info("Progress callback failed: %s", e)
 
     def _log(self, msg: str):
         if self._log_callback:
@@ -659,13 +689,19 @@ class ScannerEngine:
         tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
 
         self._log("\n" + "=" * 50)
-        self._log(f"START {scan_label} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self._log(
+            f"START {scan_label} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
         self._log("=" * 50)
         self._log(f"Starting scan: {universe} ({len(tickers)} stocks)")
-        self._log(f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}")
-        self._log(f"FastMA={settings.get('fast_ma_type','HMA')}{settings.get('fast_ma_len',40)} "
-                   f"SlowMA={settings.get('slow_ma_type','EMA')}{settings.get('slow_ma_len',50)} "
-                   f"RSI={settings.get('rsi_len',14)} Threshold={settings.get('min_score',50)}")
+        self._log(
+            f"Timeframe: {tf_names.get(timeframe, timeframe)} | Period: {period} | Filter: {trend_filter}"
+        )
+        self._log(
+            f"FastMA={settings.get('fast_ma_type', 'HMA')}{settings.get('fast_ma_len', 40)} "
+            f"SlowMA={settings.get('slow_ma_type', 'EMA')}{settings.get('slow_ma_len', 50)} "
+            f"RSI={settings.get('rsi_len', 14)} Threshold={settings.get('min_score', 50)}"
+        )
 
         self._progress(0.0, f"Fetching {index_symbol} index...")
         index_df = fetch_index_data(f"^{index_symbol}", period=period)
@@ -677,11 +713,15 @@ class ScannerEngine:
         self._log("Fetching global macro/commodity data...")
         global_data = self._fetch_global_enrichment(settings)
         if global_data:
-            self._log(f"Global enrichment: {len(global_data)} keys (macro, forex, crypto, commodity)")
+            self._log(
+                f"Global enrichment: {len(global_data)} keys (macro, forex, crypto, commodity)"
+            )
 
         is_large = len(tickers) > LARGE_UNIVERSE_THRESHOLD
         if is_large:
-            self._log(f"Large universe fast mode: {len(tickers)} stocks — technicals first, enrich top {ENRICH_TOP_N} only")
+            self._log(
+                f"Large universe fast mode: {len(tickers)} stocks — technicals first, enrich top {ENRICH_TOP_N} only"
+            )
 
         return tickers, index_df, global_data, is_large
 
@@ -704,7 +744,9 @@ class ScannerEngine:
         attaches warnings (broad-filter, stale members).
         """
         results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-        passed = len([r for r in results if r["total"] >= settings.get("min_score", 50)])
+        passed = len(
+            [r for r in results if r["total"] >= settings.get("min_score", 50)]
+        )
 
         result.results = results
         result.filtered_out = filtered_out
@@ -723,19 +765,27 @@ class ScannerEngine:
             self._log(f"  Total stocks:  {len(tickers)}")
         self._log(f"  Filtered out:  {filtered_out}")
         if poor_rating_hidden:
-            self._log(f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)")
+            self._log(
+                f"  Poor-rated hidden: {poor_rating_hidden} ({trend_filter} filter)"
+            )
         neg_skips = negative_skip_count()
         if neg_skips:
             self._log(f"  Dead-symbols skipped (negative cache): {neg_skips}")
-        self._log(f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)")
+        self._log(
+            f"  Passed filter: {len(results)} ({direction_counts.get('Bull', 0)} Bull, {direction_counts.get('Bear', 0)} Bear)"
+        )
         self._log(f"  Scored {settings.get('min_score', 50)}+: {passed}")
 
         if not result.cancelled:
             result.warnings = _build_scan_warnings(
-                settings, len(tickers), results, passed)
-            stale_days = float(settings.get("stale_member_max_age_days")
-                               or STALE_MEMBER_MAX_AGE_DAYS)
-            stale_members = _find_stale_members(batch_data or {}, max_age_days=stale_days)
+                settings, len(tickers), results, passed
+            )
+            stale_days = float(
+                settings.get("stale_member_max_age_days") or STALE_MEMBER_MAX_AGE_DAYS
+            )
+            stale_members = _find_stale_members(
+                batch_data or {}, max_age_days=stale_days
+            )
             if stale_members:
                 result.warnings.append(
                     _stale_members_message(stale_members, max_age_days=stale_days)
@@ -755,7 +805,9 @@ class ScannerEngine:
             logger.info(
                 "cache_stats: enrichment_hits=%d enrichment_misses=%d "
                 "negative_skips=%d price_cache_size=%d",
-                stats["hits"], stats["misses"], neg,
+                stats["hits"],
+                stats["misses"],
+                neg,
                 enrichment_cache_size(),
             )
 
@@ -770,6 +822,7 @@ class ScannerEngine:
 
         def _fetch_macro():
             from ..api.macro_data import fetch_macro_data
+
             return fetch_macro_data(
                 fred_key=get_api_key("FRED_API_KEY", api_config),
                 econpulse_key=get_api_key("ECONPULSE_API_KEY", api_config),
@@ -778,6 +831,7 @@ class ScannerEngine:
 
         def _fetch_mandi():
             from ..api.free_apis import fetch_mandi_prices
+
             return fetch_mandi_prices()
 
         futures = {}
@@ -803,7 +857,9 @@ class ScannerEngine:
                         crypto = res.get("crypto")
                         if crypto:
                             global_data["_btc_fear_greed"] = crypto.fear_greed_index
-                            global_data["_btc_fear_greed_label"] = crypto.fear_greed_label
+                            global_data["_btc_fear_greed_label"] = (
+                                crypto.fear_greed_label
+                            )
                     elif kind == "mandi" and res:
                         global_data["_commodity_trend"] = "neutral"
                         global_data["_commodity_source"] = "mandi"
@@ -812,8 +868,13 @@ class ScannerEngine:
 
         return global_data
 
-    def _enrich_with_providers(self, ticker: str, settings: dict, global_data: dict | None = None,
-                               executor=None) -> dict:
+    def _enrich_with_providers(
+        self,
+        ticker: str,
+        settings: dict,
+        global_data: dict | None = None,
+        executor=None,
+    ) -> dict:
         """
         Enrich settings with data from provider modules.
         Runs all 5 per-ticker providers in parallel via ThreadPoolExecutor.
@@ -833,6 +894,7 @@ class ScannerEngine:
         # Define per-ticker provider functions
         def _fetch_sentiment():
             from ..api.market_sentiment import fetch_sentiment
+
             return fetch_sentiment(
                 ticker,
                 marketaux_key=get_api_key("MARKETAUX_API_KEY", api_config),
@@ -842,6 +904,7 @@ class ScannerEngine:
 
         def _fetch_social():
             from ..api.social_sentiment import fetch_social_sentiment
+
             return fetch_social_sentiment(
                 ticker,
                 twitter_api_key=get_api_key("TWITTER_API_KEY", api_config),
@@ -849,14 +912,17 @@ class ScannerEngine:
 
         def _fetch_indian_market():
             from ..api.indian_market import fetch_indian_market_data
+
             return fetch_indian_market_data(ticker)
 
         def _fetch_indian_fundamentals():
             from ..api.indian_fundamentals import fetch_indian_fundamentals
+
             return fetch_indian_fundamentals(ticker)
 
         def _fetch_insider():
             from ..api.insider_data import fetch_insider_data
+
             return fetch_insider_data(
                 ticker,
                 aletheia_key=get_api_key("ALETHEIA_API_KEY", api_config),
@@ -886,7 +952,9 @@ class ScannerEngine:
                     try:
                         result = future.result(timeout=5)
                         if category == "sentiment":
-                            enriched["_sentiment_score"] = result.get("sentiment_score", 0.0)
+                            enriched["_sentiment_score"] = result.get(
+                                "sentiment_score", 0.0
+                            )
                             enriched["_article_count"] = result.get("article_count", 0)
                             enriched["_sentiment_source"] = result.get("source", "none")
                         elif category == "social":
@@ -897,7 +965,9 @@ class ScannerEngine:
                             delivery = result.get("delivery")
                             if delivery:
                                 enriched["_delivery_pct"] = delivery.delivery_pct
-                                enriched["_delivery_change_pct"] = delivery.delivery_change_pct
+                                enriched["_delivery_change_pct"] = (
+                                    delivery.delivery_change_pct
+                                )
                                 enriched["_delivery_source"] = "nse"
                             fii_dii = result.get("fii_dii")
                             if fii_dii:
@@ -909,24 +979,42 @@ class ScannerEngine:
                             week52 = result.get("week52")
                             if week52:
                                 enriched["_52w_position"] = week52.position_in_range
-                                enriched["_52w_pct_from_high"] = week52.pct_from_52w_high
+                                enriched["_52w_pct_from_high"] = (
+                                    week52.pct_from_52w_high
+                                )
                                 enriched["_52w_source"] = "nse"
                         elif category == "india_fund":
                             screener = result.get("screener")
                             if screener:
                                 if screener.industry_pe and screener.stock_pe:
-                                    enriched["_pe_relative_to_industry"] = screener.stock_pe / screener.industry_pe
+                                    enriched["_pe_relative_to_industry"] = (
+                                        screener.stock_pe / screener.industry_pe
+                                    )
                                 enriched["_is_quality_stock"] = screener.is_quality
-                                enriched["_valuation_source"] = result.get("source", "none")
+                                enriched["_valuation_source"] = result.get(
+                                    "source", "none"
+                                )
                         elif category == "insider":
-                            enriched["_insider_score"] = result.get("insider_score", 0.0)
+                            enriched["_insider_score"] = result.get(
+                                "insider_score", 0.0
+                            )
                             enriched["_insider_source"] = result.get("source", "none")
-                    except (RequestException, ValueError, KeyError, AttributeError,
-                            TimeoutError) as e:
-                        logger.debug("Provider %s failed for %s: %s", category, ticker, e)
+                    except (
+                        RequestException,
+                        ValueError,
+                        KeyError,
+                        AttributeError,
+                        TimeoutError,
+                    ) as e:
+                        logger.debug(
+                            "Provider %s failed for %s: %s", category, ticker, e
+                        )
             except TimeoutError:
-                logger.debug("Provider enrichment timed out for %s after %ds",
-                             ticker, ENRICH_PROVIDER_TIMEOUT)
+                logger.debug(
+                    "Provider enrichment timed out for %s after %ds",
+                    ticker,
+                    ENRICH_PROVIDER_TIMEOUT,
+                )
         finally:
             if _own_executor:
                 executor.shutdown(wait=False)
@@ -934,6 +1022,7 @@ class ScannerEngine:
         # ── Premium Finance (Category 20 - Shariah) ────────────────────
         try:
             from ..api.premium_finance import fetch_shariah_data
+
             shariah = _call_with_timeout(
                 lambda: fetch_shariah_data(
                     ticker,
@@ -961,7 +1050,7 @@ class ScannerEngine:
     ) -> ScanResult:
         """
         Run a full scan.
-        
+
         Args:
             universe: Universe name (key in UNIVERSES or dynamic universe)
             settings: Scanner settings dict
@@ -970,30 +1059,41 @@ class ScannerEngine:
             trend_filter: "All", "Bullish Only", "Bearish Only" (directional
                   views also hide POOR/WEAK-rated stocks)
             index_symbol: Index symbol for relative strength (e.g., "NSEI")
-        
+
         Returns:
             ScanResult with results list and metadata
         """
         self._cancel_event.clear()
         result = ScanResult()
         import time as _time
+
         t_start = _time.monotonic()
         logger.info(
             "scan_started: universe=%s period=%s timeframe=%s trend=%s min_score=%s",
-            universe, period, timeframe, trend_filter,
+            universe,
+            period,
+            timeframe,
+            trend_filter,
             settings.get("min_score", 50),
         )
 
         try:
             tickers, index_df, global_data, is_large = self._prepare_scan(
-                universe, settings, period, timeframe, trend_filter,
-                index_symbol, scan_label="SCAN",
+                universe,
+                settings,
+                period,
+                timeframe,
+                trend_filter,
+                index_symbol,
+                scan_label="SCAN",
             )
 
             # Batch download all stocks — yfinance chunks, then a per-ticker
             # fallback pass (jugaad-data/nselib) for anything yfinance missed.
             self._progress(0.05, f"Batch downloading {len(tickers)} stocks...")
-            self._log(f"Batch downloading {len(tickers)} stocks via yfinance (fallback: jugaad-data/nselib)...")
+            self._log(
+                f"Batch downloading {len(tickers)} stocks via yfinance (fallback: jugaad-data/nselib)..."
+            )
             reset_negative_skips()
             batch_data = fetch_batch_yfinance(
                 tickers,
@@ -1011,7 +1111,9 @@ class ScannerEngine:
                     f"({len(tickers) - len(batch_data)} unavailable on all providers)"
                 )
             else:
-                self._log(f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched")
+                self._log(
+                    f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched"
+                )
 
             results = []
             total = len(batch_data)
@@ -1024,10 +1126,15 @@ class ScannerEngine:
             def _score_one(item):
                 ticker, df = item
                 return _score_ticker(
-                    ticker, df,
-                    settings=settings, timeframe=timeframe, index_df=index_df,
-                    trend_filter=trend_filter, is_large=is_large,
-                    global_data=global_data, enrich=self._enrich_with_providers,
+                    ticker,
+                    df,
+                    settings=settings,
+                    timeframe=timeframe,
+                    index_df=index_df,
+                    trend_filter=trend_filter,
+                    is_large=is_large,
+                    global_data=global_data,
+                    enrich=self._enrich_with_providers,
                 )
 
             if is_large and total > 200:
@@ -1035,9 +1142,14 @@ class ScannerEngine:
                 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
                 max_workers = min(8, (total // 50) + 2)
-                self._log(f"Parallel scoring {total} stocks with {max_workers} workers...")
+                self._log(
+                    f"Parallel scoring {total} stocks with {max_workers} workers..."
+                )
                 executor = ThreadPoolExecutor(max_workers=max_workers)
-                future_to_ticker = {executor.submit(_score_one, item): item[0] for item in batch_data.items()}
+                future_to_ticker = {
+                    executor.submit(_score_one, item): item[0]
+                    for item in batch_data.items()
+                }
                 cancelled_loop = False
                 pending = set(future_to_ticker)
                 done = 0
@@ -1047,13 +1159,17 @@ class ScannerEngine:
                         cancelled_loop = True
                         result.cancelled = True
                         break
-                    completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                    completed, pending = wait(
+                        pending, timeout=0.5, return_when=FIRST_COMPLETED
+                    )
                     if not completed:
                         continue
                     for future in completed:
                         done += 1
                         if done % 50 == 0 or done <= 5:
-                            self._progress(0.1 + (done / total * 0.7), f"Scoring {done}/{total}")
+                            self._progress(
+                                0.1 + (done / total * 0.7), f"Scoring {done}/{total}"
+                            )
                         scores, direction = future.result()
                         if scores is None:
                             if direction == "filtered":
@@ -1061,11 +1177,19 @@ class ScannerEngine:
                             elif direction == "poor_rating":
                                 poor_rating_hidden += 1
                             continue
-                        direction_counts[direction] = direction_counts.get(direction, 0) + 1
+                        direction_counts[direction] = (
+                            direction_counts.get(direction, 0) + 1
+                        )
                         results.append(scores)
                         if len(results) % 20 == 0 or len(results) <= 5:
-                            tag = "\u2713" if scores["total"] >= settings.get("min_score", 50) else "\u2717"
-                            self._log(f"  {tag} {scores['ticker']}: {scores['total']:.1f}/100 ({direction})")
+                            tag = (
+                                "\u2713"
+                                if scores["total"] >= settings.get("min_score", 50)
+                                else "\u2717"
+                            )
+                            self._log(
+                                f"  {tag} {scores['ticker']}: {scores['total']:.1f}/100 ({direction})"
+                            )
                 if not cancelled_loop:
                     executor.shutdown(wait=True)
             else:
@@ -1074,7 +1198,8 @@ class ScannerEngine:
                 # phase 2 does. Input order is preserved for the logs below.
                 items = list(batch_data.items())
                 ordered, _pcancelled = _parallel_score(
-                    items, _score_one, self._cancel_event)
+                    items, _score_one, self._cancel_event
+                )
                 if _pcancelled:
                     self._log("\n\u23f9  Scan cancelled by user")
                     result.cancelled = True
@@ -1099,8 +1224,14 @@ class ScannerEngine:
 
                     if len(results) % 10 == 0 or len(results) <= 5:
                         score_val = scores["total"]
-                        tag = "\u2713" if score_val >= settings.get("min_score", 50) else "\u2717"
-                        self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
+                        tag = (
+                            "\u2713"
+                            if score_val >= settings.get("min_score", 50)
+                            else "\u2717"
+                        )
+                        self._log(
+                            f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})"
+                        )
 
             # ── Phase 2: Enrich top 200 for large universes ───────────────
             if is_large and results and not self._cancel_event.is_set():
@@ -1109,11 +1240,16 @@ class ScannerEngine:
                 top = results[:top_n]
                 rest = results[top_n:]
                 self._progress(0.82, f"Enriching top {top_n} stocks...")
-                self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
+                self._log(
+                    f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment..."
+                )
                 enriched_top = _enrich_rows_in_place(
-                    top, batch_data,
-                    settings=settings, global_data=global_data,
-                    timeframe=timeframe, index_df=index_df,
+                    top,
+                    batch_data,
+                    settings=settings,
+                    global_data=global_data,
+                    timeframe=timeframe,
+                    index_df=index_df,
                     enrich=self._enrich_with_providers,
                     cancel_event=self._cancel_event,
                     progress_callback=self._progress,
@@ -1123,9 +1259,16 @@ class ScannerEngine:
             self._progress(0.95, "Finalizing scan...")
 
             self._finalize_scan(
-                result, settings, tickers, results, filtered_out,
-                poor_rating_hidden, direction_counts, trend_filter,
-                batch_data=batch_data, scan_label="Scan Complete",
+                result,
+                settings,
+                tickers,
+                results,
+                filtered_out,
+                poor_rating_hidden,
+                direction_counts,
+                trend_filter,
+                batch_data=batch_data,
+                scan_label="Scan Complete",
             )
 
         except Exception as e:
@@ -1142,18 +1285,34 @@ class ScannerEngine:
 
         elapsed = _time.monotonic() - t_start
         if result.cancelled:
-            logger.info("scan_cancelled: universe=%s elapsed=%.1fs results=%d",
-                        universe, elapsed, len(result.results))
+            logger.info(
+                "scan_cancelled: universe=%s elapsed=%.1fs results=%d",
+                universe,
+                elapsed,
+                len(result.results),
+            )
         elif result.error:
-            logger.info("scan_error: universe=%s elapsed=%.1fs error=%s",
-                        universe, elapsed, result.error)
+            logger.info(
+                "scan_error: universe=%s elapsed=%.1fs error=%s",
+                universe,
+                elapsed,
+                result.error,
+            )
         else:
             logger.info(
                 "scan_completed: universe=%s elapsed=%.1fs tickers=%d results=%d "
                 "passed=%d filtered=%d bull=%d bear=%d",
-                universe, elapsed, len(tickers), len(result.results),
-                len([r for r in result.results
-                     if r["total"] >= settings.get("min_score", 50)]),
+                universe,
+                elapsed,
+                len(tickers),
+                len(result.results),
+                len(
+                    [
+                        r
+                        for r in result.results
+                        if r["total"] >= settings.get("min_score", 50)
+                    ]
+                ),
                 result.filtered_out,
                 result.direction_counts.get("Bull", 0),
                 result.direction_counts.get("Bear", 0),
@@ -1189,17 +1348,26 @@ class ScannerEngine:
         self._cancel_event.clear()
         result = ScanResult()
         import time as _time
+
         t_start = _time.monotonic()
         logger.info(
             "stream_scan_started: universe=%s period=%s timeframe=%s trend=%s min_score=%s",
-            universe, period, timeframe, trend_filter,
+            universe,
+            period,
+            timeframe,
+            trend_filter,
             settings.get("min_score", 50),
         )
 
         try:
             tickers, index_df, global_data, is_large = self._prepare_scan(
-                universe, settings, period, timeframe, trend_filter,
-                index_symbol, scan_label="STREAM SCAN",
+                universe,
+                settings,
+                period,
+                timeframe,
+                trend_filter,
+                index_symbol,
+                scan_label="STREAM SCAN",
             )
 
             results: list[dict] = []
@@ -1214,10 +1382,15 @@ class ScannerEngine:
             def _score_one(item):
                 ticker, df = item
                 return _score_ticker(
-                    ticker, df,
-                    settings=settings, timeframe=timeframe, index_df=index_df,
-                    trend_filter=trend_filter, is_large=is_large,
-                    global_data=global_data, enrich=self._enrich_with_providers,
+                    ticker,
+                    df,
+                    settings=settings,
+                    timeframe=timeframe,
+                    index_df=index_df,
+                    trend_filter=trend_filter,
+                    is_large=is_large,
+                    global_data=global_data,
+                    enrich=self._enrich_with_providers,
                 )
 
             # ── Stream per parallel batch ─────────────────────────────────
@@ -1241,9 +1414,13 @@ class ScannerEngine:
                 batch_idx += 1
                 batch_data_all.update(chunk_data)
                 fetched_so_far += len(chunk_data)
-                self._progress(0.05 + (fetched_so_far / max(total_tickers, 1) * 0.05),
-                               f"Batch {batch_idx}: {len(chunk_data)} downloaded ({fetched_so_far}/{total_tickers})")
-                self._log(f"Batch {batch_idx} received: {len(chunk_data)} tickers (cumulative {fetched_so_far}) — scoring...")
+                self._progress(
+                    0.05 + (fetched_so_far / max(total_tickers, 1) * 0.05),
+                    f"Batch {batch_idx}: {len(chunk_data)} downloaded ({fetched_so_far}/{total_tickers})",
+                )
+                self._log(
+                    f"Batch {batch_idx} received: {len(chunk_data)} tickers (cumulative {fetched_so_far}) — scoring..."
+                )
 
                 chunk_results: list[dict] = []
                 # For large universes use parallel scoring per chunk (smaller
@@ -1253,9 +1430,13 @@ class ScannerEngine:
                         FIRST_COMPLETED,
                         wait,
                     )
+
                     max_w = min(4, (len(chunk_data) // 25) + 1)
                     ex = _DaemonThreadPoolExecutor(max_workers=max_w)
-                    futs = {ex.submit(_score_one, item): item[0] for item in chunk_data.items()}
+                    futs = {
+                        ex.submit(_score_one, item): item[0]
+                        for item in chunk_data.items()
+                    }
                     cancelled_loop = False
                     pending = set(futs)
                     while pending:
@@ -1263,7 +1444,9 @@ class ScannerEngine:
                             ex.shutdown(wait=False, cancel_futures=True)
                             cancelled_loop = True
                             break
-                        completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                        completed, pending = wait(
+                            pending, timeout=0.5, return_when=FIRST_COMPLETED
+                        )
                         if not completed:
                             continue
                         for fut in completed:
@@ -1274,7 +1457,9 @@ class ScannerEngine:
                                 elif direction == "poor_rating":
                                     poor_rating_hidden += 1
                                 continue
-                            direction_counts[direction] = direction_counts.get(direction, 0) + 1
+                            direction_counts[direction] = (
+                                direction_counts.get(direction, 0) + 1
+                            )
                             chunk_results.append(scores)
                     if not cancelled_loop:
                         ex.shutdown(wait=True)
@@ -1284,8 +1469,7 @@ class ScannerEngine:
                     # way phase 2 does. Input order is preserved so the batch
                     # callback sees the same sequence as a sequential run.
                     items = list(chunk_data.items())
-                    ordered, _ = _parallel_score(
-                        items, _score_one, self._cancel_event)
+                    ordered, _ = _parallel_score(items, _score_one, self._cancel_event)
                     for idx, (ticker, _df) in enumerate(items):
                         res = ordered.get(idx)
                         if res is None:
@@ -1297,7 +1481,9 @@ class ScannerEngine:
                             elif direction == "poor_rating":
                                 poor_rating_hidden += 1
                             continue
-                        direction_counts[direction] = direction_counts.get(direction, 0) + 1
+                        direction_counts[direction] = (
+                            direction_counts.get(direction, 0) + 1
+                        )
                         chunk_results.append(scores)
 
                 if chunk_results:
@@ -1305,17 +1491,24 @@ class ScannerEngine:
                     results.extend(chunk_results)
                     # Progress: 0.1 - 0.8 range proportional to fetched
                     prog = 0.1 + (fetched_so_far / max(total_tickers, 1) * 0.7)
-                    self._progress(prog, f"Scored {len(results)} passed ({fetched_so_far}/{total_tickers} fetched)")
+                    self._progress(
+                        prog,
+                        f"Scored {len(results)} passed ({fetched_so_far}/{total_tickers} fetched)",
+                    )
                     for r in chunk_results[:3]:
-                        tag = "✓" if r["total"] >= settings.get("min_score", 50) else "✗"
-                        self._log(f"  {tag} {r['ticker']}: {r['total']:.1f}/100 ({r['trend_dir']})")
+                        tag = (
+                            "✓" if r["total"] >= settings.get("min_score", 50) else "✗"
+                        )
+                        self._log(
+                            f"  {tag} {r['ticker']}: {r['total']:.1f}/100 ({r['trend_dir']})"
+                        )
                     if len(chunk_results) > 3:
-                        self._log(f"  ... +{len(chunk_results)-3} more in this batch")
+                        self._log(f"  ... +{len(chunk_results) - 3} more in this batch")
                     if batch_cb:
                         try:
                             batch_cb(chunk_results)
                         except Exception as e:
-                            logger.debug("on_batch callback failed: %s", e)
+                            logger.info("on_batch callback failed: %s", e)
 
             # ── Phase 2: Enrich top 200 for large universes (update in place) ─
             if is_large and results and not self._cancel_event.is_set():
@@ -1324,11 +1517,16 @@ class ScannerEngine:
                 top = results[:top_n]
                 rest = results[top_n:]
                 self._progress(0.82, f"Enriching top {top_n} of {len(results)}…")
-                self._log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
+                self._log(
+                    f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment..."
+                )
                 enriched_top = _enrich_rows_in_place(
-                    top, batch_data_all,
-                    settings=settings, global_data=global_data,
-                    timeframe=timeframe, index_df=index_df,
+                    top,
+                    batch_data_all,
+                    settings=settings,
+                    global_data=global_data,
+                    timeframe=timeframe,
+                    index_df=index_df,
                     enrich=self._enrich_with_providers,
                     cancel_event=self._cancel_event,
                     progress_callback=self._progress,
@@ -1341,12 +1539,19 @@ class ScannerEngine:
                         batch_cb(enriched_top)
                         self._log(f"Top {top_n} enrichment complete — grid updated")
                     except Exception as e:
-                        logger.debug("on_batch enrichment callback failed: %s", e)
+                        logger.info("on_batch enrichment callback failed: %s", e)
 
             self._finalize_scan(
-                result, settings, tickers, results, filtered_out,
-                poor_rating_hidden, direction_counts, trend_filter,
-                batch_data=batch_data_all, scan_label="Stream Scan Complete",
+                result,
+                settings,
+                tickers,
+                results,
+                filtered_out,
+                poor_rating_hidden,
+                direction_counts,
+                trend_filter,
+                batch_data=batch_data_all,
+                scan_label="Stream Scan Complete",
             )
 
         except Exception as e:
@@ -1362,18 +1567,34 @@ class ScannerEngine:
 
         elapsed = _time.monotonic() - t_start
         if result.cancelled:
-            logger.info("stream_scan_cancelled: universe=%s elapsed=%.1fs results=%d",
-                        universe, elapsed, len(result.results))
+            logger.info(
+                "stream_scan_cancelled: universe=%s elapsed=%.1fs results=%d",
+                universe,
+                elapsed,
+                len(result.results),
+            )
         elif result.error:
-            logger.info("stream_scan_error: universe=%s elapsed=%.1fs error=%s",
-                        universe, elapsed, result.error)
+            logger.info(
+                "stream_scan_error: universe=%s elapsed=%.1fs error=%s",
+                universe,
+                elapsed,
+                result.error,
+            )
         else:
             logger.info(
                 "stream_scan_completed: universe=%s elapsed=%.1fs tickers=%d results=%d "
                 "passed=%d filtered=%d bull=%d bear=%d",
-                universe, elapsed, len(tickers), len(result.results),
-                len([r for r in result.results
-                     if r["total"] >= settings.get("min_score", 50)]),
+                universe,
+                elapsed,
+                len(tickers),
+                len(result.results),
+                len(
+                    [
+                        r
+                        for r in result.results
+                        if r["total"] >= settings.get("min_score", 50)
+                    ]
+                ),
                 result.filtered_out,
                 result.direction_counts.get("Bull", 0),
                 result.direction_counts.get("Bear", 0),
@@ -1399,4 +1620,6 @@ def run_scan(
         engine.set_progress_callback(progress_callback)
     if log_callback:
         engine.set_log_callback(log_callback)
-    return engine.scan(universe, settings, period, timeframe, trend_filter, index_symbol)
+    return engine.scan(
+        universe, settings, period, timeframe, trend_filter, index_symbol
+    )

@@ -23,7 +23,8 @@ from scanner.backend.settings_store import DEFAULT_SETTINGS
 def _isolate_enrichment_cache(tmp_path, monkeypatch):
     """Point the enrichment cache at a temp file and reset it per test."""
     monkeypatch.setattr(
-        data_fetcher, "_ENRICHMENT_CACHE_PATH",
+        data_fetcher,
+        "_ENRICHMENT_CACHE_PATH",
         str(tmp_path / "enrichment_cache.json"),
     )
     monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
@@ -34,7 +35,6 @@ def _isolate_enrichment_cache(tmp_path, monkeypatch):
 def _tiny_df():
     """Minimal non-empty frame — compute_scores is patched in these tests."""
     return pd.DataFrame({"close": [1.0, 2.0], "volume": [1, 1]})
-
 
 
 class TestTrendFilterRating:
@@ -73,19 +73,25 @@ class TestEnrichRowsInPlaceCache:
     """_enrich_one replays the provider cache instead of re-fetching."""
 
     def _run(self, rows, batch_data, enrich):
-        with patch("scanner.backend.scanner_engine.compute_scores",
-                   return_value={"total": 88.0, "combined_rating": "EXCELLENT"}):
+        with patch(
+            "scanner.backend.scanner_engine.compute_scores",
+            return_value={"total": 88.0, "combined_rating": "EXCELLENT"},
+        ):
             return _enrich_rows_in_place(
-                rows, batch_data,
-                settings={}, global_data=None,
-                timeframe="D", index_df=None,
+                rows,
+                batch_data,
+                settings={},
+                global_data=None,
+                timeframe="D",
+                index_df=None,
                 enrich=enrich,
             )
 
     def test_cache_hit_skips_provider_fetch_and_uses_cached_fundamentals(self):
         """A cached ticker reuses providers + fundamentals — no network calls."""
         data_fetcher._enrichment_cache_put(
-            "TCS", {"_sentiment_score": 0.9, "_insider_score": 5},
+            "TCS",
+            {"_sentiment_score": 0.9, "_insider_score": 5},
             {"pe_ratio": 20.0},
         )
         df = _tiny_df()
@@ -101,7 +107,9 @@ class TestEnrichRowsInPlaceCache:
         row = out[0]
         assert row["_sentiment_score"] == 0.9  # provider keys replayed
         assert row["_insider_score"] == 5
-        assert df.attrs.get("_fundamentals") == {"pe_ratio": 20.0}  # cached fundamentals attached
+        assert df.attrs.get("_fundamentals") == {
+            "pe_ratio": 20.0
+        }  # cached fundamentals attached
         assert row["total"] == 88.0  # re-scored on top of cached data
         assert row["combined_rating"] == "EXCELLENT"
 
@@ -115,8 +123,10 @@ class TestEnrichRowsInPlaceCache:
             calls.append(ticker)
             return {"_sentiment_score": 0.7, "_article_count": 3}
 
-        with patch("scanner.backend.scanner_engine.fetch_fundamentals",
-                   return_value={"pe_ratio": 15.0}):
+        with patch(
+            "scanner.backend.scanner_engine.fetch_fundamentals",
+            return_value={"pe_ratio": 15.0},
+        ):
             out = self._run(rows, {"TCS": df}, enrich)
 
         assert calls == ["TCS"]
@@ -154,7 +164,9 @@ class TestEnrichRowsInPlaceCache:
         def enrich(ticker, settings, gd):
             return {}
 
-        with patch("scanner.backend.scanner_engine.fetch_fundamentals", return_value=None):
+        with patch(
+            "scanner.backend.scanner_engine.fetch_fundamentals", return_value=None
+        ):
             self._run(rows, {"NEW": df}, enrich)
 
         assert data_fetcher._enrichment_cache_get("NEW") is None
@@ -177,10 +189,14 @@ class TestEnrichRowsInPlaceCancel:
         threading.Thread(target=fire, daemon=True).start()
         t0 = time.time()
         out = _enrich_rows_in_place(
-            rows, {},
-            settings={}, global_data=None,
-            timeframe="D", index_df=None,
-            enrich=slow_enrich, cancel_event=cancel,
+            rows,
+            {},
+            settings={},
+            global_data=None,
+            timeframe="D",
+            index_df=None,
+            enrich=slow_enrich,
+            cancel_event=cancel,
         )
         elapsed = time.time() - t0
         assert elapsed < 4  # returned while the 5s enrich calls still ran
@@ -196,9 +212,12 @@ class TestEnrichRowsInPlaceCancel:
             return {}
 
         out = _enrich_rows_in_place(
-            rows, {},
-            settings={}, global_data=None,
-            timeframe="D", index_df=None,
+            rows,
+            {},
+            settings={},
+            global_data=None,
+            timeframe="D",
+            index_df=None,
             enrich=fast_enrich,
         )
         assert sorted(seen) == [f"T{i}" for i in range(4)]
@@ -225,8 +244,13 @@ class TestCancelPropagation:
         ever yielded) — result must still say cancelled=True."""
         entered = threading.Event()
 
-        def fake_stream(tickers, period="1y", timeframe="D",
-                        cancel_event=None, on_fallback_progress=None):
+        def fake_stream(
+            tickers,
+            period="1y",
+            timeframe="D",
+            cancel_event=None,
+            on_fallback_progress=None,
+        ):
             # Real fetch_batch_yfinance_stream detects the cancel while the
             # in-flight batch is downloading and ends without yielding.
             entered.set()
@@ -240,13 +264,21 @@ class TestCancelPropagation:
 
         def worker():
             holder["result"] = engine.scan_stream(
-                "NIFTY 50", settings=dict(DEFAULT_SETTINGS),
-                period="1y", timeframe="D", index_symbol="NSEI",
+                "NIFTY 50",
+                settings=dict(DEFAULT_SETTINGS),
+                period="1y",
+                timeframe="D",
+                index_symbol="NSEI",
             )
 
-        with patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None), \
-             patch("scanner.backend.scanner_engine.fetch_batch_yfinance_stream", fake_stream), \
-             patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}):
+        with (
+            patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None),
+            patch(
+                "scanner.backend.scanner_engine.fetch_batch_yfinance_stream",
+                fake_stream,
+            ),
+            patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}),
+        ):
             th = threading.Thread(target=worker, daemon=True)
             th.start()
             self._wait_until(entered)
@@ -264,8 +296,13 @@ class TestCancelPropagation:
         download leaves an empty batch dict and an empty scoring loop."""
         entered = threading.Event()
 
-        def fake_batch(tickers, period="1y", timeframe="D",
-                       cancel_event=None, on_fallback_progress=None):
+        def fake_batch(
+            tickers,
+            period="1y",
+            timeframe="D",
+            cancel_event=None,
+            on_fallback_progress=None,
+        ):
             entered.set()
             while cancel_event is not None and not cancel_event.is_set():
                 time.sleep(0.01)
@@ -276,13 +313,18 @@ class TestCancelPropagation:
 
         def worker():
             holder["result"] = engine.scan(
-                "NIFTY 50", settings=dict(DEFAULT_SETTINGS),
-                period="1y", timeframe="D", index_symbol="NSEI",
+                "NIFTY 50",
+                settings=dict(DEFAULT_SETTINGS),
+                period="1y",
+                timeframe="D",
+                index_symbol="NSEI",
             )
 
-        with patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None), \
-             patch("scanner.backend.scanner_engine.fetch_batch_yfinance", fake_batch), \
-             patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}):
+        with (
+            patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None),
+            patch("scanner.backend.scanner_engine.fetch_batch_yfinance", fake_batch),
+            patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}),
+        ):
             th = threading.Thread(target=worker, daemon=True)
             th.start()
             self._wait_until(entered)
@@ -301,8 +343,13 @@ class TestCancelPropagation:
         entered = threading.Event()
         df = pd.DataFrame({"close": [1.0, 2.0], "volume": [1, 1]})
 
-        def fake_stream(tickers, period="1y", timeframe="D",
-                        cancel_event=None, on_fallback_progress=None):
+        def fake_stream(
+            tickers,
+            period="1y",
+            timeframe="D",
+            cancel_event=None,
+            on_fallback_progress=None,
+        ):
             yield {"TCS": df}  # first chunk streams normally
             entered.set()
             while cancel_event is not None and not cancel_event.is_set():
@@ -313,22 +360,32 @@ class TestCancelPropagation:
 
         def worker():
             holder["result"] = engine.scan_stream(
-                "NIFTY 50", settings=dict(DEFAULT_SETTINGS),
-                period="1y", timeframe="D", index_symbol="NSEI",
+                "NIFTY 50",
+                settings=dict(DEFAULT_SETTINGS),
+                period="1y",
+                timeframe="D",
+                index_symbol="NSEI",
             )
 
         fake_score = {
-            "ticker": "TCS", "total": 55.0, "trend_dir": "Bull",
+            "ticker": "TCS",
+            "total": 55.0,
+            "trend_dir": "Bull",
             "combined_rating": "GOOD",
         }
 
         def fake_score_ticker(ticker, df, **kw):
             return fake_score, "Bull"
 
-        with patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None), \
-             patch("scanner.backend.scanner_engine.fetch_batch_yfinance_stream", fake_stream), \
-             patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}), \
-             patch("scanner.backend.scanner_engine._score_ticker", fake_score_ticker):
+        with (
+            patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None),
+            patch(
+                "scanner.backend.scanner_engine.fetch_batch_yfinance_stream",
+                fake_stream,
+            ),
+            patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}),
+            patch("scanner.backend.scanner_engine._score_ticker", fake_score_ticker),
+        ):
             th = threading.Thread(target=worker, daemon=True)
             th.start()
             self._wait_until(entered)
@@ -356,8 +413,9 @@ class TestScanWarnings:
 
     def test_broad_filter_few_entries_warns(self):
         settings = {"fast_ma_len": 20, "slow_ma_len": 40, "min_score": 50.0}
-        results = ([{"total": 52.0, "entry_signal": True}]
-                   + [{"total": 52.0, "entry_signal": False} for _ in range(44)])
+        results = [{"total": 52.0, "entry_signal": True}] + [
+            {"total": 52.0, "entry_signal": False} for _ in range(44)
+        ]
         warnings = _build_scan_warnings(settings, total=51, results=results, passed=10)
         assert len(warnings) == 1
         assert "45/51" in warnings[0]
@@ -372,8 +430,9 @@ class TestScanWarnings:
 
     def test_healthy_scan_no_warning(self):
         settings = {"fast_ma_len": 40, "slow_ma_len": 50, "min_score": 50.0}
-        results = ([{"total": 62.0, "entry_signal": True} for _ in range(4)]
-                   + [{"total": 40.0, "entry_signal": False} for _ in range(6)])
+        results = [{"total": 62.0, "entry_signal": True} for _ in range(4)] + [
+            {"total": 40.0, "entry_signal": False} for _ in range(6)
+        ]
         assert _build_scan_warnings(settings, total=51, results=results, passed=4) == []
 
     def test_small_scan_never_warns(self):
@@ -404,7 +463,7 @@ class TestStaleMembers:
     def test_old_frames_flagged_oldest_first(self):
         batch = {
             "FRESH": _frame_ending(5),
-            "GSPL": _frame_ending(120),      # halted months ago
+            "GSPL": _frame_ending(120),  # halted months ago
             "TATAMETALI": _frame_ending(700),  # merged/delisted 2024
         }
         stale = _find_stale_members(batch)
@@ -413,7 +472,9 @@ class TestStaleMembers:
 
     def test_threshold_is_configurable(self):
         batch = {"OLD": _frame_ending(60)}
-        assert _find_stale_members(batch, max_age_days=30) == [("OLD", _frame_ending(60).index[-1].date().isoformat())]
+        assert _find_stale_members(batch, max_age_days=30) == [
+            ("OLD", _frame_ending(60).index[-1].date().isoformat())
+        ]
         assert _find_stale_members(batch, max_age_days=90) == []
 
     def test_empty_and_malformed_are_safe(self):
@@ -421,7 +482,9 @@ class TestStaleMembers:
         assert _find_stale_members({"BROKEN": object()}) == []
 
     def test_message_lists_names_and_count(self):
-        msg = _stale_members_message([("GSPL", "2026-05-11"), ("TATAMETALI", "2024-02-05")])
+        msg = _stale_members_message(
+            [("GSPL", "2026-05-11"), ("TATAMETALI", "2024-02-05")]
+        )
         assert "2 universe member(s)" in msg
         assert "GSPL (2026-05-11)" in msg
         assert "TATAMETALI (2024-02-05)" in msg

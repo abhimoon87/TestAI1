@@ -3,6 +3,7 @@
 These tests protect against accidental changes to fundamental constants
 and scoring behavior that would silently break the scanner output.
 """
+
 from scanner.shared.constants import (
     DIRECTIONAL_TREND_FILTERS,
     POOR_RATINGS,

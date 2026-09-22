@@ -30,9 +30,11 @@ _PREMIUM_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="premium_finan
 
 # ── Marketstack — Real-Time Market Data ─────────────────────────────────────
 
+
 @dataclass
 class MarketstackData:
     """Real-time market data from Marketstack."""
+
     ticker: str
     current_price: float
     open_price: float
@@ -51,18 +53,20 @@ def fetch_marketstack_data(
 ) -> MarketstackData | None:
     """
     Fetch real-time market data from Marketstack (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE.BSE")
         api_key: Marketstack API key
-    
+
     Returns:
         MarketstackData or None
     """
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"marketstack:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"marketstack:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return MarketstackData(**cached, cached=True)
@@ -91,34 +95,42 @@ def fetch_marketstack_data(
             low_price=entry.get("low", 0),
             volume=entry.get("volume", 0),
             change=entry.get("close", 0) - entry.get("open", 0),
-            change_pct=((entry.get("close", 0) - entry.get("open", 0)) / entry.get("open", 1)) * 100,
+            change_pct=(
+                (entry.get("close", 0) - entry.get("open", 0)) / entry.get("open", 1)
+            )
+            * 100,
             timestamp=entry.get("date", ""),
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "current_price": result.current_price,
-            "open_price": result.open_price,
-            "high_price": result.high_price,
-            "low_price": result.low_price,
-            "volume": result.volume,
-            "change": result.change,
-            "change_pct": result.change_pct,
-            "timestamp": result.timestamp,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "current_price": result.current_price,
+                "open_price": result.open_price,
+                "high_price": result.high_price,
+                "low_price": result.low_price,
+                "volume": result.volume,
+                "change": result.change,
+                "change_pct": result.change_pct,
+                "timestamp": result.timestamp,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Marketstack fetch failed for %s: %s", ticker, e)
+        logger.info("Marketstack fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── EOD Historical Data ────────────────────────────────────────────────────
 
+
 @dataclass
 class EODData:
     """Historical market data from EOD."""
+
     ticker: str
     current_price: float
     pe_ratio: float | None = None
@@ -135,11 +147,11 @@ def fetch_eod_data(
 ) -> EODData | None:
     """
     Fetch historical market data from EOD (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE.NSE")
         api_key: EOD API key
-    
+
     Returns:
         EODData or None
     """
@@ -172,28 +184,33 @@ def fetch_eod_data(
             current_price=last.get("adjusted_close", last.get("close", 0)),
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "current_price": result.current_price,
-            "pe_ratio": result.pe_ratio,
-            "pb_ratio": result.pb_ratio,
-            "eps": result.eps,
-            "dividend_yield": result.dividend_yield,
-            "market_cap": result.market_cap,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "current_price": result.current_price,
+                "pe_ratio": result.pe_ratio,
+                "pb_ratio": result.pb_ratio,
+                "eps": result.eps,
+                "dividend_yield": result.dividend_yield,
+                "market_cap": result.market_cap,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("EOD fetch failed for %s: %s", ticker, e)
+        logger.info("EOD fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Financial Modeling Prep ─────────────────────────────────────────────────
 
+
 @dataclass
 class FMPData:
     """Financial data from Financial Modeling Prep."""
+
     ticker: str
     pe_ratio: float | None = None
     pb_ratio: float | None = None
@@ -215,11 +232,11 @@ def fetch_fmp_data(
 ) -> FMPData | None:
     """
     Fetch financial data from Financial Modeling Prep (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE.NS")
         api_key: FMP API key
-    
+
     Returns:
         FMPData or None
     """
@@ -252,27 +269,32 @@ def fetch_fmp_data(
             market_cap=profile.get("mktCap"),
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "pe_ratio": result.pe_ratio,
-            "pb_ratio": result.pb_ratio,
-            "eps": result.eps,
-            "roe": result.roe,
-            "market_cap": result.market_cap,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "pe_ratio": result.pe_ratio,
+                "pb_ratio": result.pb_ratio,
+                "eps": result.eps,
+                "roe": result.roe,
+                "market_cap": result.market_cap,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("FMP fetch failed for %s: %s", ticker, e)
+        logger.info("FMP fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── IEX Cloud ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class IEXData:
     """Market data from IEX Cloud."""
+
     ticker: str
     current_price: float
     previous_close: float
@@ -292,11 +314,11 @@ def fetch_iex_data(
 ) -> IEXData | None:
     """
     Fetch market data from IEX Cloud (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
         api_key: IEX API key
-    
+
     Returns:
         IEXData or None
     """
@@ -329,31 +351,36 @@ def fetch_iex_data(
             week52_low=data.get("week52Low"),
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "current_price": result.current_price,
-            "previous_close": result.previous_close,
-            "change": result.change,
-            "change_pct": result.change_pct,
-            "volume": result.volume,
-            "market_cap": result.market_cap,
-            "pe_ratio": result.pe_ratio,
-            "week52_high": result.week52_high,
-            "week52_low": result.week52_low,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "current_price": result.current_price,
+                "previous_close": result.previous_close,
+                "change": result.change,
+                "change_pct": result.change_pct,
+                "volume": result.volume,
+                "market_cap": result.market_cap,
+                "pe_ratio": result.pe_ratio,
+                "week52_high": result.week52_high,
+                "week52_low": result.week52_low,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("IEX fetch failed for %s: %s", ticker, e)
+        logger.info("IEX fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Polygon — Historical Data ───────────────────────────────────────────────
 
+
 @dataclass
 class PolygonData:
     """Historical market data from Polygon."""
+
     ticker: str
     open: float
     high: float
@@ -371,19 +398,21 @@ def fetch_polygon_data(
 ) -> list[PolygonData] | None:
     """
     Fetch historical data from Polygon (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
         api_key: Polygon API key
         days: Number of days to fetch
-    
+
     Returns:
         List of PolygonData or None
     """
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"polygon:{ticker}:{days}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"polygon:{ticker}:{days}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return [PolygonData(**item) for item in cached.get("bars", [])]
@@ -394,7 +423,9 @@ def fetch_polygon_data(
         end = date.today()
         start = end - timedelta(days=days + 5)
 
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
+        url = (
+            f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
+        )
         params = {"apiKey": api_key, "limit": days}
 
         resp = requests.get(url, params=params, timeout=10)
@@ -403,36 +434,51 @@ def fetch_polygon_data(
 
         results = []
         for bar in data.get("results", [])[-days:]:
-            results.append(PolygonData(
-                ticker=ticker,
-                open=bar.get("o", 0),
-                high=bar.get("h", 0),
-                low=bar.get("l", 0),
-                close=bar.get("c", 0),
-                volume=bar.get("v", 0),
-                timestamp=str(bar.get("t", "")),
-            ))
+            results.append(
+                PolygonData(
+                    ticker=ticker,
+                    open=bar.get("o", 0),
+                    high=bar.get("h", 0),
+                    low=bar.get("l", 0),
+                    close=bar.get("c", 0),
+                    volume=bar.get("v", 0),
+                    timestamp=str(bar.get("t", "")),
+                )
+            )
 
         if results:
-            _PREMIUM_CACHE.set(cache_k, {"bars": [
-                {"ticker": r.ticker, "open": r.open, "high": r.high,
-                 "low": r.low, "close": r.close, "volume": r.volume,
-                 "timestamp": r.timestamp}
-                for r in results
-            ]})
+            _PREMIUM_CACHE.set(
+                cache_k,
+                {
+                    "bars": [
+                        {
+                            "ticker": r.ticker,
+                            "open": r.open,
+                            "high": r.high,
+                            "low": r.low,
+                            "close": r.close,
+                            "volume": r.volume,
+                            "timestamp": r.timestamp,
+                        }
+                        for r in results
+                    ]
+                },
+            )
 
         return results if results else None
 
     except Exception as e:
-        logger.debug("Polygon fetch failed for %s: %s", ticker, e)
+        logger.info("Polygon fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── StockData — News + Sentiment ────────────────────────────────────────────
 
+
 @dataclass
 class StockDataNews:
     """News + sentiment from StockData."""
+
     ticker: str
     sentiment_score: float
     article_count: int
@@ -446,18 +492,20 @@ def fetch_stockdata_news(
 ) -> StockDataNews | None:
     """
     Fetch news + sentiment from StockData (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
         api_key: StockData API key
-    
+
     Returns:
         StockDataNews or None
     """
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"stockdata:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"stockdata:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return StockDataNews(**cached, cached=True)
@@ -475,6 +523,7 @@ def fetch_stockdata_news(
 
         # Simple keyword sentiment on headlines
         from .market_sentiment import _keyword_sentiment
+
         combined = " ".join(headlines)
         sentiment = _keyword_sentiment(combined) if combined.strip() else 0.0
 
@@ -485,25 +534,30 @@ def fetch_stockdata_news(
             top_headlines=headlines[:5],
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "sentiment_score": result.sentiment_score,
-            "article_count": result.article_count,
-            "top_headlines": result.top_headlines,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "top_headlines": result.top_headlines,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("StockData fetch failed for %s: %s", ticker, e)
+        logger.info("StockData fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Styvio — Stock Sentiment ────────────────────────────────────────────────
 
+
 @dataclass
 class StyvioData:
     """Stock sentiment from Styvio."""
+
     ticker: str
     sentiment_score: float
     sentiment_label: str  # "bullish", "bearish", "neutral"
@@ -517,18 +571,20 @@ def fetch_styvio_data(
 ) -> StyvioData | None:
     """
     Fetch stock sentiment from Styvio (requires API key).
-    
+
     Args:
         ticker: Stock ticker
         api_key: Styvio API key
-    
+
     Returns:
         StyvioData or None
     """
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"styvio:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"styvio:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return StyvioData(**cached, cached=True)
@@ -548,25 +604,30 @@ def fetch_styvio_data(
             confidence=data.get("confidence", 0.5),
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "sentiment_score": result.sentiment_score,
-            "sentiment_label": result.sentiment_label,
-            "confidence": result.confidence,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "sentiment_label": result.sentiment_label,
+                "confidence": result.confidence,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Styvio fetch failed for %s: %s", ticker, e)
+        logger.info("Styvio fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Halal Terminal — Shariah Screening ──────────────────────────────────────
 
+
 @dataclass
 class ShariahData:
     """Shariah compliance data from Halal Terminal."""
+
     ticker: str
     is_shariah_compliant: bool
     screening_method: str
@@ -581,18 +642,20 @@ def fetch_shariah_data(
 ) -> ShariahData | None:
     """
     Fetch Shariah compliance data from Halal Terminal (requires API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
         api_key: Halal Terminal API key
-    
+
     Returns:
         ShariahData or None
     """
     if not api_key:
         return None
 
-    cache_k = hashlib.md5(f"shariah:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"shariah:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _PREMIUM_CACHE.get(cache_k)
     if cached:
         return ShariahData(**cached, cached=True)
@@ -613,16 +676,19 @@ def fetch_shariah_data(
             zakat_amount=data.get("zakat_amount"),
         )
 
-        _PREMIUM_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "is_shariah_compliant": result.is_shariah_compliant,
-            "screening_method": result.screening_method,
-            "purification_required": result.purification_required,
-            "zakat_amount": result.zakat_amount,
-        })
+        _PREMIUM_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "is_shariah_compliant": result.is_shariah_compliant,
+                "screening_method": result.screening_method,
+                "purification_required": result.purification_required,
+                "zakat_amount": result.zakat_amount,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Shariah fetch failed for %s: %s", ticker, e)
+        logger.info("Shariah fetch failed for %s: %s", ticker, e)
         return None

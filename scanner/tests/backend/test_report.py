@@ -214,7 +214,7 @@ class TestGenerateHtmlReport:
         html = generate_html_report(results, fetch_news=False)
         # B (80) should appear before A (30) in the HTML
         pos_b = html.index("B")
-        pos_a = html.index("data-ticker=\"A\"")
+        pos_a = html.index('data-ticker="A"')
         assert pos_b < pos_a
 
     def test_highlight_class_for_passing(self):
@@ -260,14 +260,23 @@ class TestGenerateHtmlReport:
         assert "CROSS" in html
 
     def test_sideways_label(self):
-        results = [_make_score_result(is_sideways=True, sideways_reasons=["ADX", "Chop"])]
+        results = [
+            _make_score_result(is_sideways=True, sideways_reasons=["ADX", "Chop"])
+        ]
         html = generate_html_report(results, fetch_news=False)
         assert "Chop" in html
 
     def test_news_fetching_mocked(self):
         """With news enabled, fetch_stock_news should be called."""
-        mock_news = [{"title": "Stock rises", "summary": "", "date": "2024-08-15",
-                       "publisher": "Reuters", "sentiment": "Good"}]
+        mock_news = [
+            {
+                "title": "Stock rises",
+                "summary": "",
+                "date": "2024-08-15",
+                "publisher": "Reuters",
+                "sentiment": "Good",
+            }
+        ]
         results = [_make_score_result()]
         with patch("scanner.backend.report.fetch_stock_news", return_value=mock_news):
             html = generate_html_report(results, fetch_news=True)
@@ -358,14 +367,16 @@ class TestFetchStockNews:
 
     def test_parses_news_items(self):
         now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-        mock_news = [{
-            "content": {
-                "title": "Stock surges on profit growth",
-                "summary": "Company reports strong results",
-                "pubDate": now,
-                "provider": {"displayName": "Reuters"},
+        mock_news = [
+            {
+                "content": {
+                    "title": "Stock surges on profit growth",
+                    "summary": "Company reports strong results",
+                    "pubDate": now,
+                    "provider": {"displayName": "Reuters"},
+                }
             }
-        }]
+        ]
         mock_yf = MagicMock()
         mock_ticker = MagicMock()
         mock_ticker.news = mock_news
@@ -381,14 +392,16 @@ class TestFetchStockNews:
 
     def test_filters_old_news(self):
         old_date = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%dT%H:%M:%S")
-        mock_news = [{
-            "content": {
-                "title": "Old news",
-                "summary": "",
-                "pubDate": old_date,
-                "provider": {"displayName": "BBC"},
+        mock_news = [
+            {
+                "content": {
+                    "title": "Old news",
+                    "summary": "",
+                    "pubDate": old_date,
+                    "provider": {"displayName": "BBC"},
+                }
             }
-        }]
+        ]
         mock_yf = MagicMock()
         mock_ticker = MagicMock()
         mock_ticker.news = mock_news
@@ -402,8 +415,14 @@ class TestFetchStockNews:
     def test_respects_max_items(self):
         now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         mock_news = [
-            {"content": {"title": f"News {i}", "summary": "", "pubDate": now,
-                          "provider": {"displayName": "Pub"}}}
+            {
+                "content": {
+                    "title": f"News {i}",
+                    "summary": "",
+                    "pubDate": now,
+                    "provider": {"displayName": "Pub"},
+                }
+            }
             for i in range(20)
         ]
         mock_yf = MagicMock()
@@ -443,14 +462,20 @@ class TestFetchNewsForTicker:
             m = MagicMock()
             m.news = news_by_ticker.get(t, [])
             return m
+
         mock_yf.Ticker.side_effect = _ticker
         return mock_yf
 
     def _item(self, title="Story"):
         now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-        return {"content": {"title": title, "summary": "",
-                             "pubDate": now,
-                             "provider": {"displayName": "Reuters"}}}
+        return {
+            "content": {
+                "title": title,
+                "summary": "",
+                "pubDate": now,
+                "provider": {"displayName": "Reuters"},
+            }
+        }
 
     def test_returns_provider_keyed_items_from_ns(self):
         mock_yf = self._mock_yf({"TCS.NS": [self._item("NSE story")]})
@@ -495,8 +520,15 @@ class TestFetchNewsBatch:
     def test_maps_every_ticker_to_its_news(self):
         def _fake(t, max_items=10, months_back=2):
             if t in ("A", "B"):
-                return [{"title": f"{t} story", "summary": "", "date": "2026-08-01",
-                         "provider": "Reuters", "sentiment": "Good"}]
+                return [
+                    {
+                        "title": f"{t} story",
+                        "summary": "",
+                        "date": "2026-08-01",
+                        "provider": "Reuters",
+                        "sentiment": "Good",
+                    }
+                ]
             return []
 
         with patch("scanner.backend.report.fetch_news_for_ticker", side_effect=_fake):

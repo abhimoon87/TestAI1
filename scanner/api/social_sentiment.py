@@ -18,17 +18,60 @@ logger = logging.getLogger(__name__)
 # ── Positive/Negative Word Lists (Social/Financial) ────────────────────────
 
 SOCIAL_POSITIVE = {
-    "moon", "mooning", "bullish", "buy", "buying", "long", "hold", "hodl",
-    "rocket", "🚀", "💎", "💎🙌", "undervalued", "cheap", "discount",
-    "breakout", "squeeze", "rally", "gain", "profit", "bull", "up",
-    "strong", "beat", "upgrade", "outperform", "accumulate",
+    "moon",
+    "mooning",
+    "bullish",
+    "buy",
+    "buying",
+    "long",
+    "hold",
+    "hodl",
+    "rocket",
+    "🚀",
+    "💎",
+    "💎🙌",
+    "undervalued",
+    "cheap",
+    "discount",
+    "breakout",
+    "squeeze",
+    "rally",
+    "gain",
+    "profit",
+    "bull",
+    "up",
+    "strong",
+    "beat",
+    "upgrade",
+    "outperform",
+    "accumulate",
 }
 
 SOCIAL_NEGATIVE = {
-    "bearish", "sell", "selling", "short", "overvalued", "expensive",
-    "dump", "dumping", "crash", "plunge", "loss", "bear", "down",
-    "weak", "miss", "downgrade", "underperform", "avoid", "panic",
-    "bagholder", "rekt", "bubble", "scam", "fraud",
+    "bearish",
+    "sell",
+    "selling",
+    "short",
+    "overvalued",
+    "expensive",
+    "dump",
+    "dumping",
+    "crash",
+    "plunge",
+    "loss",
+    "bear",
+    "down",
+    "weak",
+    "miss",
+    "downgrade",
+    "underperform",
+    "avoid",
+    "panic",
+    "bagholder",
+    "rekt",
+    "bubble",
+    "scam",
+    "fraud",
 }
 
 # ── Cache ───────────────────────────────────────────────────────────────────
@@ -40,8 +83,13 @@ def _social_sentiment(text: str) -> float:
     """Simple keyword sentiment for social text. Returns -1.0 to 1.0."""
     if not text:
         return 0.0
-    words = set(re.findall(r'\b\w+\b', text.lower()))
-    emojis = set(re.findall(r'[\U0001f600-\U0001f9ff]|[\U0001f300-\U0001f5ff]|[\U0001f680-\U0001f6ff]|[\U0001f900-\U0001f9ff]', text))
+    words = set(re.findall(r"\b\w+\b", text.lower()))
+    emojis = set(
+        re.findall(
+            r"[\U0001f600-\U0001f9ff]|[\U0001f300-\U0001f5ff]|[\U0001f680-\U0001f6ff]|[\U0001f900-\U0001f9ff]",
+            text,
+        )
+    )
     all_tokens = words | emojis
     pos = len(all_tokens & SOCIAL_POSITIVE)
     neg = len(all_tokens & SOCIAL_NEGATIVE)
@@ -53,9 +101,11 @@ def _social_sentiment(text: str) -> float:
 
 # ── Reddit Provider ────────────────────────────────────────────────────────
 
+
 @dataclass
 class RedditSentiment:
     """Social sentiment from Reddit."""
+
     ticker: str
     mention_count: int
     sentiment_score: float  # -1.0 to 1.0
@@ -74,12 +124,12 @@ def fetch_reddit_sentiment(
     """
     Fetch Reddit sentiment for a ticker.
     Uses Reddit's public JSON API (no auth required for read).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
         subreddits: Subreddits to search (default: IndianStreetBets, stocks, wallstreetbets)
         limit: Max posts per subreddit
-    
+
     Returns:
         RedditSentiment or None
     """
@@ -92,7 +142,9 @@ def fetch_reddit_sentiment(
     # Strip suffixes for Reddit search
     symbol = ticker.replace(".NS", "").replace(".BO", "")
 
-    cache_k = hashlib.md5(f"reddit:{symbol}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"reddit:{symbol}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _SOCIAL_CACHE.get(cache_k)
     if cached:
         return RedditSentiment(**cached, cached=True)
@@ -133,14 +185,16 @@ def fetch_reddit_sentiment(
                 selftext = p_data.get("selftext", "")[:500]
                 text = f"{title} {selftext}"
                 score = _social_sentiment(text)
-                posts.append({
-                    "title": title[:120],
-                    "score": p_data.get("score", 0),
-                    "url": f"https://reddit.com{p_data.get('permalink', '')}",
-                    "subreddit": sub,
-                    "sentiment": round(score, 3),
-                    "raw_score": score,
-                })
+                posts.append(
+                    {
+                        "title": title[:120],
+                        "score": p_data.get("score", 0),
+                        "url": f"https://reddit.com{p_data.get('permalink', '')}",
+                        "subreddit": sub,
+                        "sentiment": round(score, 3),
+                        "raw_score": score,
+                    }
+                )
         except (requests.RequestException, KeyError, ValueError) as e:
             logger.debug("Reddit search failed for r/%s: %s", sub, e)
         return posts
@@ -160,9 +214,14 @@ def fetch_reddit_sentiment(
 
     if not sentiments:
         return RedditSentiment(
-            ticker=ticker, mention_count=0, sentiment_score=0.0,
-            bullish_pct=0.0, bearish_pct=0.0, top_posts=[],
-            subreddits=[], cached=False,
+            ticker=ticker,
+            mention_count=0,
+            sentiment_score=0.0,
+            bullish_pct=0.0,
+            bearish_pct=0.0,
+            top_posts=[],
+            subreddits=[],
+            cached=False,
         )
 
     avg_sentiment = sum(sentiments) / len(sentiments)
@@ -185,24 +244,29 @@ def fetch_reddit_sentiment(
         cached=False,
     )
 
-    _SOCIAL_CACHE.set(cache_k, {
-        "ticker": ticker,
-        "mention_count": result.mention_count,
-        "sentiment_score": result.sentiment_score,
-        "bullish_pct": result.bullish_pct,
-        "bearish_pct": result.bearish_pct,
-        "top_posts": result.top_posts,
-        "subreddits": result.subreddits,
-    })
+    _SOCIAL_CACHE.set(
+        cache_k,
+        {
+            "ticker": ticker,
+            "mention_count": result.mention_count,
+            "sentiment_score": result.sentiment_score,
+            "bullish_pct": result.bullish_pct,
+            "bearish_pct": result.bearish_pct,
+            "top_posts": result.top_posts,
+            "subreddits": result.subreddits,
+        },
+    )
 
     return result
 
 
 # ── Twitter/X Provider ─────────────────────────────────────────────────────
 
+
 @dataclass
 class TwitterSentiment:
     """Social sentiment from Twitter/X."""
+
     ticker: str
     mention_count: int
     sentiment_score: float  # -1.0 to 1.0
@@ -220,12 +284,12 @@ def fetch_twitter_sentiment(
     """
     Fetch Twitter/X sentiment for a ticker.
     Uses GetXAPI or TweetAPI (third-party Twitter data providers).
-    
+
     Args:
         ticker: Stock ticker
         api_key: API key for GetXAPI/TweetAPI (or env TWITTER_API_KEY)
         max_results: Max tweets to analyze
-    
+
     Returns:
         TwitterSentiment or None
     """
@@ -236,7 +300,9 @@ def fetch_twitter_sentiment(
 
     symbol = ticker.replace(".NS", "").replace(".BO", "")
 
-    cache_k = hashlib.md5(f"twitter:{symbol}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"twitter:{symbol}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _SOCIAL_CACHE.get(cache_k)
     if cached:
         return TwitterSentiment(**cached, cached=True)
@@ -257,8 +323,13 @@ def fetch_twitter_sentiment(
         tweets = data.get("data", data.get("tweets", []))
         if not tweets:
             return TwitterSentiment(
-                ticker=ticker, mention_count=0, sentiment_score=0.0,
-                avg_retweets=0, avg_likes=0, top_tweets=[], cached=False,
+                ticker=ticker,
+                mention_count=0,
+                sentiment_score=0.0,
+                avg_retweets=0,
+                avg_likes=0,
+                top_tweets=[],
+                cached=False,
             )
 
         sentiments = []
@@ -276,18 +347,22 @@ def fetch_twitter_sentiment(
             total_retweets += retweets
             total_likes += likes
 
-            top_tweets.append({
-                "text": text[:200],
-                "retweets": retweets,
-                "likes": likes,
-                "sentiment": round(score, 3),
-            })
+            top_tweets.append(
+                {
+                    "text": text[:200],
+                    "retweets": retweets,
+                    "likes": likes,
+                    "sentiment": round(score, 3),
+                }
+            )
 
         n = len(sentiments) or 1
         avg_sentiment = sum(sentiments) / n
 
         # Sort by engagement
-        top_tweets.sort(key=lambda x: x.get("retweets", 0) + x.get("likes", 0), reverse=True)
+        top_tweets.sort(
+            key=lambda x: x.get("retweets", 0) + x.get("likes", 0), reverse=True
+        )
 
         result = TwitterSentiment(
             ticker=ticker,
@@ -299,14 +374,17 @@ def fetch_twitter_sentiment(
             cached=False,
         )
 
-        _SOCIAL_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "mention_count": result.mention_count,
-            "sentiment_score": result.sentiment_score,
-            "avg_retweets": result.avg_retweets,
-            "avg_likes": result.avg_likes,
-            "top_tweets": result.top_tweets,
-        })
+        _SOCIAL_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "mention_count": result.mention_count,
+                "sentiment_score": result.sentiment_score,
+                "avg_retweets": result.avg_retweets,
+                "avg_likes": result.avg_likes,
+                "top_tweets": result.top_tweets,
+            },
+        )
 
         return result
 
@@ -317,6 +395,7 @@ def fetch_twitter_sentiment(
 
 # ── Unified Social Sentiment ───────────────────────────────────────────────
 
+
 def fetch_social_sentiment(
     ticker: str,
     twitter_api_key: str | None = None,
@@ -324,7 +403,7 @@ def fetch_social_sentiment(
 ) -> dict:
     """
     Fetch social sentiment from Reddit + Twitter with fallback.
-    
+
     Returns:
         {
             "social_score": float,  # -1.0 to 1.0
@@ -373,6 +452,7 @@ def fetch_social_sentiment(
     wsb = None
     try:
         from .free_apis import fetch_wallstreetbets_sentiment
+
         wsb = fetch_wallstreetbets_sentiment(ticker)
         if wsb and wsb.mention_count > 0:
             scores.append(wsb.sentiment_score)
@@ -382,7 +462,7 @@ def fetch_social_sentiment(
             # Recalculate weighted score
             weighted_score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
     except Exception as e:
-        logger.debug("WSB sentiment fetch failed for %s: %s", ticker, e)
+        logger.info("WSB sentiment fetch failed for %s: %s", ticker, e)
 
     return {
         "social_score": round(weighted_score, 3),

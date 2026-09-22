@@ -40,61 +40,74 @@ from scanner.shared.universes import (
 class TestUniverseLists:
     """Verify each universe list has valid content."""
 
-    @pytest.mark.parametrize("name,universe", [
-        ("NIFTY_50", NIFTY_50),
-        ("BANK_NIFTY", BANK_NIFTY),
-        ("NIFTY_NEXT_50", NIFTY_NEXT_50),
-        ("NIFTY_MIDCAP_100", NIFTY_MIDCAP_100),
-        ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100),
-        ("FNO_STOCKS", FNO_STOCKS),
-        ("BSE_SENSEX", BSE_SENSEX),
-        ("NIFTY_IT", NIFTY_IT),
-        ("NIFTY_PHARMA", NIFTY_PHARMA),
-        ("NIFTY_AUTO", NIFTY_AUTO),
-        ("NIFTY_METAL", NIFTY_METAL),
-        ("NIFTY_REALTY", NIFTY_REALTY),
-        ("NIFTY_ENERGY", NIFTY_ENERGY),
-        ("NIFTY_FINANCIAL", NIFTY_FINANCIAL),
-    ])
+    @pytest.mark.parametrize(
+        "name,universe",
+        [
+            ("NIFTY_50", NIFTY_50),
+            ("BANK_NIFTY", BANK_NIFTY),
+            ("NIFTY_NEXT_50", NIFTY_NEXT_50),
+            ("NIFTY_MIDCAP_100", NIFTY_MIDCAP_100),
+            ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100),
+            ("FNO_STOCKS", FNO_STOCKS),
+            ("BSE_SENSEX", BSE_SENSEX),
+            ("NIFTY_IT", NIFTY_IT),
+            ("NIFTY_PHARMA", NIFTY_PHARMA),
+            ("NIFTY_AUTO", NIFTY_AUTO),
+            ("NIFTY_METAL", NIFTY_METAL),
+            ("NIFTY_REALTY", NIFTY_REALTY),
+            ("NIFTY_ENERGY", NIFTY_ENERGY),
+            ("NIFTY_FINANCIAL", NIFTY_FINANCIAL),
+        ],
+    )
     def test_not_empty(self, name, universe):
         assert len(universe) > 0, f"{name} is empty"
 
-    @pytest.mark.parametrize("name,universe", [
-        ("NIFTY_50", NIFTY_50),
-        ("BANK_NIFTY", BANK_NIFTY),
-        ("NIFTY_NEXT_50", NIFTY_NEXT_50),
-        ("NIFTY_MIDCAP_100", NIFTY_MIDCAP_100),
-        ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100),
-        ("FNO_STOCKS", FNO_STOCKS),
-        ("BSE_SENSEX", BSE_SENSEX),
-    ])
+    @pytest.mark.parametrize(
+        "name,universe",
+        [
+            ("NIFTY_50", NIFTY_50),
+            ("BANK_NIFTY", BANK_NIFTY),
+            ("NIFTY_NEXT_50", NIFTY_NEXT_50),
+            ("NIFTY_MIDCAP_100", NIFTY_MIDCAP_100),
+            ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100),
+            ("FNO_STOCKS", FNO_STOCKS),
+            ("BSE_SENSEX", BSE_SENSEX),
+        ],
+    )
     def test_all_strings(self, name, universe):
         for ticker in universe:
             assert isinstance(ticker, str), f"{name}: {ticker} is not a string"
 
-    @pytest.mark.parametrize("name,universe", [
-        ("NIFTY_50", NIFTY_50),
-        ("BANK_NIFTY", BANK_NIFTY),
-        ("NIFTY_NEXT_50", NIFTY_NEXT_50),
-        ("FNO_STOCKS", FNO_STOCKS),
-    ])
+    @pytest.mark.parametrize(
+        "name,universe",
+        [
+            ("NIFTY_50", NIFTY_50),
+            ("BANK_NIFTY", BANK_NIFTY),
+            ("NIFTY_NEXT_50", NIFTY_NEXT_50),
+            ("FNO_STOCKS", FNO_STOCKS),
+        ],
+    )
     def test_no_empty_strings(self, name, universe):
         for ticker in universe:
             assert len(ticker) > 0, f"{name}: contains empty string"
 
-    @pytest.mark.parametrize("name,universe,expected_min", [
-        ("NIFTY_50", NIFTY_50, 45),
-        ("BANK_NIFTY", BANK_NIFTY, 15),
-        ("NIFTY_NEXT_50", NIFTY_NEXT_50, 40),
-        ("NIFTY_MIDCAP_100", NIFTY_MIDCAP_100, 50),
-        ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100, 40),
-        ("FNO_STOCKS", FNO_STOCKS, 50),
-        ("BSE_SENSEX", BSE_SENSEX, 25),
-        ("NIFTY_IT", NIFTY_IT, 8),
-    ])
+    @pytest.mark.parametrize(
+        "name,universe,expected_min",
+        [
+            ("NIFTY_50", NIFTY_50, 45),
+            ("BANK_NIFTY", BANK_NIFTY, 15),
+            ("NIFTY_NEXT_50", NIFTY_NEXT_50, 40),
+            ("NIFTY_MIDCAP_100", NIFTY_MIDCAP_100, 50),
+            ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100, 40),
+            ("FNO_STOCKS", FNO_STOCKS, 50),
+            ("BSE_SENSEX", BSE_SENSEX, 25),
+            ("NIFTY_IT", NIFTY_IT, 8),
+        ],
+    )
     def test_expected_sizes(self, name, universe, expected_min):
-        assert len(universe) >= expected_min, \
+        assert len(universe) >= expected_min, (
             f"{name}: expected >= {expected_min}, got {len(universe)}"
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -116,10 +129,15 @@ class TestUniversesMap:
 
     def test_expected_keys_exist(self):
         expected_keys = [
-            "NIFTY 50", "BANK NIFTY", "NIFTY NEXT 50",
-            "NIFTY MIDCAP 100", "NIFTY SMALLCAP 100",
-            "FnO STOCKS", "CASH MARKET",
-            "BSE SENSEX", "ALL (Combined)",
+            "NIFTY 50",
+            "BANK NIFTY",
+            "NIFTY NEXT 50",
+            "NIFTY MIDCAP 100",
+            "NIFTY SMALLCAP 100",
+            "FnO STOCKS",
+            "CASH MARKET",
+            "BSE SENSEX",
+            "ALL (Combined)",
         ]
         for key in expected_keys:
             assert key in UNIVERSES, f"Missing key: {key}"

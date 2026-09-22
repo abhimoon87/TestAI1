@@ -10,10 +10,25 @@ comment explaining its origin or purpose.
 # The trailing "1M" column draws a mini sparkline of the last ~20 closes
 # (see px_tail on each result row); "1M%" stays the numeric one-month change.
 RESULT_COLS = [
-    "#", "Ticker", "Score", "Rating", "ENTRY",
-    "Price", "MA", "T/15", "M/15", "R/8",
-    "V/7", "Vol/10", "RS/10", "F/20",
-    "1M%", "Dir", "ADX", "Chop", "1M",
+    "#",
+    "Ticker",
+    "Score",
+    "Rating",
+    "ENTRY",
+    "Price",
+    "MA",
+    "T/15",
+    "M/15",
+    "R/8",
+    "V/7",
+    "Vol/10",
+    "RS/10",
+    "F/20",
+    "1M%",
+    "Dir",
+    "ADX",
+    "Chop",
+    "1M",
 ]
 
 # ── Universe defaults ────────────────────────────────────────────────────────

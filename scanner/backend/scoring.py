@@ -107,8 +107,10 @@ if TYPE_CHECKING:
 # MOVING AVERAGE SELECTOR
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_ma(ma_type: str, src: pd.Series, length: int,
-           volume: pd.Series | None = None) -> pd.Series:
+
+def get_ma(
+    ma_type: str, src: pd.Series, length: int, volume: pd.Series | None = None
+) -> pd.Series:
     """Universal MA selector matching the Pine Script get_ma function."""
     if ma_type == "HMA":
         return hull_ma(src, length)
@@ -139,7 +141,7 @@ def _weekly_cache_key(df: pd.DataFrame) -> int:
     try:
         return hash(df["close"].values.tobytes())
     except Exception:
-        logger.debug("Weekly cache key computation failed, using id()", exc_info=True)
+        logger.info("Weekly cache key computation failed, using id()", exc_info=True)
         return id(df)
 
 
@@ -173,12 +175,16 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
         try:
             d.index = d.index.tz_convert("Asia/Kolkata").tz_localize(None)
         except Exception:
-            logger.debug("Timezone conversion failed, falling back to localize", exc_info=True)
+            logger.info(
+                "Timezone conversion failed, falling back to localize", exc_info=True
+            )
             d.index = d.index.tz_localize(None)
     agg = {}
     for col in ["open", "high", "low", "close"]:
         if col in d.columns:
-            agg[col] = {"open": "first", "high": "max", "low": "min", "close": "last"}[col]
+            agg[col] = {"open": "first", "high": "max", "low": "min", "close": "last"}[
+                col
+            ]
     if "volume" in df.columns:
         agg["volume"] = "sum"
     if not agg:
@@ -197,8 +203,10 @@ def to_weekly(df: pd.DataFrame) -> pd.DataFrame | None:
 # SHARED CROSSOVER DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
-                     lookback: int = 20) -> dict:
+
+def detect_crossover(
+    fast_ma: pd.Series, slow_ma: pd.Series, lookback: int = 20
+) -> dict:
     """
     Detect MA crossovers within the last *lookback* bars.
 
@@ -220,8 +228,16 @@ def detect_crossover(fast_ma: pd.Series, slow_ma: pd.Series,
             break
         fc, fp = fast_ma.iloc[ic], fast_ma.iloc[ip]
         sc, sp = slow_ma.iloc[ic], slow_ma.iloc[ip]
-        if (not np.isnan(fc) and not np.isnan(fp) and
-                not np.isnan(sc) and not np.isnan(sp)) and fc > sc and fp <= sp:
+        if (
+            (
+                not np.isnan(fc)
+                and not np.isnan(fp)
+                and not np.isnan(sc)
+                and not np.isnan(sp)
+            )
+            and fc > sc
+            and fp <= sp
+        ):
             result["count"] += 1
             result["dates"].append(i)
             if not result["crossed"]:
@@ -238,7 +254,8 @@ def is_hp_gate_active(settings: dict | None) -> bool:
         return False
     entry_mode = settings.get("entry_mode", "classic")
     return entry_mode == "high_probability" or (
-        entry_mode == "custom" and (
+        entry_mode == "custom"
+        and (
             settings.get("hp_freshness_max_bars", 0) > 0
             or settings.get("hp_counter_signal_penalty", False)
             or settings.get("hp_volume_confirmation", False)
@@ -276,11 +293,16 @@ def check_hp_volume(volume, xo: dict, settings: dict | None) -> bool:
 # MODEL 1: STOCK FILTER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def check_filter(df: pd.DataFrame,
-                 fast_ma_type: str = "HMA", fast_ma_len: int = 40,
-                 slow_ma_type: str = "EMA", slow_ma_len: int = 50,
-                 crossover_lookback: int = 20,
-                 settings: dict | None = None) -> dict | None:
+
+def check_filter(
+    df: pd.DataFrame,
+    fast_ma_type: str = "HMA",
+    fast_ma_len: int = 40,
+    slow_ma_type: str = "EMA",
+    slow_ma_len: int = 50,
+    crossover_lookback: int = 20,
+    settings: dict | None = None,
+) -> dict | None:
     """
     Model 1 — Stock Filter.
 
@@ -333,6 +355,7 @@ def check_filter(df: pd.DataFrame,
 # MODEL 2: BULLISH / BEARISH
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def get_direction(filter_result: dict | None) -> str | None:
     """
     Model 2 — Bullish / Bearish classification.
@@ -352,6 +375,7 @@ def get_direction(filter_result: dict | None) -> str | None:
 # ══════════════════════════════════════════════════════════════════════════════
 # INDICATOR COMPUTATION (shared by scoring pipeline)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _compute_indicators(df: pd.DataFrame, settings: dict) -> dict:
     """
@@ -386,11 +410,20 @@ def _compute_indicators(df: pd.DataFrame, settings: dict) -> dict:
     adx_val = adx(high, low, close, adx_len)
 
     return {
-        "close": close, "high": high, "low": low, "volume": volume,
-        "fast_ma": fast_ma, "slow_ma": slow_ma,
-        "rsi_val": rsi_val, "macd_hist": macd_hist,
-        "stoch_k": stoch_k, "obv_val": obv_val, "obv_ma": obv_ma,
-        "vol_ma": vol_ma, "atr_val": atr_val, "adx_val": adx_val,
+        "close": close,
+        "high": high,
+        "low": low,
+        "volume": volume,
+        "fast_ma": fast_ma,
+        "slow_ma": slow_ma,
+        "rsi_val": rsi_val,
+        "macd_hist": macd_hist,
+        "stoch_k": stoch_k,
+        "obv_val": obv_val,
+        "obv_ma": obv_ma,
+        "vol_ma": vol_ma,
+        "atr_val": atr_val,
+        "adx_val": adx_val,
     }
 
 
@@ -403,11 +436,11 @@ def _last_values(ind: dict) -> dict:
     n = len(close)
 
     # Price changes (adaptive to data frequency)
-    if n >= 100:       # Daily data (~250 bars/year)
+    if n >= 100:  # Daily data (~250 bars/year)
         pc1m_period, pc3m_period = 21, 63
-    elif n >= 40:      # Weekly data (~52 bars/year)
+    elif n >= 40:  # Weekly data (~52 bars/year)
         pc1m_period, pc3m_period = 4, 13
-    else:              # Monthly data (~12 bars/year)
+    else:  # Monthly data (~12 bars/year)
         pc1m_period, pc3m_period = 1, 3
 
     return {
@@ -416,7 +449,9 @@ def _last_values(ind: dict) -> dict:
         "slow_ma": ind["slow_ma"].iloc[-1],
         "rsi": ind["rsi_val"].iloc[-1],
         "macd_hist": ind["macd_hist"].iloc[-1],
-        "macd_hist_prev": ind["macd_hist"].iloc[-2] if len(ind["macd_hist"]) > 1 else np.nan,
+        "macd_hist_prev": ind["macd_hist"].iloc[-2]
+        if len(ind["macd_hist"]) > 1
+        else np.nan,
         "stoch_k": ind["stoch_k"].iloc[-1],
         "obv": ind["obv_val"].iloc[-1],
         "obv_prev": ind["obv_val"].iloc[-2] if len(ind["obv_val"]) > 1 else np.nan,
@@ -433,6 +468,7 @@ def _last_values(ind: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 # WEEKLY HMA HIGHER-TIMEFRAME CHECK
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _compute_weekly_hma(df: pd.DataFrame) -> dict:
     """
@@ -471,8 +507,8 @@ def _compute_weekly_hma(df: pd.DataFrame) -> dict:
 # SIDEWAYS FILTER (ADX + Choppiness + Slope)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
-                      settings: dict) -> dict:
+
+def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series, settings: dict) -> dict:
     """
     Compute sideways / choppy market detection.
 
@@ -510,15 +546,20 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
     chop_safe_range = chop_range.replace(0, np.nan)
     chop_log_len = math.log10(max(chop_len, 2))
     chop_val = 100 * np.log10(chop_sum / chop_safe_range) / chop_log_len
-    is_sideways_chop = chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
+    is_sideways_chop = (
+        chop_val.iloc[-1] > chop_threshold if not np.isnan(chop_val.iloc[-1]) else False
+    )
 
     # Slope filter
     selected_ma = get_ma(slope_ma_type, close, slope_ma_len, volume)
     if len(selected_ma) > slope_lookback and selected_ma.iloc[-1 - slope_lookback] != 0:
-        ma_slope_pct = abs(
-            (selected_ma.iloc[-1] - selected_ma.iloc[-1 - slope_lookback])
-            / selected_ma.iloc[-1 - slope_lookback]
-        ) * 100
+        ma_slope_pct = (
+            abs(
+                (selected_ma.iloc[-1] - selected_ma.iloc[-1 - slope_lookback])
+                / selected_ma.iloc[-1 - slope_lookback]
+            )
+            * 100
+        )
     else:
         ma_slope_pct = 0.0
     is_sideways_slope = ma_slope_pct < flat_threshold
@@ -550,6 +591,7 @@ def _compute_sideways(df: pd.DataFrame, adx_val: pd.Series,
 # ══════════════════════════════════════════════════════════════════════════════
 # PER-CATEGORY SCORING FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _score_trend(curr: dict) -> float:
     """Category 1: TREND (max 15 pts)."""
@@ -610,7 +652,10 @@ def _score_macd(curr: dict) -> float:
     if not np.isnan(curr["macd_hist"]):
         if curr["macd_hist"] > 0:
             s += 4.0
-        if not np.isnan(curr["macd_hist_prev"]) and curr["macd_hist"] > curr["macd_hist_prev"]:
+        if (
+            not np.isnan(curr["macd_hist_prev"])
+            and curr["macd_hist"] > curr["macd_hist_prev"]
+        ):
             s += 3.0
     return min(s, 7.0)
 
@@ -652,18 +697,25 @@ def _score_volume(curr: dict) -> float:
                 s += 2.0
         vol_t = curr.get("vol_t_50")
         above_50 = (
-            vol_t is not None and not np.isnan(vol_t)
-            and (curr["volume"] > vol_t or (vol_5 is not None and not np.isnan(vol_5) and vol_5 > vol_t))
+            vol_t is not None
+            and not np.isnan(vol_t)
+            and (
+                curr["volume"] > vol_t
+                or (vol_5 is not None and not np.isnan(vol_5) and vol_5 > vol_t)
+            )
         )
         if above_50:
             s += 1.0
     return min(s, 10.0)
 
 
-def _score_relative_strength(curr: dict, close: pd.Series,
-                             index_df: pd.DataFrame | None,
-                             rs_length: int,
-                             close_to_bar: pd.Series | None = None) -> float:
+def _score_relative_strength(
+    curr: dict,
+    close: pd.Series,
+    index_df: pd.DataFrame | None,
+    rs_length: int,
+    close_to_bar: pd.Series | None = None,
+) -> float:
     """Category 8: RELATIVE STRENGTH (max 10 pts).
 
     Args:
@@ -725,7 +777,12 @@ def _score_fundamentals_dict(fund: dict | None) -> tuple[float, dict]:
     fund_detail = {}
 
     if not fund:
-        return 0.0, {"pe": "N/A", "eps_growth": "N/A", "rev_growth": "N/A", "roe": "N/A"}
+        return 0.0, {
+            "pe": "N/A",
+            "eps_growth": "N/A",
+            "rev_growth": "N/A",
+            "roe": "N/A",
+        }
 
     calc_pe = fund.get("pe_ratio")
     eps_growth = fund.get("eps_growth")
@@ -791,10 +848,16 @@ def _score_fundamentals_dict(fund: dict | None) -> tuple[float, dict]:
 # SHARED SCORING ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def score_bar(curr: dict, close: pd.Series, bar_idx: int,
-              index_df: pd.DataFrame | None, rs_length: int,
-              fund: dict | None = None,
-              settings: dict | None = None) -> dict:
+
+def score_bar(
+    curr: dict,
+    close: pd.Series,
+    bar_idx: int,
+    index_df: pd.DataFrame | None,
+    rs_length: int,
+    fund: dict | None = None,
+    settings: dict | None = None,
+) -> dict:
     """Compute all 10 category scores for a single bar.
 
     This is the **single source of truth** for per-bar scoring logic.
@@ -830,13 +893,27 @@ def score_bar(curr: dict, close: pd.Series, bar_idx: int,
     obv_score = _score_obv(curr)
     vol_score = _score_volume(curr)
     rs_score = _score_relative_strength(
-        curr, close, index_df, rs_length, close_to_bar=close_to_bar,
+        curr,
+        close,
+        index_df,
+        rs_length,
+        close_to_bar=close_to_bar,
     )
     volat_score, atr_pct, volat_stat = _score_volatility(curr)
     fund_score, fund_detail = _score_fundamentals_dict(fund)
 
-    total = (trend_score + mom_score + rsi_score + macd_score + stoch_score
-             + obv_score + vol_score + rs_score + volat_score + fund_score)
+    total = (
+        trend_score
+        + mom_score
+        + rsi_score
+        + macd_score
+        + stoch_score
+        + obv_score
+        + vol_score
+        + rs_score
+        + volat_score
+        + fund_score
+    )
 
     # ── Counter-signal penalty (high-probability mode) ───────────────────
     if settings is not None:
@@ -847,26 +924,38 @@ def score_bar(curr: dict, close: pd.Series, bar_idx: int,
         if is_hp:
             penalty = 0.0
             # Overbought + losing momentum
-            if (not np.isnan(curr["rsi"]) and curr["rsi"] > 75
-                    and not np.isnan(curr["macd_hist"])
-                    and not np.isnan(curr["macd_hist_prev"])
-                    and curr["macd_hist"] < curr["macd_hist_prev"]):
+            if (
+                not np.isnan(curr["rsi"])
+                and curr["rsi"] > 75
+                and not np.isnan(curr["macd_hist"])
+                and not np.isnan(curr["macd_hist_prev"])
+                and curr["macd_hist"] < curr["macd_hist_prev"]
+            ):
                 penalty += 5.0
             # Stochastic exhaustion
             if not np.isnan(curr["stoch_k"]) and curr["stoch_k"] > 85:
                 penalty += 3.0
             # Extended beyond 3x ATR above slow MA
-            if (not np.isnan(curr["atr"]) and curr["close"] > 0
-                    and not np.isnan(curr["slow_ma"]) and curr["atr"] > 0):
+            if (
+                not np.isnan(curr["atr"])
+                and curr["close"] > 0
+                and not np.isnan(curr["slow_ma"])
+                and curr["atr"] > 0
+            ):
                 extended = (curr["close"] - curr["slow_ma"]) / curr["atr"]
                 if extended > 3.0:
                     penalty += 4.0
             # Volume drying up while price rising
             vol_val = curr.get("volume")
             vol_ma_val = curr.get("vol_ma")
-            if (vol_val is not None and not np.isnan(vol_val)
-                    and vol_ma_val is not None and not np.isnan(vol_ma_val)
-                    and vol_ma_val > 0 and vol_val < vol_ma_val * 0.7):
+            if (
+                vol_val is not None
+                and not np.isnan(vol_val)
+                and vol_ma_val is not None
+                and not np.isnan(vol_ma_val)
+                and vol_ma_val > 0
+                and vol_val < vol_ma_val * 0.7
+            ):
                 penalty += 3.0
             total = max(0.0, total - penalty)
 
@@ -874,17 +963,17 @@ def score_bar(curr: dict, close: pd.Series, bar_idx: int,
 
     return {
         "total": round(total, 1),
-        "trend":     round(trend_score, 1),
-        "momentum":  round(mom_score, 1),
-        "rsi":       round(rsi_score, 1),
-        "macd":      round(macd_score, 1),
-        "stoch":     round(stoch_score, 1),
-        "obv":       round(obv_score, 1),
-        "volume":    round(vol_score, 1),
-        "rel_str":   round(rs_score, 1),
+        "trend": round(trend_score, 1),
+        "momentum": round(mom_score, 1),
+        "rsi": round(rsi_score, 1),
+        "macd": round(macd_score, 1),
+        "stoch": round(stoch_score, 1),
+        "obv": round(obv_score, 1),
+        "volume": round(vol_score, 1),
+        "rel_str": round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
-        "atr_pct":   round(atr_pct, 2),
+        "atr_pct": round(atr_pct, 2),
         "volat_stat": volat_stat,
         "fund_detail": fund_detail,
     }
@@ -894,8 +983,13 @@ def score_bar(curr: dict, close: pd.Series, bar_idx: int,
 # MODEL 3: COMBINED RATING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _get_combined_rating(total_score: float, ma_bullish: bool,
-                         above_poc: bool, close_above_both_ma: bool = False) -> str:
+
+def _get_combined_rating(
+    total_score: float,
+    ma_bullish: bool,
+    above_poc: bool,
+    close_above_both_ma: bool = False,
+) -> str:
     """
     Generate combined rating based on key signals and score.
 
@@ -904,9 +998,12 @@ def _get_combined_rating(total_score: float, ma_bullish: bool,
     either: 68/53/40; neither: 70/55/40.
     """
     bands = (
-        (60, 50, 35) if close_above_both_ma and above_poc
-        else (65, 50, 40) if ma_bullish and above_poc
-        else (68, 53, 40) if ma_bullish or above_poc
+        (60, 50, 35)
+        if close_above_both_ma and above_poc
+        else (65, 50, 40)
+        if ma_bullish and above_poc
+        else (68, 53, 40)
+        if ma_bullish or above_poc
         else (70, 55, 40)
     )
     exc, good, mod = bands
@@ -923,10 +1020,14 @@ def _get_combined_rating(total_score: float, ma_bullish: bool,
 # MODEL 3: SCORE ORCHESTRATOR
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @trace(level=5, log_args=False)
-def compute_scores(df: pd.DataFrame, timeframe: str = "D",
-                   index_df: pd.DataFrame | None = None,
-                   settings: ScannerSettings | None = None) -> dict | None:
+def compute_scores(
+    df: pd.DataFrame,
+    timeframe: str = "D",
+    index_df: pd.DataFrame | None = None,
+    settings: ScannerSettings | None = None,
+) -> dict | None:
     """
     Compute the 10-category score for a stock.
 
@@ -972,10 +1073,14 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
         vp_bars = max(int(vp_lookback), 10)
         vp_bars = min(vp_bars, len(df))
         vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
-        curr["vp_poc"] = vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+        curr["vp_poc"] = (
+            vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+        )
         curr["above_poc"] = curr["close"] >= curr["vp_poc"]
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
-    curr["close_above_both_ma"] = curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
+    curr["close_above_both_ma"] = (
+        curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
+    )
 
     # ── Volume references (used by _score_volume) ─────────────────────────
     # 50-bar average + participation average (mean of the last N bars, N is
@@ -1009,10 +1114,14 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     curr["is_sideways"] = sideways["is_sideways"]
 
     # ── Per-category scoring (delegated to score_bar) ───────────────────
-    fund_for_bar = df.attrs.get('_fundamentals')
+    fund_for_bar = df.attrs.get("_fundamentals")
     scores = score_bar(
-        curr, close, len(close) - 1, index_df,
-        settings.get("rs_length", 14), fund=fund_for_bar,
+        curr,
+        close,
+        len(close) - 1,
+        index_df,
+        settings.get("rs_length", 14),
+        fund=fund_for_bar,
         settings=settings,
     )
 
@@ -1034,14 +1143,14 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
     # ── Build result ───────────────────────────────────────────────────────
     return {
         "total": round(total, 1),
-        "trend":     round(trend_score, 1),
-        "momentum":  round(mom_score, 1),
-        "rsi":       round(rsi_score, 1),
-        "macd":      round(macd_score, 1),
-        "stoch":     round(stoch_score, 1),
-        "obv":       round(obv_score, 1),
-        "volume":    round(vol_score, 1),
-        "rel_str":   round(rs_score, 1),
+        "trend": round(trend_score, 1),
+        "momentum": round(mom_score, 1),
+        "rsi": round(rsi_score, 1),
+        "macd": round(macd_score, 1),
+        "stoch": round(stoch_score, 1),
+        "obv": round(obv_score, 1),
+        "volume": round(vol_score, 1),
+        "rel_str": round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
         # Key signals
@@ -1084,8 +1193,10 @@ def compute_scores(df: pd.DataFrame, timeframe: str = "D",
             and curr["close_above_crossover"]
             and curr["above_poc"]
             and total >= 50
-            and (min_adx_entry <= 0
-                 or (not np.isnan(curr["adx"]) and curr["adx"] >= min_adx_entry))
+            and (
+                min_adx_entry <= 0
+                or (not np.isnan(curr["adx"]) and curr["adx"] >= min_adx_entry)
+            )
         ),
         # Weekly HMA buy trigger
         "weekly_entry_signal": bool(weekly["cross"]),

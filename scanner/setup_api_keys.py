@@ -14,16 +14,19 @@ logger = logging.getLogger(__name__)
 # Config file location
 CONFIG_FILE = Path(__file__).parent / "api_config.json"
 
+
 def print_header():
     logger.info("=" * 60)
     logger.info("  HMAxEMA Scanner — API Key Setup")
     logger.info("=" * 60)
     logger.info("")
 
+
 def print_section(title):
     logger.info("\n%s", "─" * 60)
     logger.info("  %s", title)
     logger.info("%s\n", "─" * 60)
+
 
 def load_config():
     """Load existing config."""
@@ -32,8 +35,9 @@ def load_config():
             with open(CONFIG_FILE) as f:
                 return json.load(f)
         except Exception as e:
-            logger.debug("Failed to load API config: %s", e)
+            logger.info("Failed to load API config: %s", e)
     return {}
+
 
 def save_config(config):
     """Save config to file with owner-only permissions (contains secrets)."""
@@ -48,21 +52,25 @@ def save_config(config):
     except Exception as e:
         logger.error("  [ERROR] Could not save config: %s", e)
 
+
 def set_env_variable(key, value):
     """Set environment variable for current session."""
     os.environ[key] = value
+
 
 def get_current_status():
     """Check current API key status."""
     config = load_config()
 
-    finnhub_key = config.get("FINNHUB_API_KEY", "") or os.environ.get("FINNHUB_API_KEY", "")
-    av_key = config.get("ALPHA_VANTAGE_API_KEY", "") or os.environ.get("ALPHA_VANTAGE_API_KEY", "")
+    finnhub_key = config.get("FINNHUB_API_KEY", "") or os.environ.get(
+        "FINNHUB_API_KEY", ""
+    )
+    av_key = config.get("ALPHA_VANTAGE_API_KEY", "") or os.environ.get(
+        "ALPHA_VANTAGE_API_KEY", ""
+    )
 
-    return {
-        "FINNHUB_API_KEY": finnhub_key,
-        "ALPHA_VANTAGE_API_KEY": av_key
-    }
+    return {"FINNHUB_API_KEY": finnhub_key, "ALPHA_VANTAGE_API_KEY": av_key}
+
 
 def setup_finnhub():
     """Setup Finnhub API key."""
@@ -88,6 +96,7 @@ def setup_finnhub():
         logger.info("  [SKIP] Finnhub setup skipped")
         return None
 
+
 def setup_alpha_vantage():
     """Setup Alpha Vantage API key."""
     print_section("ALPHA VANTAGE SETUP")
@@ -111,6 +120,7 @@ def setup_alpha_vantage():
         logger.info("  [SKIP] Alpha Vantage setup skipped")
         return None
 
+
 def test_providers():
     """Test if the providers work with current keys."""
     print_section("TESTING PROVIDERS")
@@ -126,9 +136,9 @@ def test_providers():
 
         if fund:
             logger.info("  [OK] Provider: %s", provider.last_provider)
-            logger.info("       P/E Ratio: %s", fund.get('pe_ratio', 'N/A'))
-            logger.info("       EPS Growth: %s", fund.get('eps_growth', 'N/A'))
-            logger.info("       Revenue Growth: %s", fund.get('rev_growth', 'N/A'))
+            logger.info("       P/E Ratio: %s", fund.get("pe_ratio", "N/A"))
+            logger.info("       EPS Growth: %s", fund.get("eps_growth", "N/A"))
+            logger.info("       Revenue Growth: %s", fund.get("rev_growth", "N/A"))
             return True
         else:
             logger.warning("  [WARN] No data fetched (using fallback)")
@@ -137,6 +147,7 @@ def test_providers():
     except Exception as e:
         logger.error("  [ERROR] Test failed: %s", e)
         return False
+
 
 def print_permanent_instructions():
     """Print instructions for permanent setup."""
@@ -157,6 +168,7 @@ def print_permanent_instructions():
     logger.info('    export ALPHA_VANTAGE_API_KEY="your_key"')
     logger.info("    # Add to ~/.bashrc or ~/.zshrc for persistence")
 
+
 def main():
     """Main setup function."""
     print_header()
@@ -164,8 +176,14 @@ def main():
     # Show current status
     status = get_current_status()
     logger.info("  Current API Key Status:")
-    logger.info("    FINNHUB_API_KEY:       %s", 'SET' if status['FINNHUB_API_KEY'] else 'NOT SET')
-    logger.info("    ALPHA_VANTAGE_API_KEY: %s", 'SET' if status['ALPHA_VANTAGE_API_KEY'] else 'NOT SET')
+    logger.info(
+        "    FINNHUB_API_KEY:       %s",
+        "SET" if status["FINNHUB_API_KEY"] else "NOT SET",
+    )
+    logger.info(
+        "    ALPHA_VANTAGE_API_KEY: %s",
+        "SET" if status["ALPHA_VANTAGE_API_KEY"] else "NOT SET",
+    )
 
     # Setup keys
     config = load_config()
@@ -192,6 +210,7 @@ def main():
     logger.info("  API keys are configured for this session.")
     logger.info("  Restart the scanner to use the new providers.")
     logger.info("")
+
 
 if __name__ == "__main__":
     try:

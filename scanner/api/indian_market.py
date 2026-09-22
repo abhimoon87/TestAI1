@@ -19,9 +19,11 @@ _INDIA_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="indian_market")
 
 # ── Delivery Volume Data ───────────────────────────────────────────────────
 
+
 @dataclass
 class DeliveryData:
     """Delivery volume data for a stock from NSE."""
+
     ticker: str
     delivery_pct: float  # Delivery volume as % of total volume
     delivery_volume: int
@@ -34,17 +36,19 @@ class DeliveryData:
 def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
     """
     Fetch delivery volume data from NSE (free, no API key).
-    
+
     High delivery % indicates institutional/strong hands buying.
-    
+
     Args:
         ticker: NSE ticker symbol (e.g., "RELIANCE")
         days: Lookback days for trend
-    
+
     Returns:
         DeliveryData or None
     """
-    cache_k = hashlib.md5(f"delivery:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"delivery:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return DeliveryData(**cached, cached=True)
@@ -54,13 +58,14 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
         from datetime import date, timedelta
 
         from nselib import capital_market
+
         end = date.today()
         start = end - timedelta(days=days + 5)  # Extra days for buffer
 
         df = capital_market.price_volume_and_deliverable_position_data(
             symbol=ticker,
             from_date=start.strftime("%d-%m-%Y"),
-            to_date=end.strftime("%d-%m-%Y")
+            to_date=end.strftime("%d-%m-%Y"),
         )
 
         if df is None or df.empty:
@@ -114,27 +119,32 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
             cached=False,
         )
 
-        _INDIA_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "delivery_pct": result.delivery_pct,
-            "delivery_volume": result.delivery_volume,
-            "total_volume": result.total_volume,
-            "delivery_change_pct": result.delivery_change_pct,
-            "is_high_delivery": result.is_high_delivery,
-        })
+        _INDIA_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "delivery_pct": result.delivery_pct,
+                "delivery_volume": result.delivery_volume,
+                "total_volume": result.total_volume,
+                "delivery_change_pct": result.delivery_change_pct,
+                "is_high_delivery": result.is_high_delivery,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Delivery data fetch failed for %s: %s", ticker, e)
+        logger.info("Delivery data fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── FII/DII Activity Data ──────────────────────────────────────────────────
 
+
 @dataclass
 class FIIDIIActivity:
     """FII/DII activity data from NSE."""
+
     date: str
     fii_buy: float
     fii_sell: float
@@ -150,10 +160,10 @@ class FIIDIIActivity:
 def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
     """
     Fetch FII/DII activity from NSE (free, no API key).
-    
+
     FII (Foreign Institutional Investors) = "hot money"
     DII (Domestic Institutional Investors) = local institutions
-    
+
     Returns:
         FIIDIIActivity or None
     """
@@ -202,30 +212,35 @@ def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
             cached=False,
         )
 
-        _INDIA_CACHE.set(cache_k, {
-            "date": date_str,
-            "fii_buy": result.fii_buy,
-            "fii_sell": result.fii_sell,
-            "fii_net": result.fii_net,
-            "dii_buy": result.dii_buy,
-            "dii_sell": result.dii_sell,
-            "dii_net": result.dii_net,
-            "fii_is_buying": result.fii_is_buying,
-            "dii_is_buying": result.dii_is_buying,
-        })
+        _INDIA_CACHE.set(
+            cache_k,
+            {
+                "date": date_str,
+                "fii_buy": result.fii_buy,
+                "fii_sell": result.fii_sell,
+                "fii_net": result.fii_net,
+                "dii_buy": result.dii_buy,
+                "dii_sell": result.dii_sell,
+                "dii_net": result.dii_net,
+                "fii_is_buying": result.fii_is_buying,
+                "dii_is_buying": result.dii_is_buying,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("FII/DII data fetch failed: %s", e)
+        logger.info("FII/DII data fetch failed: %s", e)
         return None
 
 
 # ── 52-Week High/Low Data ──────────────────────────────────────────────────
 
+
 @dataclass
 class Week52Data:
     """52-week high/low data for a stock."""
+
     ticker: str
     current_price: float
     week52_high: float
@@ -243,14 +258,16 @@ class Week52Data:
 def fetch_52week_data(ticker: str) -> Week52Data | None:
     """
     Fetch 52-week high/low data from Yahoo Finance (free, no API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
-    
+
     Returns:
         Week52Data or None
     """
-    cache_k = hashlib.md5(f"52week:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"52week:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return Week52Data(**cached, cached=True)
@@ -302,32 +319,37 @@ def fetch_52week_data(ticker: str) -> Week52Data | None:
             cached=False,
         )
 
-        _INDIA_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "current_price": result.current_price,
-            "week52_high": result.week52_high,
-            "week52_low": result.week52_low,
-            "week52_high_date": result.week52_high_date,
-            "week52_low_date": result.week52_low_date,
-            "pct_from_52w_high": result.pct_from_52w_high,
-            "pct_from_52w_low": result.pct_from_52w_low,
-            "position_in_range": result.position_in_range,
-            "is_near_52w_high": result.is_near_52w_high,
-            "is_near_52w_low": result.is_near_52w_low,
-        })
+        _INDIA_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "current_price": result.current_price,
+                "week52_high": result.week52_high,
+                "week52_low": result.week52_low,
+                "week52_high_date": result.week52_high_date,
+                "week52_low_date": result.week52_low_date,
+                "pct_from_52w_high": result.pct_from_52w_high,
+                "pct_from_52w_low": result.pct_from_52w_low,
+                "position_in_range": result.position_in_range,
+                "is_near_52w_high": result.is_near_52w_high,
+                "is_near_52w_low": result.is_near_52w_low,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("52-week data fetch failed for %s: %s", ticker, e)
+        logger.info("52-week data fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Industry PE Data ────────────────────────────────────────────────────────
 
+
 @dataclass
 class IndustryPEData:
     """Industry PE ratio data from NSE."""
+
     ticker: str
     stock_pe: float
     industry_pe: float
@@ -340,14 +362,16 @@ class IndustryPEData:
 def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
     """
     Fetch industry PE comparison from NSE (free, no API key).
-    
+
     Args:
         ticker: NSE ticker symbol
-    
+
     Returns:
         IndustryPEData or None
     """
-    cache_k = hashlib.md5(f"industry_pe:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"industry_pe:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _INDIA_CACHE.get(cache_k)
     if cached:
         return IndustryPEData(**cached, cached=True)
@@ -387,28 +411,32 @@ def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
             cached=False,
         )
 
-        _INDIA_CACHE.set(cache_k, {
-            "ticker": ticker,
-            "stock_pe": result.stock_pe,
-            "industry_pe": result.industry_pe,
-            "industry_name": result.industry_name,
-            "pe_relative_to_industry": result.pe_relative_to_industry,
-            "is_cheap": result.is_cheap,
-        })
+        _INDIA_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "stock_pe": result.stock_pe,
+                "industry_pe": result.industry_pe,
+                "industry_name": result.industry_name,
+                "pe_relative_to_industry": result.pe_relative_to_industry,
+                "is_cheap": result.is_cheap,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Industry PE fetch failed for %s: %s", ticker, e)
+        logger.info("Industry PE fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Unified Indian Market Data ─────────────────────────────────────────────
 
+
 def fetch_indian_market_data(ticker: str) -> dict:
     """
     Fetch all Indian market data for a ticker.
-    
+
     Returns:
         {
             "delivery": DeliveryData | None,

@@ -70,7 +70,8 @@ class LayoutViewMixin:
                 icon = ft.Icons.CIRCLE
             return ft.Container(
                 content=ft.Icon(icon, color=accent, size=22),
-                width=44, height=44,
+                width=44,
+                height=44,
                 border_radius=22,
                 bgcolor=c["card"],
                 alignment=Alignment.CENTER,
@@ -88,14 +89,23 @@ class LayoutViewMixin:
 
         def pill_slot():
             return ft.Container(
-                width=4, height=26, border_radius=2,
-                bgcolor=c["neon"], shadow=_neon_glow(c["neon"], blur=8),
-                opacity=1.0, animate_opacity=ANIM_NORMAL,
+                width=4,
+                height=26,
+                border_radius=2,
+                bgcolor=c["neon"],
+                shadow=_neon_glow(c["neon"], blur=8),
+                opacity=1.0,
+                animate_opacity=ANIM_NORMAL,
             )
 
         def empty_slot():
-            return ft.Container(width=4, opacity=0.0, animate_opacity=ANIM_NORMAL,
-                                bgcolor=c["neon"], shadow=_neon_glow(c["neon"], blur=8))
+            return ft.Container(
+                width=4,
+                opacity=0.0,
+                animate_opacity=ANIM_NORMAL,
+                bgcolor=c["neon"],
+                shadow=_neon_glow(c["neon"], blur=8),
+            )
 
         self._rail_pills = {}
         home_pill = pill_slot() if self.active_view == "dashboard" else empty_slot()
@@ -105,7 +115,9 @@ class LayoutViewMixin:
 
         logo = ft.Container(
             content=ft.Text("ABHI", color="white", size=11, weight=ft.FontWeight.BOLD),
-            width=44, height=44, border_radius=22,
+            width=44,
+            height=44,
+            border_radius=22,
             bgcolor=c["purple"],
             alignment=Alignment.CENTER,
             shadow=_neon_glow(c["purple"], blur=16),
@@ -113,10 +125,17 @@ class LayoutViewMixin:
 
         rail_items = ft.Column(
             controls=[
-                rail_unit(rail_icon("home", c["neon"], lambda: self._show_view("dashboard")), home_pill),
-                rail_unit(rail_icon("gear", c["purple"], self._show_settings), settings_pill),
+                rail_unit(
+                    rail_icon("home", c["neon"], lambda: self._show_view("dashboard")),
+                    home_pill,
+                ),
+                rail_unit(
+                    rail_icon("gear", c["purple"], self._show_settings), settings_pill
+                ),
                 ft.Container(height=10),
-                rail_unit(rail_icon("play", c["green"], self._on_action_click), empty_slot()),
+                rail_unit(
+                    rail_icon("play", c["green"], self._on_action_click), empty_slot()
+                ),
             ],
             spacing=10,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -145,9 +164,13 @@ class LayoutViewMixin:
         return ft.Dropdown(
             options=[ft.dropdown.Option(v) for v in options],
             value=value,
-            expand=True, height=46, text_size=13,
-            bgcolor=c["option_bg"], color=c["text"],
-            border_color=c["border"], border_width=1,
+            expand=True,
+            height=46,
+            text_size=13,
+            bgcolor=c["option_bg"],
+            color=c["text"],
+            border_color=c["border"],
+            border_width=1,
             border_radius=10,
             focused_border_color=c["purple"],
             content_padding=_padding_only(left=12, right=8, top=8, bottom=8),
@@ -159,14 +182,25 @@ class LayoutViewMixin:
         """Labeled cache row: title + clear action on top, status below."""
         c = self.theme_colors
         return ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    ft.Text(title, size=11, weight=ft.FontWeight.BOLD, color=c["text"]),
-                    ft.Container(expand=True),
-                    clear_btn,
-                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                status_lbl,
-            ], spacing=3),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(
+                                title,
+                                size=11,
+                                weight=ft.FontWeight.BOLD,
+                                color=c["text"],
+                            ),
+                            ft.Container(expand=True),
+                            clear_btn,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    status_lbl,
+                ],
+                spacing=3,
+            ),
             bgcolor=_glass_bg(),
             border=_glass_border(),
             border_radius=12,
@@ -179,7 +213,9 @@ class LayoutViewMixin:
 
         def section(t):
             return ft.Container(
-                content=ft.Text(t.upper(), size=9, weight=ft.FontWeight.BOLD, color=c["text_faint"]),
+                content=ft.Text(
+                    t.upper(), size=9, weight=ft.FontWeight.BOLD, color=c["text_faint"]
+                ),
                 padding=_padding_only(left=16, top=14, bottom=4),
             )
 
@@ -195,29 +231,46 @@ class LayoutViewMixin:
         try:
             self.page.services.append(self.file_picker)
         except Exception:
-            logger.debug("FilePicker service registration failed (headless?)", exc_info=True)
+            logger.info(
+                "FilePicker service registration failed (headless?)", exc_info=True
+            )
 
         self.universe_dd = self._styled_dropdown(
-            list(UNIVERSES.keys()), "NIFTY 50",
+            list(UNIVERSES.keys()),
+            "NIFTY 50",
             on_select=self._on_universe_change,
         )
         self.universe_count_label = ft.Text(
             f"{len(UNIVERSES['NIFTY 50'])} stocks", size=10, color=c["text_dim"]
         )
 
-        self.timeframe_dd = self._styled_dropdown(["Daily", "Weekly", "Monthly"], "Daily")
-        self.period_dd = self._styled_dropdown(["6 Months", "1 Year", "2 Years"], "1 Year")
-        self.trend_filter_dd = self._styled_dropdown(["All", "Bullish Only", "Bearish Only"], "All")
+        self.timeframe_dd = self._styled_dropdown(
+            ["Daily", "Weekly", "Monthly"], "Daily"
+        )
+        self.period_dd = self._styled_dropdown(
+            ["6 Months", "1 Year", "2 Years"], "1 Year"
+        )
+        self.trend_filter_dd = self._styled_dropdown(
+            ["All", "Bullish Only", "Bearish Only"], "All"
+        )
         self.rating_filter_dd = self._styled_dropdown(
-            ["All", "Excellent", "Good", "Moderate", "Poor"], "All",
+            ["All", "Excellent", "Good", "Moderate", "Poor"],
+            "All",
             on_select=self._on_rating_change,
         )
         self.threshold_slider = ft.Slider(
-            min=0, max=100, value=50, divisions=20, expand=True,
-            active_color=c["purple"], inactive_color=c["progress_bg"],
+            min=0,
+            max=100,
+            value=50,
+            divisions=20,
+            expand=True,
+            active_color=c["purple"],
+            inactive_color=c["progress_bg"],
             on_change=self._on_threshold_change,
         )
-        self.threshold_label = ft.Text("50+", size=13, weight=ft.FontWeight.BOLD, color=c["pink"])
+        self.threshold_label = ft.Text(
+            "50+", size=13, weight=ft.FontWeight.BOLD, color=c["pink"]
+        )
         threshold_chip = ft.Container(
             content=self.threshold_label,
             bgcolor=c["card2"],
@@ -226,33 +279,49 @@ class LayoutViewMixin:
             padding=_padding_only(left=10, right=10, top=2, bottom=2),
         )
 
-        self.action_btn_label = ft.Text("▶  RUN SCAN", size=14, weight=ft.FontWeight.BOLD)
+        self.action_btn_label = ft.Text(
+            "▶  RUN SCAN", size=14, weight=ft.FontWeight.BOLD
+        )
         self.action_btn = ft.Button(
-            content=self.action_btn_label, expand=True, height=48,
-            bgcolor=c["green"], color=c["on_accent"],
+            content=self.action_btn_label,
+            expand=True,
+            height=48,
+            bgcolor=c["green"],
+            color=c["on_accent"],
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=14)),
             on_click=self._on_action_click,
         )
         self.progress_bar = ft.ProgressBar(
-            height=6, color=c["progress_fg"],
-            bgcolor=c["progress_bg"], value=0,
+            height=6,
+            color=c["progress_fg"],
+            bgcolor=c["progress_bg"],
+            value=0,
             border_radius=4,
         )
         self.progress_label = ft.Text("Ready", size=10, color=c["text_dim"])
 
-        self.cache_status_lbl = ft.Text("Dead-symbol cache: empty", size=10, color=c["text_dim"])
+        self.cache_status_lbl = ft.Text(
+            "Dead-symbol cache: empty", size=10, color=c["text_dim"]
+        )
         self.cache_clear_btn = ft.TextButton(
-            content=ft.Text("Clear", size=11), on_click=self._clear_negative_cache,
+            content=ft.Text("Clear", size=11),
+            on_click=self._clear_negative_cache,
             style=ft.ButtonStyle(color=c["red"]),
         )
-        self.enrich_cache_status_lbl = ft.Text("Enrichment cache: empty", size=10, color=c["text_dim"])
+        self.enrich_cache_status_lbl = ft.Text(
+            "Enrichment cache: empty", size=10, color=c["text_dim"]
+        )
         self.enrich_cache_clear_btn = ft.TextButton(
-            content=ft.Text("Clear", size=11), on_click=self._clear_enrichment_cache,
+            content=ft.Text("Clear", size=11),
+            on_click=self._clear_enrichment_cache,
             style=ft.ButtonStyle(color=c["red"]),
         )
-        self.price_cache_status_lbl = ft.Text("Price cache: —", size=10, color=c["text_dim"])
+        self.price_cache_status_lbl = ft.Text(
+            "Price cache: —", size=10, color=c["text_dim"]
+        )
         self.price_cache_prune_btn = ft.TextButton(
-            content=ft.Text("Prune", size=11), on_click=self._prune_price_cache,
+            content=ft.Text("Prune", size=11),
+            on_click=self._prune_price_cache,
             style=ft.ButtonStyle(color=c["orange"]),
         )
 
@@ -280,10 +349,20 @@ class LayoutViewMixin:
         controls = ft.Column(
             controls=[
                 ft.Container(
-                    content=ft.Column([
-                        ft.Text("Scanner", size=20, weight=ft.FontWeight.BOLD, color=c["text"]),
-                        ft.Text("Indian Market Screener", size=11, color=c["text_dim"]),
-                    ], spacing=2),
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                "Scanner",
+                                size=20,
+                                weight=ft.FontWeight.BOLD,
+                                color=c["text"],
+                            ),
+                            ft.Text(
+                                "Indian Market Screener", size=11, color=c["text_dim"]
+                            ),
+                        ],
+                        spacing=2,
+                    ),
                     padding=_padding_only(left=16, top=16, bottom=6),
                 ),
                 ft.Divider(height=1, color=c["border"]),
@@ -301,10 +380,13 @@ class LayoutViewMixin:
                 field(self.rating_filter_dd),
                 section("Min Score Threshold"),
                 ft.Container(
-                    content=ft.Row([
-                        self.threshold_slider,
-                        threshold_chip,
-                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Row(
+                        [
+                            self.threshold_slider,
+                            threshold_chip,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     padding=_padding_only(left=10, right=16),
                 ),
                 ft.Container(expand=True),
@@ -319,9 +401,19 @@ class LayoutViewMixin:
                 self.action_btn,
                 self.progress_bar,
                 self.progress_label,
-                self._cache_card("Dead symbols", self.cache_status_lbl, self.cache_clear_btn),
-                self._cache_card("Enrichment", self.enrich_cache_status_lbl, self.enrich_cache_clear_btn),
-                self._cache_card("Price data", self.price_cache_status_lbl, self.price_cache_prune_btn),
+                self._cache_card(
+                    "Dead symbols", self.cache_status_lbl, self.cache_clear_btn
+                ),
+                self._cache_card(
+                    "Enrichment",
+                    self.enrich_cache_status_lbl,
+                    self.enrich_cache_clear_btn,
+                ),
+                self._cache_card(
+                    "Price data",
+                    self.price_cache_status_lbl,
+                    self.price_cache_prune_btn,
+                ),
             ],
             spacing=8,
         )
@@ -341,9 +433,13 @@ class LayoutViewMixin:
 
         self.search_entry = ft.TextField(
             hint_text="Filter by ticker…",
-            width=260, height=36, text_size=12,
-            bgcolor=c["card"], color=c["text"],
-            border_color=c["border"], border_width=1,
+            width=260,
+            height=36,
+            text_size=12,
+            bgcolor=c["card"],
+            color=c["text"],
+            border_color=c["border"],
+            border_width=1,
             border_radius=18,
             prefix_icon=ft.Icons.SEARCH,
             content_padding=_padding_only(left=10, top=4, bottom=4),
@@ -351,19 +447,25 @@ class LayoutViewMixin:
         )
 
         self.html_btn = ft.IconButton(
-            icon=ft.Icons.SAVE_ALT, icon_color=c["cyan"], icon_size=18,
+            icon=ft.Icons.SAVE_ALT,
+            icon_color=c["cyan"],
+            icon_size=18,
             tooltip="Export HTML report",
             on_click=lambda e: self._export_html(),
             disabled=True,
         )
         self.csv_btn = ft.IconButton(
-            icon=ft.Icons.TABLE_CHART, icon_color=c["blue"], icon_size=18,
+            icon=ft.Icons.TABLE_CHART,
+            icon_color=c["blue"],
+            icon_size=18,
             tooltip="Export CSV",
             on_click=lambda e: self._export_csv(),
             disabled=True,
         )
         self.clear_btn = ft.IconButton(
-            icon=ft.Icons.CLOSE, icon_color=c["red"], icon_size=18,
+            icon=ft.Icons.CLOSE,
+            icon_color=c["red"],
+            icon_size=18,
             tooltip="Clear results",
             on_click=lambda e: self._clear_results(),
             disabled=True,
@@ -374,7 +476,9 @@ class LayoutViewMixin:
                 controls=[
                     self.search_entry,
                     ft.Container(expand=True),
-                    self.html_btn, self.csv_btn, self.clear_btn,
+                    self.html_btn,
+                    self.csv_btn,
+                    self.clear_btn,
                 ],
                 alignment=ft.MainAxisAlignment.START,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -386,18 +490,30 @@ class LayoutViewMixin:
 
         self.hero_text = ft.Text(
             "Find Your Next Swing Trade",
-            size=21, weight=ft.FontWeight.BOLD, color=c["hero_title"],
+            size=21,
+            weight=ft.FontWeight.BOLD,
+            color=c["hero_title"],
         )
         self.hero_sub = ft.Text(
             "Set your universe on the left, then RUN SCAN — HMA×EMA crossover • 10-factor score • news sentiment",
-            size=11, color=c["hero_sub"],
+            size=11,
+            color=c["hero_sub"],
         )
         # Live market readout (NIFTY level / day change) — hidden until data
         # arrives from the provider chain (see _render_market/_warm_market).
-        self.market_label = ft.Text("NIFTY 50", size=9, weight=ft.FontWeight.BOLD,
-                                    color=ft.Colors.with_opacity(0.65, c["hero_sub"]))
-        self.market_value = ft.Text("—", size=23, weight=ft.FontWeight.BOLD,
-                                    color=c["hero_title"], selectable=True)
+        self.market_label = ft.Text(
+            "NIFTY 50",
+            size=9,
+            weight=ft.FontWeight.BOLD,
+            color=ft.Colors.with_opacity(0.65, c["hero_sub"]),
+        )
+        self.market_value = ft.Text(
+            "—",
+            size=23,
+            weight=ft.FontWeight.BOLD,
+            color=c["hero_title"],
+            selectable=True,
+        )
         self.market_change = ft.Text("", size=10, color=c["hero_sub"], selectable=True)
         self.market_box = ft.Container(
             content=ft.Column(
@@ -411,6 +527,21 @@ class LayoutViewMixin:
             bgcolor=c["card2"],
             padding=_padding_only(left=16, right=16, top=8, bottom=8),
             visible=False,
+        )
+        # Loading placeholder in the same slot — shown until the first market
+        # snapshot lands (or the fetch fails, see _dismiss_market_loading).
+        self.market_loading = ft.Container(
+            content=ft.ProgressRing(
+                width=16, height=16, stroke_width=2, color=c["hero_sub"]
+            ),
+            width=MARKET_BOX_W,
+            height=56,
+            alignment=Alignment.CENTER,
+            tooltip="Fetching live market data…",
+        )
+        self.market_slot = ft.Stack(
+            controls=[self.market_box, self.market_loading],
+            width=MARKET_BOX_W,
         )
         # Secondary index readouts (BANK NIFTY / SENSEX / NIFTY IT) — a slim
         # ticker strip at the bottom of the hero; hidden until data arrives.
@@ -429,7 +560,7 @@ class LayoutViewMixin:
                         controls=[
                             self.hero_text_col,
                             ft.Container(width=16),
-                            self.market_box,
+                            self.market_slot,
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
@@ -439,7 +570,8 @@ class LayoutViewMixin:
                 spacing=0,
             ),
             gradient=ft.LinearGradient(
-                begin=Alignment.CENTER_LEFT, end=Alignment.CENTER_RIGHT,
+                begin=Alignment.CENTER_LEFT,
+                end=Alignment.CENTER_RIGHT,
                 colors=c["hero_grad"],
             ),
             border_radius=16,
@@ -451,18 +583,27 @@ class LayoutViewMixin:
         self.summary_cards = {}
         self.summary_row = self._build_summary_row()
 
-        self.chart_title = ft.Text("Score curve", size=12, weight=ft.FontWeight.BOLD, color=c["text"])
+        self.chart_title = ft.Text(
+            "Score curve", size=12, weight=ft.FontWeight.BOLD, color=c["text"]
+        )
         self.chart_sub = ft.Text("", size=10, color=c["text_dim"])
-        self.chart_bars = ft.Row(spacing=2, vertical_alignment=ft.CrossAxisAlignment.END)
+        self.chart_bars = ft.Row(
+            spacing=2, vertical_alignment=ft.CrossAxisAlignment.END
+        )
         self.chart_card = ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    self.chart_title,
-                    ft.Container(expand=True),
-                    self.chart_sub,
-                ]),
-                ft.Container(content=self.chart_bars, height=60),
-            ], spacing=6),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            self.chart_title,
+                            ft.Container(expand=True),
+                            self.chart_sub,
+                        ]
+                    ),
+                    ft.Container(content=self.chart_bars, height=155),
+                ],
+                spacing=6,
+            ),
             bgcolor=_glass_bg(),
             border=_glass_border(),
             border_radius=14,
@@ -476,7 +617,12 @@ class LayoutViewMixin:
         self.section_header = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Text("Scan Results", size=16, weight=ft.FontWeight.BOLD, color=c["text"]),
+                    ft.Text(
+                        "Scan Results",
+                        size=16,
+                        weight=ft.FontWeight.BOLD,
+                        color=c["text"],
+                    ),
                     ft.Container(expand=True),
                     self.result_count_label,
                 ],
@@ -486,27 +632,39 @@ class LayoutViewMixin:
 
         self.table_column = ft.Column(spacing=0, expand=True)
 
-        self.page_prev_btn = ft.TextButton(content=ft.Text("◀ Prev", size=12), on_click=lambda e: self._change_page(-1))
+        self.page_prev_btn = ft.TextButton(
+            content=ft.Text("◀ Prev", size=12), on_click=lambda e: self._change_page(-1)
+        )
         self.page_label = ft.Text("Page 1 / 1", size=11, color=c["text_dim"])
-        self.page_next_btn = ft.TextButton(content=ft.Text("Next ▶", size=12), on_click=lambda e: self._change_page(1))
+        self.page_next_btn = ft.TextButton(
+            content=ft.Text("Next ▶", size=12), on_click=lambda e: self._change_page(1)
+        )
         self.page_size_options = ["50", "100", "200", "500"]
         self.page_size_dd = ft.Dropdown(
             options=[ft.dropdown.Option(v) for v in self.page_size_options],
-            value="100", width=110, height=40, text_size=12,
-            bgcolor=c["card"], color=c["text"],
-            border_color=c["border"], border_width=1,
+            value="100",
+            width=110,
+            height=40,
+            text_size=12,
+            bgcolor=c["card"],
+            color=c["text"],
+            border_color=c["border"],
+            border_width=1,
             border_radius=8,
             focused_border_color=c["purple"],
             content_padding=_padding_only(left=12, right=8, top=8, bottom=8),
             on_select=self._on_page_size_change,
         )
         self.load_all_btn = ft.TextButton(
-            content=ft.Text("Load All", size=12), on_click=lambda e: self._load_all_pages(),
+            content=ft.Text("Load All", size=12),
+            on_click=lambda e: self._load_all_pages(),
             style=ft.ButtonStyle(color=c["text_dim"]),
         )
         self.pagination_row = ft.Row(
             controls=[
-                self.page_prev_btn, self.page_label, self.page_next_btn,
+                self.page_prev_btn,
+                self.page_label,
+                self.page_next_btn,
                 ft.Container(width=8),
                 ft.Text("Rows:", size=11, color=c["text_dim"]),
                 self.page_size_dd,
@@ -532,8 +690,18 @@ class LayoutViewMixin:
             content=ft.Column(
                 controls=[
                     ft.Icon(ft.Icons.SEARCH_OFF, size=48, color=c["text_faint"]),
-                    ft.Text("No results yet", size=15, weight=ft.FontWeight.BOLD, color=c["text"]),
-                    ft.Text("Choose a universe and hit RUN SCAN", size=11, color=c["text_dim"]),
+                    ft.Text(
+                        "No results yet",
+                        size=15,
+                        weight=ft.FontWeight.BOLD,
+                        color=c["text"],
+                    ),
+                    ft.Text("or press Ctrl+R", size=11, color=c["text_dim"]),
+                    ft.Button(
+                        content=ft.Text("RUN SCAN", size=12, weight=ft.FontWeight.BOLD),
+                        on_click=lambda e: self._on_action_click(e),
+                        style=ft.ButtonStyle(bgcolor=c["green"], color=c["main_bg"]),
+                    ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
@@ -559,7 +727,11 @@ class LayoutViewMixin:
         self.dashboard_content = ft.Column(
             controls=[
                 self.topbar,
-                ft.Container(content=self.main_scroll, expand=True, padding=_padding_only(left=6, right=6, top=6)),
+                ft.Container(
+                    content=self.main_scroll,
+                    expand=True,
+                    padding=_padding_only(left=6, right=6, top=6),
+                ),
                 self.pagination_bar,
             ],
             spacing=0,
@@ -573,8 +745,12 @@ class LayoutViewMixin:
         self.dashboard_view = self.dashboard_content
         self.settings_view = self._build_settings_view()
         _active = getattr(self, "active_view", "dashboard")
-        self.dashboard_view.visible = (_active == "dashboard")
-        self.settings_view.visible = (_active == "settings")
+        self.dashboard_view.visible = _active == "dashboard"
+        self.settings_view.visible = _active == "settings"
+        # Soft fade on view switches — _fade_view_in drives opacity 0 -> 1.
+        for _v in (self.dashboard_view, self.settings_view):
+            _v.opacity = 1.0
+            _v.animate_opacity = ANIM_NORMAL
 
         # Main area holds both views; only one visible at a time.
         self.main_area_box = ft.Container(
@@ -610,17 +786,31 @@ class LayoutViewMixin:
         ]
         cards = []
         for label, key, color, icon in stats:
-            val_label = ft.Text("—", size=22, weight=ft.FontWeight.BOLD, color=color,
-                                animate_scale=ANIM_BOUNCE, animate_opacity=ANIM_FAST)
+            val_label = ft.Text(
+                "—",
+                size=22,
+                weight=ft.FontWeight.BOLD,
+                color=color,
+                animate_scale=ANIM_BOUNCE,
+                animate_opacity=ANIM_FAST,
+            )
             self.summary_cards[key] = val_label
             card = ft.Container(
                 content=ft.Column(
                     controls=[
                         ft.Container(height=3, bgcolor=color, border_radius=2),
-                        ft.Row([
-                            ft.Icon(icon, size=10, color=color),
-                            ft.Text(label, size=8, weight=ft.FontWeight.BOLD, color=c["text_faint"]),
-                        ], spacing=4),
+                        ft.Row(
+                            [
+                                ft.Icon(icon, size=10, color=color),
+                                ft.Text(
+                                    label,
+                                    size=8,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=c["text_faint"],
+                                ),
+                            ],
+                            spacing=4,
+                        ),
                         val_label,
                     ],
                     spacing=3,
@@ -645,26 +835,31 @@ class LayoutViewMixin:
             if e.data == "true":
                 card.scale = ft.Scale(1.04)
                 card.opacity = 0.92
-                card.shadow = [ft.BoxShadow(
-                    blur_radius=32,
-                    color=ft.Colors.with_opacity(0.65, ft.Colors.BLACK),
-                    spread_radius=2,
-                )]
+                card.shadow = [
+                    ft.BoxShadow(
+                        blur_radius=32,
+                        color=ft.Colors.with_opacity(0.65, ft.Colors.BLACK),
+                        spread_radius=2,
+                    )
+                ]
             else:
                 card.scale = ft.Scale(1.0)
                 card.opacity = 1.0
                 card.shadow = _card_shadow()
             card.update()
         except Exception:
-            logger.debug("Card hover animation update failed", exc_info=True)
+            logger.info("Card hover animation update failed", exc_info=True)
 
     def _build_right_panel(self) -> ft.Container:
         c = self.theme_colors
 
         avatar = ft.Container(
-            content=ft.Text("ABHI", size=13, weight=ft.FontWeight.BOLD,
-                            color=c["avatar_text"]),
-            width=54, height=54, border_radius=27,
+            content=ft.Text(
+                "ABHI", size=13, weight=ft.FontWeight.BOLD, color=c["avatar_text"]
+            ),
+            width=54,
+            height=54,
+            border_radius=27,
             bgcolor=c["avatar_bg"],
             border=_border_all(2, c["avatar_border"]),
             alignment=Alignment.CENTER,
@@ -676,7 +871,10 @@ class LayoutViewMixin:
         self._render_topicks([])
 
         self.log_column = ft.Column(
-            spacing=2, scroll=ft.ScrollMode.AUTO, auto_scroll=True, expand=True,
+            spacing=2,
+            scroll=ft.ScrollMode.AUTO,
+            auto_scroll=True,
+            expand=True,
         )
         self.log_view = ft.Container(
             content=self.log_column,
@@ -687,28 +885,51 @@ class LayoutViewMixin:
             padding=10,
         )
         self.log_clear_btn = ft.TextButton(
-            content=ft.Text("Clear", size=10), on_click=lambda e: self._clear_log(),
+            content=ft.Text("Clear", size=10),
+            on_click=lambda e: self._clear_log(),
             style=ft.ButtonStyle(color=c["text_dim"]),
         )
 
         panel_content = ft.Column(
             controls=[
                 ft.Container(
-                    content=ft.Row([
-                        avatar,
-                        ft.Column([
-                            ft.Text("HMAxEMA Scanner", size=14, weight=ft.FontWeight.BOLD, color=c["text"]),
-                            ft.Text("@indian_markets", size=10, color=c["text_dim"]),
-                        ], spacing=2),
-                    ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Row(
+                        [
+                            avatar,
+                            ft.Column(
+                                [
+                                    ft.Text(
+                                        "HMAxEMA Scanner",
+                                        size=14,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=c["text"],
+                                    ),
+                                    ft.Text(
+                                        "@indian_markets", size=10, color=c["text_dim"]
+                                    ),
+                                ],
+                                spacing=2,
+                            ),
+                        ],
+                        spacing=10,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     padding=_padding_only(left=16, right=16, top=14, bottom=6),
                 ),
                 ft.Container(self.status_label, padding=_padding_only(left=18, top=2)),
                 ft.Container(
-                    content=ft.Row([
-                        ft.Text("Top Picks", size=12, weight=ft.FontWeight.BOLD, color=c["text"]),
-                        ft.Text("top 5", size=10, color=c["text_dim"]),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    content=ft.Row(
+                        [
+                            ft.Text(
+                                "Top Picks",
+                                size=12,
+                                weight=ft.FontWeight.BOLD,
+                                color=c["text"],
+                            ),
+                            ft.Text("top 5", size=10, color=c["text_dim"]),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
                     padding=_padding_only(left=16, right=16, top=10, bottom=4),
                 ),
                 ft.Container(
@@ -716,12 +937,20 @@ class LayoutViewMixin:
                     padding=_padding_only(left=12, right=12),
                 ),
                 ft.Container(
-                    content=ft.Row([
-                        ft.Text("Recent Activity", size=12, weight=ft.FontWeight.BOLD, color=c["text"]),
-                        ft.Container(expand=True),
-                        ft.Text("live log", size=10, color=c["text_dim"]),
-                        self.log_clear_btn,
-                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Row(
+                        [
+                            ft.Text(
+                                "Recent Activity",
+                                size=12,
+                                weight=ft.FontWeight.BOLD,
+                                color=c["text"],
+                            ),
+                            ft.Container(expand=True),
+                            ft.Text("live log", size=10, color=c["text_dim"]),
+                            self.log_clear_btn,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     padding=_padding_only(left=16, right=8, top=10, bottom=4),
                 ),
                 ft.Container(
@@ -740,26 +969,36 @@ class LayoutViewMixin:
             bgcolor=c["side_bg"],
         )
 
-    def _make_score_gauge(self, score: float, color: str, size: int = 30) -> ft.Container:
+    def _make_score_gauge(
+        self, score: float, color: str, size: int = 30
+    ) -> ft.Container:
         """Compact circular score display using a progress ring + centered text."""
         return ft.Container(
             content=ft.Stack(
                 controls=[
                     ft.ProgressRing(
-                        width=size, height=size,
+                        width=size,
+                        height=size,
                         stroke_width=3,
                         value=score / 100.0,
                         color=color,
                         bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.WHITE),
                     ),
                     ft.Container(
-                        content=ft.Text(str(int(score)), size=9, weight=ft.FontWeight.BOLD, color=color),
+                        content=ft.Text(
+                            str(int(score)),
+                            size=9,
+                            weight=ft.FontWeight.BOLD,
+                            color=color,
+                        ),
                         alignment=Alignment.CENTER,
                     ),
                 ],
-                width=size, height=size,
+                width=size,
+                height=size,
             ),
-            width=size, height=size,
+            width=size,
+            height=size,
         )
 
     def _render_topicks(self, top):
@@ -784,15 +1023,28 @@ class LayoutViewMixin:
                 content=ft.Row(
                     controls=[
                         ft.Container(
-                            content=ft.Text(str(i), size=11, weight=ft.FontWeight.BOLD, color=color),
-                            width=28, height=28, border_radius=14,
+                            content=ft.Text(
+                                str(i), size=11, weight=ft.FontWeight.BOLD, color=color
+                            ),
+                            width=28,
+                            height=28,
+                            border_radius=14,
                             bgcolor=c["card2"],
                             alignment=Alignment.CENTER,
                         ),
                         ft.Column(
                             controls=[
-                                ft.Text(r.get("ticker", "?"), size=12, weight=ft.FontWeight.BOLD, color=c["text"]),
-                                ft.Text(f"₹{r.get('close', 0) or 0:,.0f}  ·  {r.get('trend_dir', '')}", size=9, color=c["text_dim"]),
+                                ft.Text(
+                                    r.get("ticker", "?"),
+                                    size=12,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=c["text"],
+                                ),
+                                ft.Text(
+                                    f"₹{r.get('close', 0) or 0:,.0f}  ·  {r.get('trend_dir', '')}",
+                                    size=9,
+                                    color=c["text_dim"],
+                                ),
                             ],
                             spacing=1,
                             expand=True,
@@ -819,8 +1071,11 @@ class LayoutViewMixin:
     # engine uses (4 h disk cache, so this never duplicates a scan's download
     # and quietly no-ops offline). Extra indices are each capped at 8 s so an
     # offline launch cannot stall the daemon warm-up for long.
-    _EXTRA_INDICES = (("^NSEBANK", "BANK NIFTY"), ("^BSESN", "SENSEX"),
-                      ("^CNXIT", "NIFTY IT"))
+    _EXTRA_INDICES = (
+        ("^NSEBANK", "BANK NIFTY"),
+        ("^BSESN", "SENSEX"),
+        ("^CNXIT", "NIFTY IT"),
+    )
     _INDEX_FETCH_TIMEOUT = 8.0
 
     @staticmethod
@@ -836,24 +1091,27 @@ class LayoutViewMixin:
             prev = float(closes.iloc[-2])
             if not last or not prev:
                 return None
-            return {"level": last, "change": last - prev,
-                    "pct": (last - prev) / prev * 100.0}
+            return {
+                "level": last,
+                "change": last - prev,
+                "pct": (last - prev) / prev * 100.0,
+            }
         except Exception:
-            logger.debug("Quote extraction from dataframe failed", exc_info=True)
+            logger.info("Quote extraction from dataframe failed", exc_info=True)
             return None
 
     @staticmethod
-    def _fetch_index_bounded(symbol: str, period: str = "1y",
-                             timeout: float = 8.0):
+    def _fetch_index_bounded(symbol: str, period: str = "1y", timeout: float = 8.0):
         """fetch_index_data capped at ``timeout`` s (daemon thread join)."""
         box: dict = {}
 
         def _run():
             try:
                 from ..api.data_fetcher import fetch_index_data
+
                 box["v"] = fetch_index_data(symbol, period=period)
             except Exception:
-                logger.debug("Bounded index fetch failed", exc_info=True)
+                logger.info("Bounded index fetch failed", exc_info=True)
                 box["v"] = None
 
         t = threading.Thread(target=_run, daemon=True)
@@ -881,14 +1139,30 @@ class LayoutViewMixin:
         up = q["change"] >= 0
         move_color = c["green"] if up else c["red"]
         return ft.Container(
-            content=ft.Row([
-                ft.Text(q["label"], size=9, weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.with_opacity(0.85, c["hero_sub"])),
-                ft.Text(f"{q['level']:,.1f}", size=13, weight=ft.FontWeight.BOLD,
-                        color=c.get("hero_value", c["hero_title"])),
-                ft.Text(f"{'▲' if up else '▼'} {q['pct']:+.2f}%", size=10,
-                        weight=ft.FontWeight.BOLD, color=move_color),
-            ], spacing=7, vertical_alignment=ft.CrossAxisAlignment.BASELINE),
+            content=ft.Row(
+                [
+                    ft.Text(
+                        q["label"],
+                        size=9,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.with_opacity(0.85, c["hero_sub"]),
+                    ),
+                    ft.Text(
+                        f"{q['level']:,.1f}",
+                        size=13,
+                        weight=ft.FontWeight.BOLD,
+                        color=c.get("hero_value", c["hero_title"]),
+                    ),
+                    ft.Text(
+                        f"{'▲' if up else '▼'} {q['pct']:+.2f}%",
+                        size=10,
+                        weight=ft.FontWeight.BOLD,
+                        color=move_color,
+                    ),
+                ],
+                spacing=7,
+                vertical_alignment=ft.CrossAxisAlignment.BASELINE,
+            ),
             bgcolor=c["chip_neutral"],
             border_radius=10,
             border=_border_all(1, c["border_light"]),
@@ -906,6 +1180,7 @@ class LayoutViewMixin:
             box.visible = False
             if getattr(self, "market_strip", None) is not None:
                 self.market_strip.visible = False
+            self._dismiss_market_loading()
             return
         c = self.theme_colors
         up = info["change"] >= 0
@@ -915,6 +1190,7 @@ class LayoutViewMixin:
         )
         self.market_change.color = c["green"] if up else c["red"]
         self.market_value.color = c["green"] if up else c["red"]
+        self._dismiss_market_loading()
         box.visible = True
         strip = getattr(self, "market_strip", None)
         if strip is not None:
@@ -922,8 +1198,18 @@ class LayoutViewMixin:
             strip.controls = chips
             strip.visible = bool(chips)
 
+    def _dismiss_market_loading(self):
+        """Hide the hero loading placeholder once (UI thread)."""
+        loading = getattr(self, "market_loading", None)
+        if loading is not None:
+            loading.visible = False
+
     def _warm_market(self):
         """Refresh the hero readout from disk cache / providers (daemon)."""
         info = self._market_snapshot()
         if info is not None:
             self._safe_update(lambda: self._render_market(info))
+        else:
+            # No data (offline / all providers failed) — stop the spinner
+            # rather than letting it spin for the whole session.
+            self._safe_update(self._dismiss_market_loading)

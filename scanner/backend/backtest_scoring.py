@@ -14,9 +14,9 @@ from .scoring import detect_crossover, score_bar
 logger = logging.getLogger(__name__)
 
 
-def compute_score_at_bar(stock: StockData, bar_idx: int,
-                         nifty_df: pd.DataFrame | None,
-                         settings: dict) -> dict | None:
+def compute_score_at_bar(
+    stock: StockData, bar_idx: int, nifty_df: pd.DataFrame | None, settings: dict
+) -> dict | None:
     """
     Compute the 10-category score at a specific bar index.
     Returns None if data is insufficient.
@@ -58,9 +58,7 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     ma_crossed_above = xo["crossed"]
     crossover_level = xo["level"]
     crossover_bars_ago = xo["bars_ago"] if xo["crossed"] else -1
-    close_above_crossover = (
-        crossover_level is not None and close_val > crossover_level
-    )
+    close_above_crossover = crossover_level is not None and close_val > crossover_level
 
     # --- MA conditions ---
     ma_bullish = fast_ma > slow_ma
@@ -73,10 +71,10 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     atr1 = stock.atr1
     chop_len = settings["chop_len"]
     if bar_idx >= chop_len:
-        chop_sum = atr1.iloc[bar_idx - chop_len + 1: bar_idx + 1].sum()
+        chop_sum = atr1.iloc[bar_idx - chop_len + 1 : bar_idx + 1].sum()
         chop_range = (
-            df["high"].iloc[bar_idx - chop_len + 1: bar_idx + 1].max()
-            - df["low"].iloc[bar_idx - chop_len + 1: bar_idx + 1].min()
+            df["high"].iloc[bar_idx - chop_len + 1 : bar_idx + 1].max()
+            - df["low"].iloc[bar_idx - chop_len + 1 : bar_idx + 1].min()
         )
         if chop_range > 0:
             chop_val = 100 * math.log10(chop_sum / chop_range) / math.log10(chop_len)
@@ -84,11 +82,15 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     slope_weak = False
     slope_ma = stock.slope_ma.iloc[: bar_idx + 1]
     lb = settings["slope_lookback"]
-    if len(slope_ma) > lb and not np.isnan(slope_ma.iloc[-1]) and not np.isnan(slope_ma.iloc[-1 - lb]):
-        slope_pct = abs(
-            (slope_ma.iloc[-1] - slope_ma.iloc[-1 - lb])
-            / slope_ma.iloc[-1 - lb]
-        ) * 100
+    if (
+        len(slope_ma) > lb
+        and not np.isnan(slope_ma.iloc[-1])
+        and not np.isnan(slope_ma.iloc[-1 - lb])
+    ):
+        slope_pct = (
+            abs((slope_ma.iloc[-1] - slope_ma.iloc[-1 - lb]) / slope_ma.iloc[-1 - lb])
+            * 100
+        )
         slope_weak = slope_pct < settings["flat_threshold"]
 
     n_bars = bar_idx + 1
@@ -115,7 +117,7 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
                 if not np.isnan(w_hma_val) and not np.isnan(w_ema_val):
                     weekly_hma_bull = w_hma_val > w_ema_val
         except Exception as e:
-            logger.debug("Weekly HMA/EMA gate failed at bar %d: %s", bar_idx, e)
+            logger.info("Weekly HMA/EMA gate failed at bar %d: %s", bar_idx, e)
 
     # --- Price change (adaptive) ---
     n = bar_idx + 1
@@ -140,7 +142,7 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     # --- Volume participation average (used by _score_volume via curr) ---
     vol_len = int(settings.get("volume_participation_len", 5))
     vol_len = max(1, vol_len)
-    vol_5 = float(volume.iloc[max(0, bar_idx - vol_len + 1): bar_idx + 1].mean())
+    vol_5 = float(volume.iloc[max(0, bar_idx - vol_len + 1) : bar_idx + 1].mean())
 
     # ================================================================
     # SCORING — delegate to scoring.score_bar() (single source of truth)
@@ -172,8 +174,12 @@ def compute_score_at_bar(stock: StockData, bar_idx: int,
     }
 
     scores = score_bar(
-        curr, close, bar_idx, nifty_df,
-        settings.get("rs_length", 14), fund=stock.fundamentals or None,
+        curr,
+        close,
+        bar_idx,
+        nifty_df,
+        settings.get("rs_length", 14),
+        fund=stock.fundamentals or None,
         settings=settings,
     )
 

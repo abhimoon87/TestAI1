@@ -29,9 +29,9 @@ class ScannerSettings(TypedDict, total=False):
     """
 
     # Moving Averages
-    fast_ma_type: str          # HMA | EMA | SMA | KAMA | VWMA
+    fast_ma_type: str  # HMA | EMA | SMA | KAMA | VWMA
     fast_ma_len: int
-    slow_ma_type: str          # HMA | EMA | SMA | KAMA | VWMA
+    slow_ma_type: str  # HMA | EMA | SMA | KAMA | VWMA
     slow_ma_len: int
     # Technical Analysis
     rsi_len: int
@@ -63,16 +63,17 @@ class ScannerSettings(TypedDict, total=False):
     # Entry gate (mirrors backtest engine): require ADX >= this for entry signal
     min_adx_entry: float
     # Scanner
-    min_score: float           # 0-100
-    data_period: str           # 6mo | 1y | 2y
-    timeframe: str             # D | W | M
-    trend_filter: str          # All | Bullish Only | Bearish Only
+    min_score: float  # 0-100
+    data_period: str  # 6mo | 1y | 2y
+    timeframe: str  # D | W | M
+    trend_filter: str  # All | Bullish Only | Bearish Only
     # Dead-symbol cache
     negative_cache_ttl_hours: int
     # Scan hygiene: warn when a universe member's data is this old (days)
     stale_member_max_age_days: float
     # UI
     theme: str
+    reduce_motion: bool  # suppress decorative transitions/animations
     # Provider toggles
     use_market_sentiment: bool
     use_social_sentiment: bool
@@ -85,6 +86,7 @@ class ScannerSettings(TypedDict, total=False):
     hp_counter_signal_penalty: bool
     hp_freshness_max_bars: int
     hp_volume_confirmation: bool
+
 
 SCANNER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
@@ -137,6 +139,7 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "stale_member_max_age_days": 45.0,
     # UI
     "theme": "dark",
+    "reduce_motion": False,
     # Provider toggles
     "use_market_sentiment": True,
     "use_social_sentiment": True,
@@ -333,7 +336,7 @@ def load_api_config() -> dict:
             with open(API_CONFIG_FILE) as f:
                 config = json.load(f)
         except Exception as e:
-            logger.debug("Failed to load API config: %s", e)
+            logger.info("Failed to load API config: %s", e)
 
     # Environment variables override config file
     for key in API_KEY_REGISTRY:
@@ -371,15 +374,23 @@ def _sanitize_settings(saved: dict) -> dict:
     cleaned: dict = {}
     for key, val in saved.items():
         if key not in DEFAULT_SETTINGS:
-            if key == "ui_sort_col" and isinstance(val, int) and 0 <= val < len(RESULT_COLS):
+            if (
+                key == "ui_sort_col"
+                and isinstance(val, int)
+                and 0 <= val < len(RESULT_COLS)
+            ):
                 cleaned[key] = val
             elif key == "ui_sort_reverse" and isinstance(val, bool):
                 cleaned[key] = val
-            elif (key == "ui_page_size" and isinstance(val, int)
-                    and 0 < val <= 500):
+            elif key == "ui_page_size" and isinstance(val, int) and 0 < val <= 500:
                 cleaned[key] = val
-            elif (key == "ui_rating_filter" and val in
-                    ("ALL", "EXCELLENT", "GOOD", "MODERATE", "POOR")):
+            elif key == "ui_rating_filter" and val in (
+                "ALL",
+                "EXCELLENT",
+                "GOOD",
+                "MODERATE",
+                "POOR",
+            ):
                 cleaned[key] = val
             elif key == "universe" and isinstance(val, str) and val:
                 cleaned[key] = val
@@ -404,8 +415,10 @@ def _sanitize_settings(saved: dict) -> dict:
                 fval = float(val)
                 if key == "min_score" and not 0 <= fval <= 100:
                     raise ValueError(key)
-                if key in ("negative_cache_ttl_hours",
-                           "stale_member_max_age_days") and fval <= 0:
+                if (
+                    key in ("negative_cache_ttl_hours", "stale_member_max_age_days")
+                    and fval <= 0
+                ):
                     raise ValueError(key)
                 cleaned[key] = fval
             elif isinstance(default, str):

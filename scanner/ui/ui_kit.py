@@ -7,7 +7,6 @@ Pure control-construction helpers (no ScannerApp state) that are used by
 toolkit-free so it stays unit-testable without a page.
 """
 
-
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,7 +23,8 @@ ANIM_BOUNCE = ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
 def shimmer_cell(width: int = 100, height: int = 14) -> ft.Container:
     """A single shimmer skeleton block for loading placeholders."""
     return ft.Container(
-        width=width, height=height,
+        width=width,
+        height=height,
         bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.WHITE),
         border_radius=4,
     )
@@ -34,7 +34,9 @@ def shimmer_row(num_cells: int = 4, row_height: int = 34) -> ft.Container:
     """One skeleton row with ``num_cells`` shimmer blocks."""
     cells = [shimmer_cell(width=w) for w in (40, 120, 60, 80)[:num_cells]]
     return ft.Container(
-        content=ft.Row(controls=cells, spacing=12, alignment=ft.MainAxisAlignment.START),
+        content=ft.Row(
+            controls=cells, spacing=12, alignment=ft.MainAxisAlignment.START
+        ),
         height=row_height,
         padding=ft.Padding(left=8, right=8, top=0, bottom=0),
     )
@@ -57,18 +59,26 @@ def _glass_border() -> ft.Border:
 
 
 def _card_shadow() -> list[ft.BoxShadow]:
-    return [ft.BoxShadow(blur_radius=24, color=ft.Colors.with_opacity(0.55, ft.Colors.BLACK))]
+    return [
+        ft.BoxShadow(
+            blur_radius=24, color=ft.Colors.with_opacity(0.55, ft.Colors.BLACK)
+        )
+    ]
 
 
 def _neon_glow(color: str, blur: int = 12) -> list[ft.BoxShadow]:
     return [ft.BoxShadow(blur_radius=blur, color=color)]
 
 
-def _padding_only(left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -> ft.Padding:
+def _padding_only(
+    left: int = 0, top: int = 0, right: int = 0, bottom: int = 0
+) -> ft.Padding:
     return ft.Padding(left=left, top=top, right=right, bottom=bottom)
 
 
-def _margin_only(left: int = 0, top: int = 0, right: int = 0, bottom: int = 0) -> ft.Margin:
+def _margin_only(
+    left: int = 0, top: int = 0, right: int = 0, bottom: int = 0
+) -> ft.Margin:
     return ft.Margin(left=left, top=top, right=right, bottom=bottom)
 
 
@@ -78,6 +88,7 @@ def _score_of(r: dict) -> float:
     Backward-compat re-export — canonical definition lives in constants.py.
     """
     from ..shared.constants import score_of as _so
+
     return _so(r)
 
 
@@ -113,13 +124,21 @@ def glass_card(content, c: dict, padding=None) -> ft.Container:
         border=_glass_border(),
         border_radius=14,
         shadow=_card_shadow(),
-        padding=padding if padding is not None else _padding_only(
-            left=14, right=14, top=10, bottom=10),
+        padding=padding
+        if padding is not None
+        else _padding_only(left=14, right=14, top=10, bottom=10),
     )
 
 
-def themed_dropdown(options: list, value, c: dict, width: int = 160,
-                    height: int = 42, on_select=None, on_change=None) -> ft.Dropdown:
+def themed_dropdown(
+    options: list,
+    value,
+    c: dict,
+    width: int = 160,
+    height: int = 42,
+    on_select=None,
+    on_change=None,
+) -> ft.Dropdown:
     """Theme-consistent dropdown shared by settings/backtest/layout.
 
     This Flet version's ``Dropdown`` only accepts ``on_select`` — an
@@ -127,12 +146,16 @@ def themed_dropdown(options: list, value, c: dict, width: int = 160,
     """
     handler = on_select if on_select is not None else on_change
     return ft.Dropdown(
-        options=[ft.dropdown.Option(v) if isinstance(v, str) else v
-                 for v in options],
+        options=[ft.dropdown.Option(v) if isinstance(v, str) else v for v in options],
         value=value,
-        width=width, height=height, text_size=13,
-        bgcolor=c["option_bg"], color=c["text"],
-        border_color=c["border"], border_width=1, border_radius=10,
+        width=width,
+        height=height,
+        text_size=13,
+        bgcolor=c["option_bg"],
+        color=c["text"],
+        border_color=c["border"],
+        border_width=1,
+        border_radius=10,
         focused_border_color=c["purple"],
         on_select=handler,
     )
@@ -141,6 +164,7 @@ def themed_dropdown(options: list, value, c: dict, width: int = 160,
 @dataclass
 class PaletteAction:
     """One command-palette entry: labels plus the zero-arg callable to run."""
+
     action_id: str
     title: str
     hint: str = ""
@@ -187,8 +211,19 @@ def filter_actions(query: str, actions: list[PaletteAction]) -> list[PaletteActi
 
 
 # Header-ish first cells ("Ticker", "Symbol", ...) are never holdings.
-_WATCHLIST_HEADERS = {"TICKER", "TICKERS", "SYMBOL", "SYMBOLS", "SCRIP",
-                      "SCRIPS", "STOCK", "STOCKS", "NAME", "NAMES", "HOLDING"}
+_WATCHLIST_HEADERS = {
+    "TICKER",
+    "TICKERS",
+    "SYMBOL",
+    "SYMBOLS",
+    "SCRIP",
+    "SCRIPS",
+    "STOCK",
+    "STOCKS",
+    "NAME",
+    "NAMES",
+    "HOLDING",
+}
 _WATCHLIST_TOKEN = re.compile(r"^[A-Z0-9&.\-]{1,24}$")
 
 

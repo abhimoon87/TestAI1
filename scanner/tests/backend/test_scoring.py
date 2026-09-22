@@ -66,7 +66,9 @@ class TestGetMa:
         result = get_ma("VWMA", close, 20, volume=vol)
         expected = (close * vol).rolling(20).sum() / vol.rolling(20).sum()
         both_valid = result.notna() & expected.notna()
-        np.testing.assert_allclose(result[both_valid].values, expected[both_valid].values, atol=1e-10)
+        np.testing.assert_allclose(
+            result[both_valid].values, expected[both_valid].values, atol=1e-10
+        )
 
     def test_unknown_type_falls_back_to_ema(self, synthetic_ohlcv):
         close = synthetic_ohlcv["close"]
@@ -118,7 +120,9 @@ class TestToWeekly:
         assert to_weekly(pd.DataFrame()) is None
 
     def test_no_close_column(self):
-        df = pd.DataFrame({"open": [1, 2], "high": [2, 3], "low": [1, 2], "volume": [100, 200]})
+        df = pd.DataFrame(
+            {"open": [1, 2], "high": [2, 3], "low": [1, 2], "volume": [100, 200]}
+        )
         assert to_weekly(df) is None
 
     def test_non_datetime_index(self):
@@ -284,8 +288,18 @@ class TestComputeScores:
         """All 10 scoring categories should be in the result."""
         result = compute_scores(synthetic_ohlcv, timeframe="D")
         assert result is not None
-        categories = ["trend", "momentum", "rsi", "macd", "stoch",
-                       "obv", "volume", "rel_str", "volatility", "fundamentals"]
+        categories = [
+            "trend",
+            "momentum",
+            "rsi",
+            "macd",
+            "stoch",
+            "obv",
+            "volume",
+            "rel_str",
+            "volatility",
+            "fundamentals",
+        ]
         for cat in categories:
             assert cat in result, f"Missing category: {cat}"
 
@@ -294,12 +308,21 @@ class TestComputeScores:
         result = compute_scores(synthetic_ohlcv, timeframe="D")
         assert result is not None
         max_bounds = {
-            "trend": 15, "momentum": 15, "rsi": 8, "macd": 7,
-            "stoch": 5, "obv": 5, "volume": 10, "rel_str": 10,
-            "volatility": 5, "fundamentals": 20,
+            "trend": 15,
+            "momentum": 15,
+            "rsi": 8,
+            "macd": 7,
+            "stoch": 5,
+            "obv": 5,
+            "volume": 10,
+            "rel_str": 10,
+            "volatility": 5,
+            "fundamentals": 20,
         }
         for cat, max_val in max_bounds.items():
-            assert result[cat] <= max_val + 0.1, f"{cat}={result[cat]} exceeds max {max_val}"
+            assert result[cat] <= max_val + 0.1, (
+                f"{cat}={result[cat]} exceeds max {max_val}"
+            )
 
     def test_returns_none_for_short_data(self, short_ohlcv):
         """Data shorter than min_required should return None."""
@@ -319,9 +342,18 @@ class TestComputeScores:
         """Result should contain metadata like close, trend_dir, etc."""
         result = compute_scores(synthetic_ohlcv, timeframe="D")
         assert result is not None
-        for key in ["close", "trend_dir", "trend_color", "atr_pct",
-                     "volat_stat", "combined_rating", "entry_signal",
-                     "weekly_entry_signal", "is_sideways", "fund_detail"]:
+        for key in [
+            "close",
+            "trend_dir",
+            "trend_color",
+            "atr_pct",
+            "volat_stat",
+            "combined_rating",
+            "entry_signal",
+            "weekly_entry_signal",
+            "is_sideways",
+            "fund_detail",
+        ]:
             assert key in result, f"Missing metadata key: {key}"
 
     def test_trend_dir_is_bull_or_bear(self, synthetic_ohlcv):
@@ -387,8 +419,9 @@ class TestComputeScores:
     def test_entry_signal_adx_gate_off_matches_legacy(self, synthetic_ohlcv):
         """min_adx_entry absent or 0 must leave the entry signal unchanged."""
         base = compute_scores(synthetic_ohlcv, timeframe="D")
-        off = compute_scores(synthetic_ohlcv, timeframe="D",
-                             settings={"min_adx_entry": 0.0})
+        off = compute_scores(
+            synthetic_ohlcv, timeframe="D", settings={"min_adx_entry": 0.0}
+        )
         assert base is not None and off is not None
         assert off["entry_signal"] == base["entry_signal"]
 
@@ -398,8 +431,9 @@ class TestComputeScores:
         base = compute_scores(synthetic_ohlcv, timeframe="D")
         assert base is not None
         assert base["adx_val"] is not None  # 200 bars -> ADX is finite
-        blocked = compute_scores(synthetic_ohlcv, timeframe="D",
-                                 settings={"min_adx_entry": 1e9})
+        blocked = compute_scores(
+            synthetic_ohlcv, timeframe="D", settings={"min_adx_entry": 1e9}
+        )
         assert blocked is not None
         assert blocked["entry_signal"] is False
 
@@ -410,10 +444,16 @@ class TestComputeScores:
         above must always block."""
         base = compute_scores(synthetic_ohlcv, timeframe="D")
         assert base is not None and base["adx_val"] is not None
-        below = compute_scores(synthetic_ohlcv, timeframe="D",
-                               settings={"min_adx_entry": float(base["adx_val"]) - 0.5})
-        above = compute_scores(synthetic_ohlcv, timeframe="D",
-                               settings={"min_adx_entry": float(base["adx_val"]) + 0.5})
+        below = compute_scores(
+            synthetic_ohlcv,
+            timeframe="D",
+            settings={"min_adx_entry": float(base["adx_val"]) - 0.5},
+        )
+        above = compute_scores(
+            synthetic_ohlcv,
+            timeframe="D",
+            settings={"min_adx_entry": float(base["adx_val"]) + 0.5},
+        )
         assert below is not None and above is not None
         # Gate never binds half a point below the rounded value -> same as legacy
         assert below["entry_signal"] == base["entry_signal"]
@@ -422,7 +462,7 @@ class TestComputeScores:
 
     def test_fundamentals_attached(self, synthetic_ohlcv):
         """When _fundamentals is attached, it should be used."""
-        synthetic_ohlcv.attrs['_fundamentals'] = {
+        synthetic_ohlcv.attrs["_fundamentals"] = {
             "pe_ratio": 12.0,
             "eps_growth": 25.0,
             "rev_growth": 18.0,

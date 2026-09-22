@@ -44,14 +44,16 @@ class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
 
         num_threads = len(self._threads)
         if num_threads < self._max_workers:
-            thread_name = '%s_%d' % (self._thread_name_prefix or self,
-                                     num_threads)
+            thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
             t = threading.Thread(
-                name=thread_name, target=_worker,
-                args=(weakref.ref(self, weakref_cb),
-                      self._work_queue,
-                      self._initializer,
-                      self._initargs),
+                name=thread_name,
+                target=_worker,
+                args=(
+                    weakref.ref(self, weakref_cb),
+                    self._work_queue,
+                    self._initializer,
+                    self._initargs,
+                ),
                 daemon=True,
             )
             t.start()
@@ -113,7 +115,12 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame | None:
     agg_rules = {}
     for col in ["open", "high", "low", "close"]:
         if col in df.columns:
-            agg_rules[col] = {"open": "first", "high": "max", "low": "min", "close": "last"}[col]
+            agg_rules[col] = {
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+            }[col]
     if "volume" in df.columns:
         agg_rules["volume"] = "sum"
 
@@ -153,8 +160,9 @@ def _extend_period_for_timeframe(period: str, timeframe: str) -> str:
     return period
 
 
-def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
-                     retries: int = 2) -> pd.DataFrame | None:
+def fetch_stock_data(
+    ticker: str, period: str = "1y", timeframe: str = "D", retries: int = 2
+) -> pd.DataFrame | None:
     """
     Fetch OHLCV data for an Indian NSE stock.
 
@@ -197,16 +205,18 @@ def fetch_stock_data(ticker: str, period: str = "1y", timeframe: str = "D",
                 # Attach fundamentals
                 fund = provider.fetch_fundamentals(ticker)
                 if fund is not None:
-                    df.attrs['_fundamentals'] = fund
+                    df.attrs["_fundamentals"] = fund
                 return df
         except Exception as e:
             if attempt < retries - 1:
-                logger.debug("Fetch %s attempt %d/%d failed: %s",
-                             ticker, attempt + 1, retries, e)
-                time.sleep(min(2 ** attempt, 4))
+                logger.info(
+                    "Fetch %s attempt %d/%d failed: %s", ticker, attempt + 1, retries, e
+                )
+                time.sleep(min(2**attempt, 4))
             else:
-                logger.warning("Failed to fetch %s after %d attempts: %s",
-                               ticker, retries, e)
+                logger.warning(
+                    "Failed to fetch %s after %d attempts: %s", ticker, retries, e
+                )
 
     return None
 
@@ -244,10 +254,16 @@ def fetch_fundamentals(ticker: str) -> dict | None:
 CHUNK = 200  # ~200 * 8 chars avg + commas ≈ 1.6k URL < 8k limit; safe for Yahoo
 MAX_PARALLEL_CHUNKS = 8  # parallel chunk downloads — 8×200 = 1600 tickers in flight
 SLEEP_BETWEEN_BATCH = 0.3  # throttle between parallel batches to avoid 429
-FALLBACK_WORKERS = 4  # per-ticker fallback threads — keep low to avoid NSE rate-limiting
-FALLBACK_PROVIDER_TIMEOUT = 10.0  # per-provider cap (s) in the fallback pass — dead symbols fail fast
+FALLBACK_WORKERS = (
+    4  # per-ticker fallback threads — keep low to avoid NSE rate-limiting
+)
+FALLBACK_PROVIDER_TIMEOUT = (
+    10.0  # per-provider cap (s) in the fallback pass — dead symbols fail fast
+)
 FALLBACK_OVERALL_TIMEOUT = 180  # hard ceiling (s) for the entire fallback batch — prevents indefinite scan hangs
-FALLBACK_FILTER_MIN_MISSING = 25  # only consult the NSE list above this many misses (filter pays off at scale)
+FALLBACK_FILTER_MIN_MISSING = (
+    25  # only consult the NSE list above this many misses (filter pays off at scale)
+)
 
 # ── Negative cache: symbols with no data on any provider ────────────────────
 # A symbol that fails the whole NSE fallback chain once is very likely dead
@@ -275,7 +291,8 @@ def _negative_cache_load() -> dict[str, float]:
                 # Read the override directly — negative_cache_ttl_hours() takes
                 # the same (non-reentrant) lock and would deadlock here.
                 cache = {
-                    k: ts for k, ts in raw.items()
+                    k: ts
+                    for k, ts in raw.items()
                     if isinstance(ts, (int, float))
                     and now - ts < _negative_cache_ttl_hours * 3600
                 }
@@ -294,7 +311,7 @@ def _negative_cache_save() -> None:
             json.dump(_negative_cache, f)
         os.replace(tmp, _NEGATIVE_CACHE_PATH)
     except Exception:
-        logger.debug("Negative-cache write failed", exc_info=True)
+        logger.info("Negative-cache write failed", exc_info=True)
 
 
 def _negative_cache_contains(ticker: str) -> bool:
@@ -311,7 +328,9 @@ def _negative_cache_contains(ticker: str) -> bool:
         return False
 
 
-def _negative_cache_update(marks: list | None = None, clears: list | None = None) -> None:
+def _negative_cache_update(
+    marks: list | None = None, clears: list | None = None
+) -> None:
     """Mark symbols as dead (no data on any provider) and/or clear others."""
     if not marks and not clears:
         return
@@ -397,9 +416,7 @@ def set_enrichment_cache_ttl_hours(hours: float | None) -> None:
     """Override the enrichment expiry window (hours); None restores default."""
     global _ENRICHMENT_TTL_OVERRIDE
     with _enrichment_lock:
-        _ENRICHMENT_TTL_OVERRIDE = (
-            max(0.5, float(hours)) if hours else None
-        )
+        _ENRICHMENT_TTL_OVERRIDE = max(0.5, float(hours)) if hours else None
 
 
 def enrichment_cache_ttl_hours() -> float:
@@ -427,7 +444,9 @@ def _enrichment_cache_load() -> dict:
                     ):
                         cache[k] = entry
             except Exception:
-                logger.debug("Enrichment cache load failed (missing/corrupt file)", exc_info=True)
+                logger.info(
+                    "Enrichment cache load failed (missing/corrupt file)", exc_info=True
+                )
             _enrichment_cache = cache
         return _enrichment_cache
 
@@ -441,7 +460,7 @@ def _enrichment_cache_save() -> None:
             json.dump(_enrichment_cache, f)
         os.replace(tmp, _ENRICHMENT_CACHE_PATH)
     except Exception:
-        logger.debug("Enrichment-cache write failed", exc_info=True)
+        logger.info("Enrichment-cache write failed", exc_info=True)
 
 
 def _enrichment_cache_get(ticker: str) -> dict | None:
@@ -547,7 +566,7 @@ def _nse_membership_set() -> set | None:
         if symbols and len(symbols) > 500:
             return {str(s).strip().upper() for s in symbols}
     except Exception as e:
-        logger.debug("NSE mainboard list unavailable: %s", e)
+        logger.info("NSE mainboard list unavailable: %s", e)
     return None
 
 
@@ -597,7 +616,8 @@ def _fetch_fallback_batch(
     def _fetch_one(t: str):
         try:
             df = provider.fetch_stock(
-                t, download_period,
+                t,
+                download_period,
                 skip=("yfinance",),
                 provider_timeout=FALLBACK_PROVIDER_TIMEOUT,
             )
@@ -612,7 +632,7 @@ def _fetch_fallback_batch(
             # (e.g. recent IPO), so don't negative-cache it.
             return "short", t, None
         except Exception as e:
-            logger.debug("Fallback fetch failed for %s: %s", t, e)
+            logger.info("Fallback fetch failed for %s: %s", t, e)
             return "dead", t, None
 
     executor = _DaemonThreadPoolExecutor(max_workers=workers)
@@ -625,7 +645,8 @@ def _fetch_fallback_batch(
             cancelled_fb = True
             logger.info(
                 "Fallback fetch cancelled — %d/%d recovered",
-                len(recovered), total,
+                len(recovered),
+                total,
             )
             break
         if time.monotonic() >= deadline:
@@ -633,7 +654,9 @@ def _fetch_fallback_batch(
             logger.warning(
                 "Fallback fetch timed out after %ds — %d/%d recovered, "
                 "%d still pending",
-                FALLBACK_OVERALL_TIMEOUT, len(recovered), total,
+                FALLBACK_OVERALL_TIMEOUT,
+                len(recovered),
+                total,
                 len(pending),
             )
             break
@@ -653,7 +676,7 @@ def _fetch_fallback_batch(
                 try:
                     on_progress(done, total)
                 except Exception:
-                    logger.debug("Fallback progress callback failed", exc_info=True)
+                    logger.info("Fallback progress callback failed", exc_info=True)
     if not cancelled_fb:
         executor.shutdown(wait=True)
 
@@ -664,13 +687,18 @@ def _fetch_fallback_batch(
     elapsed = time.monotonic() - t0
     logger.info(
         "fallback_fetch: tickers=%d recovered=%d dead=%d elapsed=%.1fs",
-        total, len(recovered), len(no_data), elapsed,
+        total,
+        len(recovered),
+        len(no_data),
+        elapsed,
     )
     return recovered
 
 
 def fetch_batch_yfinance_stream(
-    tickers: list, period: str = "1y", timeframe: str = "D",
+    tickers: list,
+    period: str = "1y",
+    timeframe: str = "D",
     cancel_event: threading.Event | None = None,
     on_fallback_progress=None,
 ):
@@ -739,7 +767,7 @@ def fetch_batch_yfinance_stream(
                 try:
                     daily = _get_cached(t, download_period, "cache")
                 except Exception as e:
-                    logger.debug("Batch cache read failed for %s: %s", t, e)
+                    logger.info("Batch cache read failed for %s: %s", t, e)
                     daily = None
                 # Legacy cache entries can hold UTC-close stamps; normalize so
                 # all tickers share one trade-date calendar.
@@ -755,13 +783,18 @@ def fetch_batch_yfinance_stream(
             if not to_download:
                 logger.info(
                     "Chunk %d/%d done: %d tickers (all served from disk cache)",
-                    ci, len(chunks), len(chunk_results),
+                    ci,
+                    len(chunks),
+                    len(chunk_results),
                 )
                 return chunk_results
             if cached_hits:
                 logger.info(
                     "Chunk %d/%d: %d served from disk cache, downloading %d via yfinance",
-                    ci, len(chunks), cached_hits, len(to_download),
+                    ci,
+                    len(chunks),
+                    cached_hits,
+                    len(to_download),
                 )
 
             yf_tickers = [f"{t}.NS" for t in to_download]
@@ -808,13 +841,15 @@ def fetch_batch_yfinance_stream(
                         try:
                             _set_cached(orig_ticker, download_period, "cache", daily)
                         except Exception as e:
-                            logger.debug(
+                            logger.info(
                                 "Batch cache write failed for %s: %s", orig_ticker, e
                             )
                 except Exception as e:
-                    logger.debug("Skipping %s in chunk %d: %s", orig_ticker, ci, e)
+                    logger.info("Skipping %s in chunk %d: %s", orig_ticker, ci, e)
                     continue
-            logger.info("Chunk %d/%d done: %d tickers", ci, len(chunks), len(chunk_results))
+            logger.info(
+                "Chunk %d/%d done: %d tickers", ci, len(chunks), len(chunk_results)
+            )
             return chunk_results
 
         cumulative = 0
@@ -827,7 +862,10 @@ def fetch_batch_yfinance_stream(
             batch_results: dict = {}
             cancelled_batch = False
             executor = _DaemonThreadPoolExecutor(max_workers=len(batch))
-            future_to_ci = {executor.submit(_fetch_chunk, chunk, ci): ci for chunk, ci in zip(batch, batch_indices)}
+            future_to_ci = {
+                executor.submit(_fetch_chunk, chunk, ci): ci
+                for chunk, ci in zip(batch, batch_indices)
+            }
             pending = set(future_to_ci)
             while pending:
                 if cancel_event is not None and cancel_event.is_set():
@@ -837,7 +875,9 @@ def fetch_batch_yfinance_stream(
                     break
                 # Poll every 0.5s instead of blocking on as_completed — lets
                 # Stop return promptly even while chunks are mid-download.
-                completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                completed, pending = wait(
+                    pending, timeout=0.5, return_when=FIRST_COMPLETED
+                )
                 if not completed:
                     continue
                 for future in completed:
@@ -858,7 +898,11 @@ def fetch_batch_yfinance_stream(
                     seen_tickers.update(chunk_res)
                     logger.info(
                         "Chunk %d/%d streamed: %d tickers (%d/%d cumulative)",
-                        ci, len(chunks), len(chunk_res), cumulative, total,
+                        ci,
+                        len(chunks),
+                        len(chunk_res),
+                        cumulative,
+                        total,
                     )
                     yield dict(chunk_res)
             if not cancelled_batch:
@@ -885,7 +929,8 @@ def fetch_batch_yfinance_stream(
                 _record_negative_cache_skips(len(known_dead))
                 logger.info(
                     "Skipping %d known-dead symbols via negative cache (marked within the last %dh)",
-                    len(known_dead), negative_cache_ttl_hours(),
+                    len(known_dead),
+                    negative_cache_ttl_hours(),
                 )
             skipped: list = []
             # jugaad-data and nselib only serve NSE mainboard equities, so
@@ -906,12 +951,15 @@ def fetch_batch_yfinance_stream(
             if not candidates:
                 logger.warning(
                     "yfinance missed %d/%d tickers but none are recoverable (BSE-only or known-dead) — nothing to recover",
-                    len(missing), total,
+                    len(missing),
+                    total,
                 )
             else:
                 logger.info(
                     "yfinance missed %d/%d tickers — attempting %d via jugaad-data/nselib...",
-                    len(missing), total, len(candidates),
+                    len(missing),
+                    total,
+                    len(candidates),
                 )
                 recovered = _fetch_fallback_batch(
                     candidates,
@@ -923,7 +971,8 @@ def fetch_batch_yfinance_stream(
                 if recovered:
                     logger.info(
                         "Fallback recovered %d/%d attempted tickers",
-                        len(recovered), len(candidates),
+                        len(recovered),
+                        len(candidates),
                     )
                     yield recovered
                 else:
@@ -969,9 +1018,12 @@ def fetch_batch_yfinance(
     results: dict = {}
     total = len(tickers) if tickers else 0
     import time as _time
+
     t0 = _time.monotonic()
     for batch_data in fetch_batch_yfinance_stream(
-        tickers, period, timeframe,
+        tickers,
+        period,
+        timeframe,
         cancel_event=cancel_event,
         on_fallback_progress=on_fallback_progress,
     ):
@@ -979,7 +1031,9 @@ def fetch_batch_yfinance(
     elapsed = _time.monotonic() - t0
     logger.info(
         "batch_download: tickers=%d fetched=%d elapsed=%.1fs rate=%.0f/s",
-        total, len(results), elapsed,
+        total,
+        len(results),
+        elapsed,
         len(results) / max(elapsed, 0.01),
     )
     return results

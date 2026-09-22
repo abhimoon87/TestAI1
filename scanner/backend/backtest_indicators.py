@@ -24,8 +24,7 @@ from .backtest_models import WARMUP_BARS, StockData
 from .scoring import get_ma, to_weekly
 
 
-def precompute_stock(ticker: str, df: pd.DataFrame,
-                     settings: dict) -> StockData | None:
+def precompute_stock(ticker: str, df: pd.DataFrame, settings: dict) -> StockData | None:
     """Precompute all technical indicators for a stock's entire history."""
     if df is None or len(df) < WARMUP_BARS:
         return None
@@ -40,8 +39,12 @@ def precompute_stock(ticker: str, df: pd.DataFrame,
     stock = StockData(
         ticker=ticker,
         df=df,
-        fast_ma=get_ma(settings["fast_ma_type"], close, settings["fast_ma_len"], volume),
-        slow_ma=get_ma(settings["slow_ma_type"], close, settings["slow_ma_len"], volume),
+        fast_ma=get_ma(
+            settings["fast_ma_type"], close, settings["fast_ma_len"], volume
+        ),
+        slow_ma=get_ma(
+            settings["slow_ma_type"], close, settings["slow_ma_len"], volume
+        ),
         rsi_val=rsi(close, settings["rsi_len"]),
         macd_hist=macd(close)[2],
         stoch_k=stochastic(high, low, close),
@@ -52,8 +55,12 @@ def precompute_stock(ticker: str, df: pd.DataFrame,
         atr_val=atr(high, low, close, settings["atr_len"]),
         atr1=atr(high, low, close, 1),
         adx_val=adx(high, low, close, settings["adx_len"]),
-        vp_poc=volume_profile_poc(high, low, close, volume, lookback=settings["vp_lookback"]),
-        slope_ma=get_ma(settings["slope_ma_type"], close, settings["slope_ma_len"], volume),
+        vp_poc=volume_profile_poc(
+            high, low, close, volume, lookback=settings["vp_lookback"]
+        ),
+        slope_ma=get_ma(
+            settings["slope_ma_type"], close, settings["slope_ma_len"], volume
+        ),
     )
 
     # Precompute weekly higher-timeframe indicators
@@ -82,7 +89,7 @@ def precompute_nifty(index_df: pd.DataFrame) -> pd.DataFrame | None:
         try:
             df.index = pd.to_datetime(df.index)
         except Exception:
-            logger.debug("NIFTY datetime index conversion failed", exc_info=True)
+            logger.info("NIFTY datetime index conversion failed", exc_info=True)
             return None
     if df.index.tz is not None:
         df.index = df.index.tz_localize(None)

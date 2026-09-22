@@ -36,9 +36,7 @@ def _warm_pyarrow_extension():
     a lock avoids the collision entirely.
     """
     with _PARQUET_LOCK:
-        tmp = pd.DataFrame(
-            {"x": [1]}, index=pd.bdate_range("2024-01-01", periods=1)
-        )
+        tmp = pd.DataFrame({"x": [1]}, index=pd.bdate_range("2024-01-01", periods=1))
         import os
         import tempfile
 
@@ -151,10 +149,12 @@ def crossover_ohlcv():
     """
     n = 200
     # Slow decline then sharp rise
-    close = np.concatenate([
-        np.linspace(120, 90, 150),   # bars 0-149: declining
-        np.linspace(90, 130, 50),    # bars 150-199: rising sharply
-    ])
+    close = np.concatenate(
+        [
+            np.linspace(120, 90, 150),  # bars 0-149: declining
+            np.linspace(90, 130, 50),  # bars 150-199: rising sharply
+        ]
+    )
     high = close * 1.01
     low = close * 0.99
     open_ = close * 1.001

@@ -69,6 +69,7 @@ def get_sector(ticker: str) -> str:
 # DATA CLASSES
 # ============================================================
 
+
 @dataclass
 class Position:
     ticker: str
@@ -138,10 +139,11 @@ class StockData:
 # SECTOR TRACKING
 # ============================================================
 
+
 class SectorTracker:
     """
     Tracks sector performance for rotation strategy.
-    
+
     Maintains a rolling window of recent trade results per sector and
     computes momentum scores to decide which sectors to favor or avoid.
     """
@@ -164,14 +166,14 @@ class SectorTracker:
     def get_sector_momentum(self, sector: str) -> float:
         """
         Compute sector momentum score from recent trades.
-        
+
         Momentum = weighted avg of recent P&L% (newer trades weighted more).
         Range: -100 (all losses) to +100 (all wins).
         """
         if sector not in self.sector_trades:
             return 0.0  # neutral for unseen sectors
 
-        recent = self.sector_trades[sector][-self.lookback:]
+        recent = self.sector_trades[sector][-self.lookback :]
         if not recent:
             return 0.0
 
@@ -221,16 +223,19 @@ class SectorTracker:
             return False
         return 0 < rank <= top_n
 
-    def log_decision(self, ticker: str, sector: str, action: str,
-                     momentum: float, score: float):
+    def log_decision(
+        self, ticker: str, sector: str, action: str, momentum: float, score: float
+    ):
         """Log a rotation decision for reporting."""
-        self.decisions.append({
-            "ticker": ticker,
-            "sector": sector,
-            "action": action,
-            "momentum": momentum,
-            "score": score,
-        })
+        self.decisions.append(
+            {
+                "ticker": ticker,
+                "sector": sector,
+                "action": action,
+                "momentum": momentum,
+                "score": score,
+            }
+        )
 
     def get_sector_summary(self) -> dict:
         """Get summary of all sector rotations for reporting."""

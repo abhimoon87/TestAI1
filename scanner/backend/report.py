@@ -42,34 +42,91 @@ def _sparkline_svg(closes: list, width: int = 100, height: int = 22) -> str:
         f'<path d="{fill_d}" fill="{fill}" />'
         f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="1.5" '
         f'stroke-linecap="round" stroke-linejoin="round" />'
-        f'</svg>'
+        f"</svg>"
     )
 
-# ─── Sentiment keywords ──────────────────────────────────────────────────────
-SENTIMENT_GOOD = frozenset([
-    "profit", "growth", "record", "gain", "surge", "rally",
-    "strong", "beat", "bullish", "outperform", "order", "deal",
-    "buy", "upgrade", "partner", "expand", "launch", "innovate",
-    "dividend", "revenue", "acquire", "breakout", "resilient",
-    "optimistic", "recovery", "momentum", "approval", "milestone",
-    "boom", "soar", "jump", "climb",
-])
 
-SENTIMENT_BAD = frozenset([
-    "loss", "decline", "crash", "drop", "fall", "weak",
-    "bearish", "underperform", "sell", "downgrade", "fraud",
-    "lawsuit", "investigation", "debt", "recession", "warning",
-    "cut", "slump", "miss", "risk", "concern", "delay",
-    "ban", "penalty", "probe", "resign", "volatile", "crisis",
-    "shortage", "slowdown", "shrink", "tumble",
-])
+# ─── Sentiment keywords ──────────────────────────────────────────────────────
+SENTIMENT_GOOD = frozenset(
+    [
+        "profit",
+        "growth",
+        "record",
+        "gain",
+        "surge",
+        "rally",
+        "strong",
+        "beat",
+        "bullish",
+        "outperform",
+        "order",
+        "deal",
+        "buy",
+        "upgrade",
+        "partner",
+        "expand",
+        "launch",
+        "innovate",
+        "dividend",
+        "revenue",
+        "acquire",
+        "breakout",
+        "resilient",
+        "optimistic",
+        "recovery",
+        "momentum",
+        "approval",
+        "milestone",
+        "boom",
+        "soar",
+        "jump",
+        "climb",
+    ]
+)
+
+SENTIMENT_BAD = frozenset(
+    [
+        "loss",
+        "decline",
+        "crash",
+        "drop",
+        "fall",
+        "weak",
+        "bearish",
+        "underperform",
+        "sell",
+        "downgrade",
+        "fraud",
+        "lawsuit",
+        "investigation",
+        "debt",
+        "recession",
+        "warning",
+        "cut",
+        "slump",
+        "miss",
+        "risk",
+        "concern",
+        "delay",
+        "ban",
+        "penalty",
+        "probe",
+        "resign",
+        "volatile",
+        "crisis",
+        "shortage",
+        "slowdown",
+        "shrink",
+        "tumble",
+    ]
+)
 
 
 def _sentiment(title: str, summary: str = "") -> str:
     """Simple keyword-based sentiment: Good / Bad / Neutral."""
     text = (title + " " + summary).lower()
     # Split on whitespace and hyphens to catch hyphenated words
-    words = set(re.split(r'[\s\-]+', text))
+    words = set(re.split(r"[\s\-]+", text))
     g = len(words & SENTIMENT_GOOD)
     b = len(words & SENTIMENT_BAD)
     if g > b:
@@ -103,8 +160,7 @@ def _news_id(ticker: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", str(ticker or "UNKNOWN"))
 
 
-def fetch_stock_news(ticker: str, max_items: int = 10,
-                     months_back: int = 2) -> list:
+def fetch_stock_news(ticker: str, max_items: int = 10, months_back: int = 2) -> list:
     """
     Fetch recent news for a stock from Yahoo Finance.
 
@@ -118,8 +174,13 @@ def fetch_stock_news(ticker: str, max_items: int = 10,
     """
     try:
         import yfinance as yf
+
         # Auto-append .NS suffix for Indian stocks if not present
-        yf_ticker = ticker if any(ticker.endswith(s) for s in ('.NS', '.BO', '.NSE', '.BSE')) else f'{ticker}.NS'
+        yf_ticker = (
+            ticker
+            if any(ticker.endswith(s) for s in (".NS", ".BO", ".NSE", ".BSE"))
+            else f"{ticker}.NS"
+        )
         t = yf.Ticker(yf_ticker)
         news_items = t.news or []
         cutoff = datetime.now() - timedelta(days=months_back * 30)
@@ -133,25 +194,30 @@ def fetch_stock_news(ticker: str, max_items: int = 10,
             dt = _parse_date(pub_date)
             if dt and dt < cutoff:
                 continue
-            results.append({
-                "title": title,
-                "summary": summary,
-                "date": dt.strftime("%Y-%m-%d") if dt else "—",
-                "publisher": provider,
-                "sentiment": _sentiment(title, summary),
-            })
+            results.append(
+                {
+                    "title": title,
+                    "summary": summary,
+                    "date": dt.strftime("%Y-%m-%d") if dt else "—",
+                    "publisher": provider,
+                    "sentiment": _sentiment(title, summary),
+                }
+            )
             if len(results) >= max_items:
                 break
         return results
     except Exception as e:
-        logger.debug("News fetch failed for %s: %s", ticker, e)
+        logger.info("News fetch failed for %s: %s", ticker, e)
         return []
 
 
-def _fetch_news_parallel(tickers: list[str], max_items: int = 10,
-                         months_back: int = 2,
-                         max_workers: int = 8,
-                         fetch_fn=None) -> dict[str, list]:
+def _fetch_news_parallel(
+    tickers: list[str],
+    max_items: int = 10,
+    months_back: int = 2,
+    max_workers: int = 8,
+    fetch_fn=None,
+) -> dict[str, list]:
     """
     Fetch news for multiple tickers in parallel.
 
@@ -183,23 +249,24 @@ def _fetch_news_parallel(tickers: list[str], max_items: int = 10,
                     t, items = future.result()
                     news_map[t] = items
                 except Exception as e:
-                    logger.debug("Parallel news fetch failed for %s: %s", ticker, e)
+                    logger.info("Parallel news fetch failed for %s: %s", ticker, e)
                     news_map[ticker] = []
     except Exception as e:
-        logger.debug("ThreadPoolExecutor failed: %s", e)
+        logger.info("ThreadPoolExecutor failed: %s", e)
         # Fallback: sequential fetch (never let one ticker abort the rest)
         for t in tickers:
             try:
                 news_map[t] = fetch_fn(t, max_items, months_back)
             except Exception as e2:
-                logger.debug("Sequential news fetch failed for %s: %s", t, e2)
+                logger.info("Sequential news fetch failed for %s: %s", t, e2)
                 news_map[t] = []
 
     return news_map
 
 
-def fetch_news_for_ticker(ticker: str, max_items: int = 10,
-                          months_back: int = 2) -> list:
+def fetch_news_for_ticker(
+    ticker: str, max_items: int = 10, months_back: int = 2
+) -> list:
     """News for one ticker in the results-panel shape, NSE then BSE fallback.
 
     Tries the ``.NS`` suffix first (Indian primary listing); when that returns
@@ -223,17 +290,20 @@ def fetch_news_for_ticker(ticker: str, max_items: int = 10,
     return []
 
 
-def fetch_news_batch(tickers: list[str], max_items: int = 10,
-                     months_back: int = 2,
-                     max_workers: int = 6) -> dict[str, list]:
+def fetch_news_batch(
+    tickers: list[str], max_items: int = 10, months_back: int = 2, max_workers: int = 6
+) -> dict[str, list]:
     """Parallel batch version of :func:`fetch_news_for_ticker`.
 
     Returns a dict mapping each input ticker to its provider-keyed news list
     (``[]`` when nothing was found or the fetch failed).
     """
     return _fetch_news_parallel(
-        tickers, max_items=max_items, months_back=months_back,
-        max_workers=max_workers, fetch_fn=fetch_news_for_ticker,
+        tickers,
+        max_items=max_items,
+        months_back=months_back,
+        max_workers=max_workers,
+        fetch_fn=fetch_news_for_ticker,
     )
 
 
@@ -526,8 +596,9 @@ function filterTable() {
 }"""
 
 
-def _summary_header_html(title: str, now: str, results: list, passed: list,
-                         failed: list, threshold: float) -> str:
+def _summary_header_html(
+    title: str, now: str, results: list, passed: list, failed: list, threshold: float
+) -> str:
     """Header banner, meta line, summary stat cards, and filter bar HTML."""
     return f"""<div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
   <div style="width:38px; height:38px; background: linear-gradient(135deg, var(--green), var(--cyan)); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">◈</div>
@@ -543,7 +614,7 @@ def _summary_header_html(title: str, now: str, results: list, passed: list,
     <div class="stat green">
         <div class="num">{len(passed)}</div>
         <div class="label">Passed · {threshold}+</div>
-        <div class="sub">{len(passed)/max(len(results),1)*100:.0f}% hit rate</div>
+        <div class="sub">{len(passed) / max(len(results), 1) * 100:.0f}% hit rate</div>
     </div>
     <div class="stat red">
         <div class="num">{len(failed)}</div>
@@ -553,12 +624,12 @@ def _summary_header_html(title: str, now: str, results: list, passed: list,
     <div class="stat cyan">
         <div class="num">{len(results)}</div>
         <div class="label">Total scanned</div>
-        <div class="sub">{len({r.get('ticker','')[:3] for r in results})} sectors</div>
+        <div class="sub">{len({r.get("ticker", "")[:3] for r in results})} sectors</div>
     </div>
     <div class="stat lime">
-        <div class="num">{passed[0]['total'] if passed else 0:.0f}</div>
+        <div class="num">{passed[0]["total"] if passed else 0:.0f}</div>
         <div class="label">Highest score</div>
-        <div class="sub">{passed[0]['ticker'] if passed else '—'}</div>
+        <div class="sub">{passed[0]["ticker"] if passed else "—"}</div>
     </div>
 </div>
 
@@ -628,10 +699,12 @@ def _table_head_html() -> str:
 
 def _badge_html(r: dict, score: float) -> str:
     """Rating badge: combined rating when present, else score-based."""
-    combined_rating = r.get('combined_rating', None)
+    combined_rating = r.get("combined_rating", None)
     if combined_rating:
         rating_lower = _html.escape(combined_rating.lower())
-        badge = f'<span class="badge {rating_lower}">{_html.escape(combined_rating)}</span>'
+        badge = (
+            f'<span class="badge {rating_lower}">{_html.escape(combined_rating)}</span>'
+        )
     else:
         if score >= 70:
             badge = '<span class="badge excellent">EXCELLENT</span>'
@@ -646,11 +719,11 @@ def _badge_html(r: dict, score: float) -> str:
 
 def _ma_signal_html(r: dict) -> str:
     """MA-signal cell HTML: fresh/stale crossover, bull, or bear."""
-    ma_bullish = r.get('ma_bullish', False)
-    ma_crossed = r.get('ma_crossed_above', False)
-    crossover_ago = r.get('crossover_bars_ago', -1)
+    ma_bullish = r.get("ma_bullish", False)
+    ma_crossed = r.get("ma_crossed_above", False)
+    crossover_ago = r.get("crossover_bars_ago", -1)
     if ma_crossed:
-        freshness_cls = 'fresh' if crossover_ago <= 2 else 'stale'
+        freshness_cls = "fresh" if crossover_ago <= 2 else "stale"
         ma_html = f'<span class="ma-cross">^ CROSS</span> <span class="{freshness_cls}">({crossover_ago} bars)</span>'
     elif ma_bullish:
         ma_html = '<span class="ma-bull">^ BULL</span>'
@@ -661,8 +734,8 @@ def _ma_signal_html(r: dict) -> str:
 
 def _poc_html(r: dict) -> str:
     """POC cell HTML: ABOVE/BELOW badge plus the volume-profile POC."""
-    above_poc = r.get('above_poc', False)
-    vp_poc = r.get('vp_poc', 0)
+    above_poc = r.get("above_poc", False)
+    vp_poc = r.get("vp_poc", 0)
     if above_poc:
         poc_html = f'<span class="poc-above">ABOVE</span> <span style="color:var(--text-dim);font-size:0.8em">{vp_poc}</span>'
     else:
@@ -673,6 +746,7 @@ def _poc_html(r: dict) -> str:
 def _trade_reasons_html(r: dict) -> str:
     """Trade-reasons panel HTML (empty string when no reasons)."""
     from ..shared.trade_reasons import build_trade_reasons
+
     trade_reasons = build_trade_reasons(r)
     if not trade_reasons:
         return ""
@@ -689,24 +763,34 @@ def _trade_reasons_html(r: dict) -> str:
             </div>"""
 
 
-def _news_panel_html(ticker: str, news_items: list, fetch_news: bool,
-                     reasons_html: str) -> str:
+def _news_panel_html(
+    ticker: str, news_items: list, fetch_news: bool, reasons_html: str
+) -> str:
     """Expandable news/reasons row for a ticker (empty when nothing)."""
     news_rows_html = ""
     if news_items:
-        good_count = sum(1 for n in news_items
-                         if isinstance(n, dict) and n.get("sentiment") == "Good")
-        bad_count = sum(1 for n in news_items
-                        if isinstance(n, dict) and n.get("sentiment") == "Bad")
-        neutral_count = sum(1 for n in news_items
-                            if isinstance(n, dict) and n.get("sentiment") == "Neutral")
+        good_count = sum(
+            1
+            for n in news_items
+            if isinstance(n, dict) and n.get("sentiment") == "Good"
+        )
+        bad_count = sum(
+            1 for n in news_items if isinstance(n, dict) and n.get("sentiment") == "Bad"
+        )
+        neutral_count = sum(
+            1
+            for n in news_items
+            if isinstance(n, dict) and n.get("sentiment") == "Neutral"
+        )
         summary_parts = []
         if good_count:
             summary_parts.append(f'<span class="news-good">{good_count} Good</span>')
         if bad_count:
             summary_parts.append(f'<span class="news-bad">{bad_count} Bad</span>')
         if neutral_count:
-            summary_parts.append(f'<span class="news-neutral">{neutral_count} Neutral</span>')
+            summary_parts.append(
+                f'<span class="news-neutral">{neutral_count} Neutral</span>'
+            )
 
         for n in news_items:
             if not isinstance(n, dict):
@@ -726,7 +810,9 @@ def _news_panel_html(ticker: str, news_items: list, fetch_news: bool,
                             <div class="news-title">{safe_title}</div>
                             <div class="news-summary">{safe_summary}</div>
                         </div>"""
-        news_summary_html = f'<div class="news-summary-line">{" | ".join(summary_parts)}</div>'
+        news_summary_html = (
+            f'<div class="news-summary-line">{" | ".join(summary_parts)}</div>'
+        )
     elif fetch_news:
         news_summary_html = ""
         news_rows_html = '<div class="news-item"><span class="news-title" style="color:var(--text-dim)">No recent news found</span></div>'
@@ -753,8 +839,9 @@ def _news_panel_html(ticker: str, news_items: list, fetch_news: bool,
     return ""
 
 
-def _result_row_html(r: dict, threshold: float, news_map: dict,
-                     fetch_news: bool) -> str:
+def _result_row_html(
+    r: dict, threshold: float, news_map: dict, fetch_news: bool
+) -> str:
     """Render one result as a data row plus its expandable news row."""
     score = r.get("total", 0) or 0
     ticker = str(r.get("ticker", "?"))
@@ -764,98 +851,101 @@ def _result_row_html(r: dict, threshold: float, news_map: dict,
     trend_class = "bull" if "bull" in str(r.get("trend_color", "")) else "bear"
     rs_icon = "+" if (r.get("pc1m", 0) or 0) > 0 else ""
 
-    ma_bullish = r.get('ma_bullish', False)
-    ma_crossed = r.get('ma_crossed_above', False)
+    ma_bullish = r.get("ma_bullish", False)
+    ma_crossed = r.get("ma_crossed_above", False)
     ma_html = _ma_signal_html(r)
-    above_poc = r.get('above_poc', False)
+    above_poc = r.get("above_poc", False)
     poc_html = _poc_html(r)
-    close_above_both = r.get('close_above_both_ma', False)
+    close_above_both = r.get("close_above_both_ma", False)
     if close_above_both:
         bothma_html = '<span class="bothma-yes">YES</span>'
     else:
         bothma_html = '<span class="bothma-no">NO</span>'
 
-    sideways = r.get('is_sideways', False)
-    sideways_cls = 'sideways' if sideways else 'trending'
-    sideways_reasons = _html.escape(', '.join(r.get('sideways_reasons', [])))
-    sideways_label = '⚠ Chop' if sideways else '✓ Trend'
+    sideways = r.get("is_sideways", False)
+    sideways_cls = "sideways" if sideways else "trending"
+    sideways_reasons = _html.escape(", ".join(r.get("sideways_reasons", [])))
+    sideways_label = "⚠ Chop" if sideways else "✓ Trend"
 
     reasons_html = _trade_reasons_html(r)
     news_items = news_map.get(ticker, []) if fetch_news else []
     news_html = _news_panel_html(ticker, news_items, fetch_news, reasons_html)
 
     return f"""
-        <tr class="{'highlight' if score >= threshold else ''}" 
-            data-ma-bull="{'true' if ma_bullish else 'false'}" 
-            data-above-poc="{'true' if above_poc else 'false'}"
-            data-both-ma="{'true' if close_above_both else 'false'}"
-            data-crossed="{'true' if ma_crossed else 'false'}"
-            data-entry="{'true' if r.get('entry_signal') else 'false'}"
+        <tr class="{"highlight" if score >= threshold else ""}" 
+            data-ma-bull="{"true" if ma_bullish else "false"}" 
+            data-above-poc="{"true" if above_poc else "false"}"
+            data-both-ma="{"true" if close_above_both else "false"}"
+            data-crossed="{"true" if ma_crossed else "false"}"
+            data-entry="{"true" if r.get("entry_signal") else "false"}"
             data-ticker="{_html.escape(ticker)}">
             <td class="ticker" onclick="toggleNews('{_news_id(ticker)}')">{_html.escape(ticker)}</td>
             <td class="score score-{_score_class(score)}">{score:.1f}</td>
             <td>{badge}</td>
-            <td class="num">{"<span class='bull'>YES</span>" if r.get('entry_signal') else "<span style='color:var(--text-faint)'>--</span>"}</td>
-            <td class="num">{r.get('close', '—')}</td>
+            <td class="num">{"<span class='bull'>YES</span>" if r.get("entry_signal") else "<span style='color:var(--text-faint)'>--</span>"}</td>
+            <td class="num">{r.get("close", "—")}</td>
             <td class="num">{ma_html}</td>
             <td class="num">{poc_html}</td>
             <td class="num">{bothma_html}</td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar" style="width: {r.get('trend', 0) / 20 * 100:.0f}%"></div>
+                    <div class="bar" style="width: {r.get("trend", 0) / 20 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('trend', 0)}/20</span>
+                <span class="bar-val">{r.get("trend", 0)}/20</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar mom" style="width: {r.get('momentum', 0) / 15 * 100:.0f}%"></div>
+                    <div class="bar mom" style="width: {r.get("momentum", 0) / 15 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('momentum', 0)}/15</span>
+                <span class="bar-val">{r.get("momentum", 0)}/15</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar rsi" style="width: {r.get('rsi', 0) / 8 * 100:.0f}%"></div>
+                    <div class="bar rsi" style="width: {r.get("rsi", 0) / 8 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('rsi', 0)}/8</span>
+                <span class="bar-val">{r.get("rsi", 0)}/8</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar macd" style="width: {r.get('macd', 0) / 7 * 100:.0f}%"></div>
+                    <div class="bar macd" style="width: {r.get("macd", 0) / 7 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('macd', 0)}/7</span>
+                <span class="bar-val">{r.get("macd", 0)}/7</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar vol" style="width: {r.get('volume', 0) / 10 * 100:.0f}%"></div>
+                    <div class="bar vol" style="width: {r.get("volume", 0) / 10 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('volume', 0)}/10</span>
+                <span class="bar-val">{r.get("volume", 0)}/10</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar rs" style="width: {r.get('rel_str', 0) / 10 * 100:.0f}%"></div>
+                    <div class="bar rs" style="width: {r.get("rel_str", 0) / 10 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('rel_str', 0)}/10</span>
+                <span class="bar-val">{r.get("rel_str", 0)}/10</span>
             </td>
             <td class="num bar-cell">
                 <div class="bar-container">
-                    <div class="bar fund" style="width: {r.get('fundamentals', 0) / 20 * 100:.0f}%"></div>
+                    <div class="bar fund" style="width: {r.get("fundamentals", 0) / 20 * 100:.0f}%"></div>
                 </div>
-                <span class="bar-val">{r.get('fundamentals', 0)}/20</span>
+                <span class="bar-val">{r.get("fundamentals", 0)}/20</span>
             </td>
-            <td class="num">{r.get('rsi_val', '—')}</td>
-            <td class="num">{r.get('adx_val', '—')}</td>
-            <td class="num {'bull' if (r.get('pc1m') or 0) > 0 else 'bear'}">{rs_icon}{r.get('pc1m', '—')}%</td>
-            <td><span class="{trend_class}">{trend_icon} {r.get('trend_dir', '')}</span></td>
-            <td>{r.get('volat_stat', '—')}</td>
+            <td class="num">{r.get("rsi_val", "—")}</td>
+            <td class="num">{r.get("adx_val", "—")}</td>
+            <td class="num {"bull" if (r.get("pc1m") or 0) > 0 else "bear"}">{rs_icon}{r.get("pc1m", "—")}%</td>
+            <td><span class="{trend_class}">{trend_icon} {r.get("trend_dir", "")}</span></td>
+            <td>{r.get("volat_stat", "—")}</td>
             <td><span class="{sideways_cls}" title="{sideways_reasons}">{sideways_label}</span></td>
-            <td class="spark-cell">{_sparkline_svg(r.get('px_tail') or [])}</td>
+            <td class="spark-cell">{_sparkline_svg(r.get("px_tail") or [])}</td>
         </tr>
         {news_html}"""
 
 
-def generate_html_report(results: list, title: str = "HMAxEMA Stock Scanner",
-                         threshold: float = 50.0,
-                         fetch_news: bool = True) -> str:
+def generate_html_report(
+    results: list,
+    title: str = "HMAxEMA Stock Scanner",
+    threshold: float = 50.0,
+    fetch_news: bool = True,
+) -> str:
     """
     Generate a complete HTML report from scan results.
 
@@ -932,8 +1022,9 @@ def _score_class(score: float) -> str:
     return "poor"
 
 
-def save_report(html: str, filename: str = "scanner_report.html",
-                max_reports: int = 4) -> str:
+def save_report(
+    html: str, filename: str = "scanner_report.html", max_reports: int = 4
+) -> str:
     """Save HTML report to file and keep only the last max_reports files."""
     import glob as _glob
     import os as _os

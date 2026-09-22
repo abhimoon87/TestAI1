@@ -32,13 +32,16 @@ def _make_ohlcv(n=200):
     dates = pd.bdate_range("2024-01-01", periods=n)
     rng = np.random.RandomState(42)
     close = 500 + np.cumsum(rng.randn(n) * 2)
-    return pd.DataFrame({
-        "open": close + rng.randn(n),
-        "high": close + np.abs(rng.randn(n)) * 2,
-        "low": close - np.abs(rng.randn(n)) * 2,
-        "close": close,
-        "volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
-    }, index=dates)
+    return pd.DataFrame(
+        {
+            "open": close + rng.randn(n),
+            "high": close + np.abs(rng.randn(n)) * 2,
+            "low": close - np.abs(rng.randn(n)) * 2,
+            "close": close,
+            "volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
+        },
+        index=dates,
+    )
 
 
 def _make_yf_history(n=200):
@@ -93,10 +96,13 @@ class TestCacheRoundTrip:
             key = _cache_key("TEST", "1y", "test_cache")
             meta_file = tmp_path / f"{key}.meta"
             with open(meta_file, "w") as f:
-                json.dump({
-                    "timestamp": (datetime.now() - timedelta(hours=5)).isoformat(),
-                    "rows": 50,
-                }, f)
+                json.dump(
+                    {
+                        "timestamp": (datetime.now() - timedelta(hours=5)).isoformat(),
+                        "rows": 50,
+                    },
+                    f,
+                )
 
             result = _get_cached("TEST", "1y", "test_cache")
 
@@ -263,7 +269,9 @@ class TestDataProvider:
 
         with patch("scanner.api.data_providers._fetch_jugaad", return_value=None):
             with patch("scanner.api.data_providers._fetch_yfinance", return_value=None):
-                with patch("scanner.api.data_providers._fetch_nselib", return_value=None):
+                with patch(
+                    "scanner.api.data_providers._fetch_nselib", return_value=None
+                ):
                     result = provider.fetch_stock("INVALID", "1y")
 
         assert result is None
@@ -294,7 +302,9 @@ class TestDataProvider:
 
         with patch("scanner.api.data_providers._get_cached", return_value=None):
             with patch("scanner.api.data_providers._set_cached") as mock_set:
-                with patch("scanner.api.data_providers._fetch_jugaad", return_value=None):
+                with patch(
+                    "scanner.api.data_providers._fetch_jugaad", return_value=None
+                ):
                     with patch.dict("sys.modules", {"yfinance": mock_yf}):
                         provider.fetch_stock("RELIANCE", "1y")
 
@@ -326,8 +336,13 @@ class TestDataProvider:
         mock_yf = MagicMock()
         mock_yf.Ticker.return_value = mock_yf_ticker
 
-        with patch("scanner.api.data_providers._fetch_fundamentals_finnhub", return_value=None):
-            with patch("scanner.api.data_providers._fetch_fundamentals_alpha_vantage", return_value=None):
+        with patch(
+            "scanner.api.data_providers._fetch_fundamentals_finnhub", return_value=None
+        ):
+            with patch(
+                "scanner.api.data_providers._fetch_fundamentals_alpha_vantage",
+                return_value=None,
+            ):
                 with patch.dict("sys.modules", {"yfinance": mock_yf}):
                     result = provider.fetch_fundamentals("RELIANCE")
 
@@ -339,10 +354,21 @@ class TestDataProvider:
         """When all fundamental providers fail, return None."""
         provider = DataProvider(use_cache=False)
 
-        with patch("scanner.api.data_providers._fetch_fundamentals_finnhub", return_value=None):
-            with patch("scanner.api.data_providers._fetch_fundamentals_alpha_vantage", return_value=None):
-                with patch("scanner.api.data_providers._fetch_fundamentals_yfinance", return_value=None):
-                    with patch("scanner.api.data_providers._fetch_fundamentals_nselib", return_value=None):
+        with patch(
+            "scanner.api.data_providers._fetch_fundamentals_finnhub", return_value=None
+        ):
+            with patch(
+                "scanner.api.data_providers._fetch_fundamentals_alpha_vantage",
+                return_value=None,
+            ):
+                with patch(
+                    "scanner.api.data_providers._fetch_fundamentals_yfinance",
+                    return_value=None,
+                ):
+                    with patch(
+                        "scanner.api.data_providers._fetch_fundamentals_nselib",
+                        return_value=None,
+                    ):
                         result = provider.fetch_fundamentals("INVALID")
 
         assert result is None
@@ -404,7 +430,9 @@ class TestDataProvider:
 
         with patch("scanner.api.data_providers._fetch_jugaad", side_effect=_slow):
             with patch("scanner.api.data_providers._fetch_yfinance", side_effect=_slow):
-                with patch("scanner.api.data_providers._fetch_nselib", side_effect=_slow):
+                with patch(
+                    "scanner.api.data_providers._fetch_nselib", side_effect=_slow
+                ):
                     start = time.time()
                     result = provider.fetch_stock("SLOW", "1y", provider_timeout=0.03)
                     elapsed = time.time() - start
@@ -455,7 +483,12 @@ class TestPruneStaleCache:
         import os
 
         from scanner.tests.conftest import safe_to_parquet
-        safe_to_parquet(pd.DataFrame({"close": [1.0, 2.0]}), os.path.join(str(d), name + ".parquet"), index=False)
+
+        safe_to_parquet(
+            pd.DataFrame({"close": [1.0, 2.0]}),
+            os.path.join(str(d), name + ".parquet"),
+            index=False,
+        )
         with open(os.path.join(str(d), name + ".meta"), "w") as f:
             json.dump({"timestamp": when, "rows": 2}, f)
 
@@ -482,11 +515,15 @@ class TestPruneStaleCache:
 
     def test_rate_limit_skips_second_call_without_force(self, tmp_path, monkeypatch):
         self._reset(tmp_path, monkeypatch)
-        self._write_entry(tmp_path, "old", (datetime.now() - timedelta(days=1)).isoformat())
+        self._write_entry(
+            tmp_path, "old", (datetime.now() - timedelta(days=1)).isoformat()
+        )
         assert prune_stale_cache() == 1
 
         # A second sweep within the interval is a no-op (rate-limited)...
-        self._write_entry(tmp_path, "older", (datetime.now() - timedelta(days=2)).isoformat())
+        self._write_entry(
+            tmp_path, "older", (datetime.now() - timedelta(days=2)).isoformat()
+        )
         assert prune_stale_cache() == 0
         assert (tmp_path / "older.parquet").exists()
 
@@ -521,10 +558,15 @@ class TestCacheHealth:
         import os
 
         from scanner.tests.conftest import safe_to_parquet
+
         fresh = datetime.now().isoformat()
         stale = (datetime.now() - timedelta(days=1)).isoformat()
         for name, when in [("a", fresh), ("b", fresh), ("c", stale)]:
-            safe_to_parquet(pd.DataFrame({"close": [1.0]}), os.path.join(str(tmp_path), name + ".parquet"), index=False)
+            safe_to_parquet(
+                pd.DataFrame({"close": [1.0]}),
+                os.path.join(str(tmp_path), name + ".parquet"),
+                index=False,
+            )
             with open(os.path.join(str(tmp_path), name + ".meta"), "w") as f:
                 json.dump({"timestamp": when, "rows": 1}, f)
 
@@ -534,7 +576,11 @@ class TestCacheHealth:
 
     def test_empty_dir_and_last_prune_stamp(self, tmp_path, monkeypatch):
         self._reset(tmp_path, monkeypatch)
-        assert cache_health() == {"price_entries": 0, "stale_entries": 0, "last_prune": ""}
+        assert cache_health() == {
+            "price_entries": 0,
+            "stale_entries": 0,
+            "last_prune": "",
+        }
         prune_stale_cache()  # records the sweep time
         h = cache_health()
         assert h["last_prune"] != ""  # ISO stamp of the in-process prune

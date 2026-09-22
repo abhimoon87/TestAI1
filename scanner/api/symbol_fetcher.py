@@ -41,29 +41,34 @@ def _load_disk_cache():
                         continue
                     ts = v.get("_ts", 0)
                     items = v.get("data")
-                    if (isinstance(ts, (int, float)) and now - ts < CACHE_TTL_SECONDS
-                            and isinstance(items, list)
-                            and all(isinstance(s, str) for s in items)):
+                    if (
+                        isinstance(ts, (int, float))
+                        and now - ts < CACHE_TTL_SECONDS
+                        and isinstance(items, list)
+                        and all(isinstance(s, str) for s in items)
+                    ):
                         _cache[k] = items
                         _cache_timestamps[k] = ts
                         loaded += 1
             if loaded:
                 logger.debug("Disk symbol cache loaded: %d keys", loaded)
     except Exception as e:
-        logger.debug("Disk cache load failed: %s", e)
+        logger.info("Disk cache load failed: %s", e)
 
 
 def _save_disk_cache():
     try:
         _DISK_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         with _cache_lock:
-            payload = {k: {"data": v, "_ts": _cache_timestamps.get(k, 0)}
-                       for k, v in _cache.items()}
+            payload = {
+                k: {"data": v, "_ts": _cache_timestamps.get(k, 0)}
+                for k, v in _cache.items()
+            }
         tmp = _DISK_CACHE_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(_DISK_CACHE_FILE)
     except Exception as e:
-        logger.debug("Disk cache save failed: %s", e)
+        logger.info("Disk cache save failed: %s", e)
 
 
 # Load on import
@@ -95,7 +100,7 @@ def _cache_set(key: str, value: list):
     try:
         _save_disk_cache()
     except Exception:
-        logger.debug("Symbol disk cache save failed", exc_info=True)
+        logger.info("Symbol disk cache save failed", exc_info=True)
 
 
 def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> list:
@@ -124,22 +129,26 @@ def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> lis
 
 def fetch_nse_mainboard() -> list[str]:
     """Fetch all NSE mainboard equity symbols (with caching)."""
-    return _fetch_with_cache("mainboard",
+    return _fetch_with_cache(
+        "mainboard",
         lambda: cm.equity_list()["SYMBOL"].str.strip().tolist(),
-        fallback=_get_static_fallback("mainboard"))
+        fallback=_get_static_fallback("mainboard"),
+    )
 
 
 def fetch_nse_fno() -> list[str]:
     """Fetch NSE F&O eligible equity symbols (with caching)."""
-    return _fetch_with_cache("fno",
+    return _fetch_with_cache(
+        "fno",
         lambda: cm.fno_equity_list()["symbol"].str.strip().tolist(),
-        fallback=_get_static_fallback("fno"))
+        fallback=_get_static_fallback("fno"),
+    )
 
 
 def fetch_nse_sme(trade_date: date | None = None) -> list[str]:
     """
     Fetch NSE SME platform equity symbols.
-    
+
     Args:
         trade_date: Trading date. Defaults to most recent weekday.
     """
@@ -158,8 +167,7 @@ def fetch_nse_sme(trade_date: date | None = None) -> list[str]:
                 return df["symbol"].str.strip().tolist()
             elif "SYMBOL" in df.columns:
                 return df["SYMBOL"].str.strip().tolist()
-        except (KeyError, ValueError, ConnectionError, TimeoutError,
-                OSError) as e:
+        except (KeyError, ValueError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug("SME fetch failed for %s: %s", d, e)
             continue
         except Exception as e:
@@ -174,7 +182,7 @@ def fetch_nse_sme(trade_date: date | None = None) -> list[str]:
 def fetch_nse_index_list(index_name: str) -> list[str]:
     """
     Fetch NSE index constituent symbols.
-    
+
     Args:
         index_name: One of 'nifty50', 'niftynext50', 'midcap150', 'smallcap250'
     """
@@ -189,9 +197,9 @@ def fetch_nse_index_list(index_name: str) -> list[str]:
 
     key = index_name
     fallback = _get_static_fallback(key)
-    return _fetch_with_cache(key,
-        lambda: _fetch_index_list_raw(func_map[index_name]),
-        fallback=fallback)
+    return _fetch_with_cache(
+        key, lambda: _fetch_index_list_raw(func_map[index_name]), fallback=fallback
+    )
 
 
 def _fetch_index_list_raw(func) -> list[str]:
@@ -209,7 +217,7 @@ def _fetch_index_list_raw(func) -> list[str]:
 def fetch_all_nse_symbols() -> dict:
     """
     Fetch all NSE symbol lists at once.
-    
+
     Returns:
         Dict with keys: mainboard, fno, sme, nifty50, niftynext50, midcap150, smallcap250
     """
@@ -228,9 +236,11 @@ def get_unique_nse_symbols() -> list[str]:
     """
     Get all unique NSE symbols across all segments (with caching).
     """
-    return _fetch_with_cache("unique_nse",
+    return _fetch_with_cache(
+        "unique_nse",
         lambda: _compute_unique_nse(),
-        fallback=_get_static_fallback("unique"))
+        fallback=_get_static_fallback("unique"),
+    )
 
 
 def _compute_unique_nse() -> list[str]:
@@ -247,68 +257,77 @@ def _get_static_fallback(key: str) -> list:
     if key == "mainboard":
         try:
             from .universes import CASH_MARKET
+
             return CASH_MARKET
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "fno":
         try:
             from .universes import FNO_STOCKS
+
             return FNO_STOCKS
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "nifty50":
         try:
             from .universes import NIFTY_50
+
             return NIFTY_50
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "niftynext50":
         try:
             from .universes import NIFTY_NEXT_50
+
             return NIFTY_NEXT_50
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "midcap150":
         try:
             from .universes import NIFTY_MIDCAP_100
+
             return NIFTY_MIDCAP_100
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "smallcap250":
         try:
             from .universes import NIFTY_SMALLCAP_100
+
             return NIFTY_SMALLCAP_100
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "sme":
         return []
     elif key == "unique":
         try:
             from .universes import CASH_MARKET
+
             return CASH_MARKET
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key == "bse_all":
         try:
             from .universes import BSE_MIDCAP, BSE_SENSEX, BSE_SMALLCAP, CASH_MARKET
+
             # Approximate BSE ALL as static BSE + NSE cash (covers dual-listed)
             return sorted(set(BSE_SENSEX + BSE_MIDCAP + BSE_SMALLCAP + CASH_MARKET))
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     elif key in ("all_market", "unique_nse", "all_nse"):
         try:
             from .universes import NIFTY_BROAD
+
             return NIFTY_BROAD
         except Exception:
-            logger.debug("Static fallback import failed for key=%s", key, exc_info=True)
+            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
             return []
     return []
 
@@ -333,7 +352,13 @@ def _fetch_bse_via_api() -> list[str]:
     import requests
 
     url = "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
-    params = {"Group": "", "Scripcode": "", "industry": "", "segment": "Equity", "status": "Active"}
+    params = {
+        "Group": "",
+        "Scripcode": "",
+        "industry": "",
+        "segment": "Equity",
+        "status": "Active",
+    }
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://www.bseindia.com/",
@@ -348,7 +373,16 @@ def _fetch_bse_via_api() -> list[str]:
     if isinstance(table, list):
         for row in table:
             # Prefer SYMBOL / Scrip_Name / SCRIP_CD
-            sym = (row.get("SYMBOL") or row.get("Scrip_Name") or row.get("SCRIP_CD") or "").strip().upper()
+            sym = (
+                (
+                    row.get("SYMBOL")
+                    or row.get("Scrip_Name")
+                    or row.get("SCRIP_CD")
+                    or ""
+                )
+                .strip()
+                .upper()
+            )
             # SYMBOL may be like "RELIANCE" or empty; SCRIP_CD is numeric code, skip if numeric
             if sym and not sym.isdigit() and len(sym) <= 20 and " " not in sym:
                 symbols.append(sym)
@@ -371,7 +405,14 @@ def _fetch_bse_via_csv_mirror() -> list[str]:
             # Try common column names: SYMBOL, Symbol, Scrip Code, Security Code
             col = None
             if reader.fieldnames:
-                for cand in ["SYMBOL", "Symbol", "symbol", "Scrip Code", "Security Code", "SC_CODE"]:
+                for cand in [
+                    "SYMBOL",
+                    "Symbol",
+                    "symbol",
+                    "Scrip Code",
+                    "Security Code",
+                    "SC_CODE",
+                ]:
                     if cand in reader.fieldnames:
                         col = cand
                         break
@@ -390,7 +431,7 @@ def _fetch_bse_via_csv_mirror() -> list[str]:
             if len(symbols) > 1000:
                 return sorted(set(symbols))
         except Exception as e:
-            logger.debug("BSE CSV mirror failed %s: %s", url, e)
+            logger.info("BSE CSV mirror failed %s: %s", url, e)
             continue
     return []
 
@@ -408,19 +449,28 @@ def _fetch_nse_via_csv() -> list[str]:
         resp.raise_for_status()
         text = resp.text
         reader = csv.DictReader(io.StringIO(text))
-        col = "SYMBOL" if "SYMBOL" in (reader.fieldnames or []) else (reader.fieldnames[0] if reader.fieldnames else "SYMBOL")
+        col = (
+            "SYMBOL"
+            if "SYMBOL" in (reader.fieldnames or [])
+            else (reader.fieldnames[0] if reader.fieldnames else "SYMBOL")
+        )
         reader = csv.DictReader(io.StringIO(text))
-        symbols = [str(r.get(col, "")).strip().upper() for r in reader if str(r.get(col, "")).strip()]
+        symbols = [
+            str(r.get(col, "")).strip().upper()
+            for r in reader
+            if str(r.get(col, "")).strip()
+        ]
         symbols = [s for s in symbols if s and len(s) <= 20 and " " not in s]
         if len(symbols) > 1000:
             return sorted(set(symbols))
     except Exception as e:
-        logger.debug("NSE CSV fetch failed: %s", e)
+        logger.info("NSE CSV fetch failed: %s", e)
     return []
 
 
 def fetch_bse_all_live() -> list[str]:
     """Fetch all BSE Active Equity symbols (~4,000-5,500). Cached 4h."""
+
     def _do():
         # Try live API first
         try:
@@ -429,7 +479,7 @@ def fetch_bse_all_live() -> list[str]:
                 logger.info("BSE API returned %d symbols", len(syms))
                 return syms
         except Exception as e:
-            logger.debug("BSE API failed: %s", e)
+            logger.info("BSE API failed: %s", e)
         # Try CSV mirrors
         syms = _fetch_bse_via_csv_mirror()
         if len(syms) > 1000:
@@ -455,6 +505,7 @@ def fetch_all_market_symbols() -> list[str]:
     Deduplicates (dual-listed) and caches 4h. Falls back to static
     NIFTY_BROAD (~207) if live fetch fails, so scan never breaks.
     """
+
     def _do() -> list[str]:
         nse = set()
         bse = set()
@@ -464,35 +515,48 @@ def fetch_all_market_symbols() -> list[str]:
             if nse_main:
                 nse.update(s.upper() for s in nse_main if s)
         except Exception as e:
-            logger.debug("NSE mainboard fetch in all-market failed: %s", e)
+            logger.info("NSE mainboard fetch in all-market failed: %s", e)
         try:
             # Also include SME and index constituents for coverage
             unique_nse = get_unique_nse_symbols()
             if unique_nse and len(unique_nse) > len(nse):
                 nse.update(s.upper() for s in unique_nse if s)
         except Exception as e:
-            logger.debug("Unique NSE fetch in all-market failed: %s", e)
+            logger.info("Unique NSE fetch in all-market failed: %s", e)
         # BSE — try live all
         try:
             bse_list = fetch_bse_all_live()
             if bse_list:
                 bse.update(s.upper() for s in bse_list if s)
         except Exception as e:
-            logger.debug("BSE all fetch in all-market failed: %s", e)
+            logger.info("BSE all fetch in all-market failed: %s", e)
 
         combined = nse | bse
         # If combined is still small (<500), add static BSE + NSE BROAD as floor
         if len(combined) < 500:
             try:
                 from .universes import BSE_MIDCAP, BSE_SENSEX, BSE_SMALLCAP, NIFTY_BROAD
-                combined.update(s.upper() for s in (NIFTY_BROAD + BSE_SENSEX + BSE_MIDCAP + BSE_SMALLCAP))
+
+                combined.update(
+                    s.upper()
+                    for s in (NIFTY_BROAD + BSE_SENSEX + BSE_MIDCAP + BSE_SMALLCAP)
+                )
             except Exception:
-                logger.debug("Combined-market static fallback import failed", exc_info=True)
-        logger.info("All-market combined: NSE %d + BSE %d = %d unique (target ~5900)", len(nse), len(bse), len(combined))
+                logger.info(
+                    "Combined-market static fallback import failed", exc_info=True
+                )
+        logger.info(
+            "All-market combined: NSE %d + BSE %d = %d unique (target ~5900)",
+            len(nse),
+            len(bse),
+            len(combined),
+        )
         return sorted(combined)
 
     # Use 4h cache; fallback to NIFTY_BROAD so scan still works offline
-    return _fetch_with_cache("all_market", _do, fallback=_get_static_fallback("all_market"))
+    return _fetch_with_cache(
+        "all_market", _do, fallback=_get_static_fallback("all_market")
+    )
 
 
 if __name__ == "__main__":

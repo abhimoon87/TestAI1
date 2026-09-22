@@ -21,9 +21,11 @@ _MACRO_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="macro_data")
 
 # ── FRED Provider ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class FredData:
     """Economic data from Federal Reserve (FRED)."""
+
     fed_funds_rate: float | None = None
     unemployment_rate: float | None = None
     cpi: float | None = None
@@ -40,10 +42,10 @@ class FredData:
 def fetch_fred_data(api_key: str | None = None) -> FredData | None:
     """
     Fetch key economic indicators from FRED.
-    
+
     Args:
         api_key: FRED API key (or env FRED_API_KEY)
-    
+
     Returns:
         FredData or None on failure
     """
@@ -94,6 +96,7 @@ def fetch_fred_data(api_key: str | None = None) -> FredData | None:
             result["is_yield_curve_inverted"] = spread < 0
 
         from datetime import datetime
+
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         fred = FredData(**result)
@@ -107,9 +110,11 @@ def fetch_fred_data(api_key: str | None = None) -> FredData | None:
 
 # ── EconPulse Provider ─────────────────────────────────────────────────────
 
+
 @dataclass
 class EconPulseData:
     """Live economic data from EconPulse."""
+
     cpi_yoy: float | None = None
     ppi_yoy: float | None = None
     treasury_10y: float | None = None
@@ -124,10 +129,10 @@ class EconPulseData:
 def fetch_econpulse_data(api_key: str | None = None) -> EconPulseData | None:
     """
     Fetch live economic data from EconPulse.
-    
+
     Args:
         api_key: EconPulse API key (or env ECONPULSE_API_KEY)
-    
+
     Returns:
         EconPulseData or None
     """
@@ -149,13 +154,21 @@ def fetch_econpulse_data(api_key: str | None = None) -> EconPulseData | None:
         data = resp.json()
 
         result = {}
-        for key in ["cpi_yoy", "ppi_yoy", "treasury_10y", "breakeven_inflation",
-                     "oil_wti", "gold_price", "inr_usd"]:
+        for key in [
+            "cpi_yoy",
+            "ppi_yoy",
+            "treasury_10y",
+            "breakeven_inflation",
+            "oil_wti",
+            "gold_price",
+            "inr_usd",
+        ]:
             val = data.get(key)
             if val is not None:
                 result[key] = float(val)
 
         from datetime import datetime
+
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         ep = EconPulseData(**result)
@@ -169,9 +182,11 @@ def fetch_econpulse_data(api_key: str | None = None) -> EconPulseData | None:
 
 # ── Econdb Provider (Free, no key) ────────────────────────────────────────
 
+
 @dataclass
 class EcondbData:
     """Global macroeconomic data from Econdb."""
+
     india_gdp_growth: float | None = None
     india_inflation: float | None = None
     india_policy_rate: float | None = None
@@ -184,10 +199,10 @@ class EcondbData:
 def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
     """
     Fetch macro data from Econdb (free tier requires API key).
-    
+
     Args:
         api_key: Econdb API key (or env ECONDB_API_KEY)
-    
+
     Returns:
         EcondbData or None
     """
@@ -216,7 +231,11 @@ def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
             ticker = s.get("ticker", "")
             values = s.get("data", [])
             if values:
-                latest = values[-1].get("value") if isinstance(values[-1], dict) else values[-1]
+                latest = (
+                    values[-1].get("value")
+                    if isinstance(values[-1], dict)
+                    else values[-1]
+                )
                 if latest is not None:
                     if "US10Y" in ticker:
                         result["us_10y_yield"] = float(latest)
@@ -230,6 +249,7 @@ def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
                         result["india_policy_rate"] = float(latest)
 
         from datetime import datetime
+
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         edb = EcondbData(**result)
@@ -243,9 +263,11 @@ def fetch_econdb_data(api_key: str | None = None) -> EcondbData | None:
 
 # ── Yahoo Finance Macro Provider (Free, No Key) ───────────────────────────
 
+
 @dataclass
 class YahooMacroData:
     """Free macro data from Yahoo Finance (no API key required)."""
+
     us_10y_yield: float | None = None
     us_2y_yield: float | None = None
     vix: float | None = None
@@ -261,7 +283,7 @@ class YahooMacroData:
 def fetch_yahoo_macro_data() -> YahooMacroData | None:
     """
     Fetch free macro data from Yahoo Finance (no API key required).
-    
+
     Returns:
         YahooMacroData or None
     """
@@ -275,14 +297,14 @@ def fetch_yahoo_macro_data() -> YahooMacroData | None:
 
         # Yahoo Finance ticker symbols for macro data
         tickers = {
-            "us_10y_yield": "^TNX",   # US 10-Year Treasury Yield
-            "us_2y_yield": "^IRX",    # US 13-Week Treasury Bill (proxy for 2Y)
-            "vix": "^VIX",            # CBOE Volatility Index
+            "us_10y_yield": "^TNX",  # US 10-Year Treasury Yield
+            "us_2y_yield": "^IRX",  # US 13-Week Treasury Bill (proxy for 2Y)
+            "vix": "^VIX",  # CBOE Volatility Index
             "crude_oil_wti": "CL=F",  # WTI Crude Oil Futures
-            "gold_price": "GC=F",     # Gold Futures
-            "inr_usd": "INR=X",       # USD/INR exchange rate
-            "nifty_50": "^NSEI",      # NIFTY 50 Index
-            "sensex": "^BSESN",       # SENSEX Index
+            "gold_price": "GC=F",  # Gold Futures
+            "inr_usd": "INR=X",  # USD/INR exchange rate
+            "nifty_50": "^NSEI",  # NIFTY 50 Index
+            "sensex": "^BSESN",  # SENSEX Index
         }
 
         result = {}
@@ -294,10 +316,11 @@ def fetch_yahoo_macro_data() -> YahooMacroData | None:
                 if price is not None:
                     result[field_name] = float(price)
             except Exception as e:
-                logger.debug("Yahoo Finance %s failed: %s", ticker_symbol, e)
+                logger.info("Yahoo Finance %s failed: %s", ticker_symbol, e)
                 continue
 
         from datetime import datetime
+
         result["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         ym = YahooMacroData(**result)
@@ -311,9 +334,11 @@ def fetch_yahoo_macro_data() -> YahooMacroData | None:
 
 # ── Market Regime Detection ────────────────────────────────────────────────
 
+
 @dataclass
 class MarketRegime:
     """Detected market regime from macro data."""
+
     regime: str  # "risk_on" | "risk_off" | "recession" | "neutral"
     confidence: float  # 0.0 to 1.0
     signals: list[str] = field(default_factory=list)
@@ -329,7 +354,7 @@ def detect_market_regime(
 ) -> MarketRegime:
     """
     Detect market regime from macro economic data.
-    
+
     Regimes:
     - risk_on: Bull market, loose monetary policy, positive growth
     - risk_off: Defensive, tight policy, negative signals
@@ -476,6 +501,7 @@ from .free_apis import (  # noqa: F401
 
 # ── Unified Macro Fetcher ──────────────────────────────────────────────────
 
+
 def fetch_macro_data(
     fred_key: str | None = None,
     econpulse_key: str | None = None,
@@ -483,7 +509,7 @@ def fetch_macro_data(
 ) -> dict:
     """
     Fetch all macro data and detect market regime.
-    
+
     Sources:
       - FRED (requires API key)
       - EconPulse (requires API key)
@@ -491,7 +517,7 @@ def fetch_macro_data(
       - Yahoo Finance (free, no key) — VIX, yields, oil, gold, INR, indices
       - Frankfurter (free, no key) — INR/USD exchange rates
       - CoinGecko (free, no key) — Crypto sentiment, BTC correlation
-    
+
     Returns:
         {
             "fred": FredData | None,

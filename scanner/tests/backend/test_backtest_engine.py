@@ -41,18 +41,22 @@ def _frame(days, seed):
     n = len(days)
     rng = np.random.RandomState(seed)
     close = 500 + np.cumsum(rng.randn(n) * 2)
-    return pd.DataFrame({
-        "open": close + rng.randn(n),
-        "high": close + np.abs(rng.randn(n)) * 2,
-        "low": close - np.abs(rng.randn(n)) * 2,
-        "close": close,
-        "volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
-    }, index=pd.DatetimeIndex(days))
+    return pd.DataFrame(
+        {
+            "open": close + rng.randn(n),
+            "high": close + np.abs(rng.randn(n)) * 2,
+            "low": close - np.abs(rng.randn(n)) * 2,
+            "close": close,
+            "volume": (rng.rand(n) * 1e6 + 5e5).astype(int),
+        },
+        index=pd.DatetimeIndex(days),
+    )
 
 
 def _write_legacy_cache_entry(ticker, period, provider, df):
     """Write a pkl entry the way pre-fix code did: raw stamps, no normalization."""
     from scanner.tests.conftest import safe_to_parquet
+
     os.makedirs(data_providers.CACHE_DIR, exist_ok=True)
     raw = f"{ticker}_{period}_{provider}_{date.today().isoformat()}"
     key = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
@@ -74,7 +78,9 @@ def _seed_flavored_cache(n=500, start="2023-01-01"):
     trade_days = pd.bdate_range(start, periods=n)
     _write_legacy_cache_entry("MIDNIGHT", "2y", "cache", _frame(trade_days, seed=1))
     prev = trade_days - pd.Timedelta(days=1) + pd.Timedelta(hours=18, minutes=30)
-    _write_legacy_cache_entry("UTCCLOSE", "2y", "cache", _frame(prev.tz_localize("UTC"), seed=2))
+    _write_legacy_cache_entry(
+        "UTCCLOSE", "2y", "cache", _frame(prev.tz_localize("UTC"), seed=2)
+    )
     return trade_days
 
 

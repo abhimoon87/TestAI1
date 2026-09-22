@@ -21,9 +21,11 @@ _FUND_CACHE: TTLCache[dict] = TTLCache(ttl=6 * 3600, namespace="indian_fundament
 
 # ── Trendlyne Fundamentals (Free, No Key) ──────────────────────────────────
 
+
 @dataclass
 class TrendlyneFundamentals:
     """Fundamental data from Trendlyne (free, no API key)."""
+
     ticker: str
     pe_ratio: float | None = None
     pb_ratio: float | None = None
@@ -43,14 +45,16 @@ def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
     """
     Fetch fundamental data using Yahoo Finance (reliable, free).
     Trendlyne blocks automated access, so we use Yahoo as primary.
-    
+
     Args:
         ticker: NSE ticker symbol (e.g., "RELIANCE")
-    
+
     Returns:
         TrendlyneFundamentals or None
     """
-    cache_k = hashlib.md5(f"trendlyne:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"trendlyne:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _FUND_CACHE.get(cache_k)
     if cached:
         return TrendlyneFundamentals(**cached, cached=True)
@@ -92,15 +96,17 @@ def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
         return fund
 
     except Exception as e:
-        logger.debug("Yahoo Fundamentals fetch failed for %s: %s", ticker, e)
+        logger.info("Yahoo Fundamentals fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Screener.in Peer Comparison (Free, No Key) ────────────────────────────
 
+
 @dataclass
 class PeerComparison:
     """Peer comparison data from Screener.in."""
+
     ticker: str
     industry: str
     stock_pe: float | None = None
@@ -117,14 +123,16 @@ class PeerComparison:
 def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
     """
     Fetch peer comparison from Screener.in (free, no API key).
-    
+
     Args:
         ticker: NSE ticker symbol (e.g., "RELIANCE")
-    
+
     Returns:
         PeerComparison or None
     """
-    cache_k = hashlib.md5(f"screener:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"screener:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _FUND_CACHE.get(cache_k)
     if cached:
         return PeerComparison(**cached, cached=True)
@@ -142,21 +150,21 @@ def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
         result = {}
 
         # Extract industry
-        industry_match = re.search(r'Industry\s*[:=]\s*([A-Za-z\s&]+)', html)
+        industry_match = re.search(r"Industry\s*[:=]\s*([A-Za-z\s&]+)", html)
         if industry_match:
             result["industry"] = industry_match.group(1).strip()
 
         # Extract PE
-        pe_match = re.search(r'Stock\s*PE\s*[:=]\s*(\d+\.?\d*)', html)
+        pe_match = re.search(r"Stock\s*PE\s*[:=]\s*(\d+\.?\d*)", html)
         if pe_match:
             result["stock_pe"] = float(pe_match.group(1))
 
-        industry_pe_match = re.search(r'Industry\s*PE\s*[:=]\s*(\d+\.?\d*)', html)
+        industry_pe_match = re.search(r"Industry\s*PE\s*[:=]\s*(\d+\.?\d*)", html)
         if industry_pe_match:
             result["industry_pe"] = float(industry_pe_match.group(1))
 
         # Extract ROE
-        roe_match = re.search(r'Return\s*on\s*Equity\s*[:=]\s*(\d+\.?\d*)%?', html)
+        roe_match = re.search(r"Return\s*on\s*Equity\s*[:=]\s*(\d+\.?\d*)%?", html)
         if roe_match:
             result["stock_roe"] = float(roe_match.group(1))
 
@@ -176,15 +184,17 @@ def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
         return peer
 
     except Exception as e:
-        logger.debug("Screener.in fetch failed for %s: %s", ticker, e)
+        logger.info("Screener.in fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Yahoo Finance Valuation (Free, No Key) ─────────────────────────────────
 
+
 @dataclass
 class YahooValuation:
     """Valuation data from Yahoo Finance (free, no API key)."""
+
     ticker: str
     pe_trailing: float | None = None
     pe_forward: float | None = None
@@ -202,14 +212,16 @@ class YahooValuation:
 def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
     """
     Fetch valuation data from Yahoo Finance (free, no API key).
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
-    
+
     Returns:
         YahooValuation or None
     """
-    cache_k = hashlib.md5(f"yahoo_val:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"yahoo_val:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _FUND_CACHE.get(cache_k)
     if cached:
         return YahooValuation(**cached, cached=True)
@@ -262,16 +274,17 @@ def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
         return val
 
     except Exception as e:
-        logger.debug("Yahoo valuation fetch failed for %s: %s", ticker, e)
+        logger.info("Yahoo valuation fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Unified Fundamentals Fetcher ───────────────────────────────────────────
 
+
 def fetch_indian_fundamentals(ticker: str) -> dict:
     """
     Fetch all fundamental data from Indian market sources.
-    
+
     Returns:
         {
             "trendlyne": TrendlyneFundamentals | None,

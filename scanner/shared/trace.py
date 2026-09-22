@@ -141,7 +141,10 @@ def setup_trace(
             args.exc_value,
             exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
         )
-        if _prev_thread_hook is not None and _prev_thread_hook is not threading.excepthook:
+        if (
+            _prev_thread_hook is not None
+            and _prev_thread_hook is not threading.excepthook
+        ):
             _prev_thread_hook(args)
 
     if hasattr(threading, "excepthook"):
@@ -218,7 +221,13 @@ def trace(
                 result = func(*args, **kwargs)
                 dt = (time.perf_counter() - t0) * 1000
                 if log_result:
-                    logger.log(level, "<- %s ok %.1fms => %s", func.__qualname__, dt, _repr(result))
+                    logger.log(
+                        level,
+                        "<- %s ok %.1fms => %s",
+                        func.__qualname__,
+                        dt,
+                        _repr(result),
+                    )
                 else:
                     logger.log(level, "<- %s ok %.1fms", func.__qualname__, dt)
                 return result

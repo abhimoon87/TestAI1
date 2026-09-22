@@ -56,12 +56,15 @@ def _get_api_key(key_name: str) -> str:
             else:
                 _API_KEYS = {}
         except Exception:
-            logger.debug("API key config parse failed", exc_info=True)
+            logger.info("API key config parse failed", exc_info=True)
     return _API_KEYS.get(key_name) or os.environ.get(key_name, "")
+
 
 # ── Cache Directory ────────────────────────────────────────────────────────
 _CACHE_WRITE_LOCK = threading.Lock()
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache")
+CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache"
+)
 CACHE_TTL_HOURS = 4  # Cache expires after 4 hours
 
 
@@ -123,14 +126,16 @@ def prune_stale_cache(force: bool = False) -> int:
             try:
                 os.remove(meta[:-5] + ".pkl")  # legacy extension
             except OSError:
-                logger.debug("Stale pkl removal failed: %s", meta[:-5] + ".pkl", exc_info=True)
+                logger.debug(
+                    "Stale pkl removal failed: %s", meta[:-5] + ".pkl", exc_info=True
+                )
             try:
                 os.remove(meta)
             except OSError:
                 logger.debug("Stale meta removal failed: %s", meta, exc_info=True)
             removed += 1
     except Exception as e:
-        logger.debug("Stale-cache prune failed: %s", e)
+        logger.info("Stale-cache prune failed: %s", e)
     if removed:
         logger.info("Pruned %d stale cache entrie(s) from previous days", removed)
     return removed
@@ -160,12 +165,19 @@ def cache_health() -> dict:
             else:
                 stale += 1
     except Exception as e:
-        logger.debug("cache_health census failed: %s", e)
+        logger.info("cache_health census failed: %s", e)
     with _PRUNE_LOCK:
         last_ts = _last_prune_ts
-    last_prune = datetime.fromtimestamp(last_ts).isoformat(timespec="minutes") if last_ts > 0 else ""
-    return {"price_entries": fresh + stale, "stale_entries": stale,
-            "last_prune": last_prune}
+    last_prune = (
+        datetime.fromtimestamp(last_ts).isoformat(timespec="minutes")
+        if last_ts > 0
+        else ""
+    )
+    return {
+        "price_entries": fresh + stale,
+        "stale_entries": stale,
+        "last_prune": last_prune,
+    }
 
 
 def _ensure_cache_dir():
@@ -193,8 +205,9 @@ def _legacy_cache_key(ticker: str, period: str, provider: str) -> str:
     return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
 
-def _read_cache_pair(cache_file: str, meta_file: str,
-                     ticker: str) -> pd.DataFrame | None:
+def _read_cache_pair(
+    cache_file: str, meta_file: str, ticker: str
+) -> pd.DataFrame | None:
     """Return the frame if the pkl+meta pair exists and is fresh."""
     if not os.path.exists(cache_file) or not os.path.exists(meta_file):
         return None
@@ -209,7 +222,7 @@ def _read_cache_pair(cache_file: str, meta_file: str,
 
         return _normalize_cache_frame(pd.read_parquet(cache_file))
     except Exception as e:
-        logger.debug("Cache read failed for %s: %s", ticker, e)
+        logger.info("Cache read failed for %s: %s", ticker, e)
         return None
 
 
@@ -222,15 +235,20 @@ def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
     """
     _ensure_cache_dir()
     key = _cache_key(ticker, period, provider)
-    hit = _read_cache_pair(os.path.join(CACHE_DIR, f"{key}.parquet"),
-                           os.path.join(CACHE_DIR, f"{key}.meta"), ticker)
+    hit = _read_cache_pair(
+        os.path.join(CACHE_DIR, f"{key}.parquet"),
+        os.path.join(CACHE_DIR, f"{key}.meta"),
+        ticker,
+    )
     if hit is not None:
         return hit
     legacy = _legacy_cache_key(ticker, period, provider)
     if legacy != key:
-        return _read_cache_pair(os.path.join(CACHE_DIR, f"{legacy}.parquet"),
-                                os.path.join(CACHE_DIR, f"{legacy}.meta"),
-                                ticker)
+        return _read_cache_pair(
+            os.path.join(CACHE_DIR, f"{legacy}.parquet"),
+            os.path.join(CACHE_DIR, f"{legacy}.meta"),
+            ticker,
+        )
     return None
 
 
@@ -251,7 +269,10 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
             except Exception:
                 import pyarrow as _pa
                 import pyarrow.parquet as _pq
-                table = _pa.Table.from_pandas(df.reset_index(drop=False), preserve_index=True)
+
+                table = _pa.Table.from_pandas(
+                    df.reset_index(drop=False), preserve_index=True
+                )
                 _pq.write_table(table, tmp_pkl)
             with open(tmp_meta, "w") as f:
                 json.dump({"timestamp": datetime.now().isoformat(), "rows": len(df)}, f)
@@ -271,6 +292,7 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
 # PROVIDER: jugaad-data (NSE Official API)
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from NSE via jugaad-data. No auth needed."""
     try:
@@ -289,11 +311,16 @@ def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
             return None
 
         # Normalize columns
-        df = df.rename(columns={
-            "OPEN": "open", "HIGH": "high", "LOW": "low",
-            "CLOSE": "close", "VOLUME": "volume",
-            "DATE": "date"
-        })
+        df = df.rename(
+            columns={
+                "OPEN": "open",
+                "HIGH": "high",
+                "LOW": "low",
+                "CLOSE": "close",
+                "VOLUME": "volume",
+                "DATE": "date",
+            }
+        )
 
         # Set DATE as index (needed for resampling). jugaad returns rows
         # newest-first — flip to ascending so .iloc[-1] is the latest bar.
@@ -317,7 +344,7 @@ def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
     except ImportError:
         return None
     except Exception as e:
-        logger.debug("jugaad-data failed for %s: %s", ticker, e)
+        logger.info("jugaad-data failed for %s: %s", ticker, e)
         return None
 
 
@@ -399,13 +426,14 @@ def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
     except ImportError:
         return None
     except Exception as e:
-        logger.debug("jugaad-data index failed for %s: %s", ticker, e)
+        logger.info("jugaad-data index failed for %s: %s", ticker, e)
         return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PROVIDER: yfinance (Yahoo Finance)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _fetch_yfinance(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from Yahoo Finance."""
@@ -428,7 +456,7 @@ def _fetch_yfinance(ticker: str, period: str) -> pd.DataFrame | None:
     except ImportError:
         return None
     except Exception as e:
-        logger.debug("yfinance failed for %s: %s", ticker, e)
+        logger.info("yfinance failed for %s: %s", ticker, e)
         return None
 
 
@@ -450,13 +478,14 @@ def _fetch_yfinance_index(ticker: str, period: str) -> pd.DataFrame | None:
     except ImportError:
         return None
     except Exception as e:
-        logger.debug("yfinance index failed for %s: %s", ticker, e)
+        logger.info("yfinance index failed for %s: %s", ticker, e)
         return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PROVIDER: nselib (NSE Library)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from NSE via nselib."""
@@ -508,13 +537,14 @@ def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
     except ImportError:
         return None
     except Exception as e:
-        logger.debug("nselib failed for %s: %s", ticker, e)
+        logger.info("nselib failed for %s: %s", ticker, e)
         return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FUNDAMENTAL DATA PROVIDERS
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
     """Fetch fundamentals from Finnhub (free tier, institutional-grade)."""
@@ -559,11 +589,19 @@ def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
                 latest = earnings_data[0]
                 prev = earnings_data[1]
                 if prev.get("eps") and prev["eps"] != 0 and latest.get("eps"):
-                    eps_growth = ((latest["eps"] - prev["eps"]) / abs(prev["eps"])) * 100
-                if prev.get("revenue") and prev["revenue"] != 0 and latest.get("revenue"):
-                    rev_growth = ((latest["revenue"] - prev["revenue"]) / abs(prev["revenue"])) * 100
+                    eps_growth = (
+                        (latest["eps"] - prev["eps"]) / abs(prev["eps"])
+                    ) * 100
+                if (
+                    prev.get("revenue")
+                    and prev["revenue"] != 0
+                    and latest.get("revenue")
+                ):
+                    rev_growth = (
+                        (latest["revenue"] - prev["revenue"]) / abs(prev["revenue"])
+                    ) * 100
         except Exception as e:
-            logger.debug("Finnhub earnings fetch failed for %s: %s", ticker, e)
+            logger.info("Finnhub earnings fetch failed for %s: %s", ticker, e)
 
         return {
             "pe_ratio": pe_ratio,
@@ -573,7 +611,7 @@ def _fetch_fundamentals_finnhub(ticker: str) -> dict | None:
         }
 
     except Exception as e:
-        logger.debug("Finnhub fundamentals failed for %s: %s", ticker, e)
+        logger.info("Finnhub fundamentals failed for %s: %s", ticker, e)
         return None
 
 
@@ -595,9 +633,21 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> dict | None:
             return None
 
         pe_ratio = float(data.get("PERatio", 0)) or None
-        roe = float(data.get("ReturnOnEquityTTM", 0)) * 100 if data.get("ReturnOnEquityTTM") else None
-        eps_growth = float(data.get("EPSGrowthTTM", 0)) * 100 if data.get("EPSGrowthTTM") else None
-        rev_growth = float(data.get("RevenueGrowthTTM", 0)) * 100 if data.get("RevenueGrowthTTM") else None
+        roe = (
+            float(data.get("ReturnOnEquityTTM", 0)) * 100
+            if data.get("ReturnOnEquityTTM")
+            else None
+        )
+        eps_growth = (
+            float(data.get("EPSGrowthTTM", 0)) * 100
+            if data.get("EPSGrowthTTM")
+            else None
+        )
+        rev_growth = (
+            float(data.get("RevenueGrowthTTM", 0)) * 100
+            if data.get("RevenueGrowthTTM")
+            else None
+        )
 
         return {
             "pe_ratio": pe_ratio,
@@ -607,7 +657,7 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> dict | None:
         }
 
     except Exception as e:
-        logger.debug("Alpha Vantage failed for %s: %s", ticker, e)
+        logger.info("Alpha Vantage failed for %s: %s", ticker, e)
         return None
 
 
@@ -648,7 +698,7 @@ def _fetch_fundamentals_yfinance(ticker: str) -> dict | None:
         }
 
     except Exception as e:
-        logger.debug("yfinance fundamentals failed for %s: %s", ticker, e)
+        logger.info("yfinance fundamentals failed for %s: %s", ticker, e)
         return None
 
 
@@ -683,7 +733,7 @@ def _fetch_fundamentals_nselib(ticker: str) -> dict | None:
         }
 
     except Exception as e:
-        logger.debug("nselib P/E failed for %s: %s", ticker, e)
+        logger.info("nselib P/E failed for %s: %s", ticker, e)
         return None
 
 
@@ -720,7 +770,7 @@ def _call_with_timeout(fn, timeout: float):
             old_timeout = _socket.getdefaulttimeout()
             _socket.setdefaulttimeout(timeout)
         except Exception:
-            logger.debug("Failed to set socket timeout", exc_info=True)
+            logger.info("Failed to set socket timeout", exc_info=True)
         try:
             box["value"] = fn()
         except Exception as e:
@@ -730,7 +780,7 @@ def _call_with_timeout(fn, timeout: float):
                 if old_timeout is not None:
                     _socket.setdefaulttimeout(old_timeout)
             except Exception:
-                logger.debug("Failed to restore socket timeout", exc_info=True)
+                logger.info("Failed to restore socket timeout", exc_info=True)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -762,13 +812,18 @@ class DataProvider:
         # Track which provider was last used (for UI display)
         # Protected by _meta_lock since multiple threads may call fetch_stock.
         import threading
+
         self._meta_lock = threading.Lock()
         self.last_provider = None
         self.last_error = None
 
-    def fetch_stock(self, ticker: str, period: str = "1y",
-                    skip: tuple[str, ...] = (),
-                    provider_timeout: float | None = None) -> pd.DataFrame | None:
+    def fetch_stock(
+        self,
+        ticker: str,
+        period: str = "1y",
+        skip: tuple[str, ...] = (),
+        provider_timeout: float | None = None,
+    ) -> pd.DataFrame | None:
         """
         Fetch OHLCV data with provider fallback chain.
 
@@ -816,7 +871,9 @@ class DataProvider:
                     df = _call_with_timeout(fetch_fn, provider_timeout)
                     if df is _TIMEOUT:
                         with self._meta_lock:
-                            self.last_error = f"{name}: timed out after {provider_timeout}s"
+                            self.last_error = (
+                                f"{name}: timed out after {provider_timeout}s"
+                            )
                         continue
                 else:
                     df = fetch_fn()
@@ -842,8 +899,9 @@ class DataProvider:
         logger.info("All providers failed for %s: %s", ticker, self.last_error)
         return None
 
-    def fetch_index(self, ticker: str, period: str = "1y",
-                    provider_timeout: float | None = 30.0) -> pd.DataFrame | None:
+    def fetch_index(
+        self, ticker: str, period: str = "1y", provider_timeout: float | None = 30.0
+    ) -> pd.DataFrame | None:
         """Fetch index data with provider fallback (bounded by default)."""
         with self._meta_lock:
             self.last_provider = None
@@ -876,13 +934,14 @@ class DataProvider:
                         _set_cached(ticker, period, "index_cache", df)
                     return df
             except Exception as e:
-                logger.debug("Index provider %s failed for %s: %s", name, ticker, e)
+                logger.info("Index provider %s failed for %s: %s", name, ticker, e)
                 continue
 
         return None
 
-    def fetch_fundamentals(self, ticker: str,
-                           provider_timeout: float | None = None) -> dict | None:
+    def fetch_fundamentals(
+        self, ticker: str, provider_timeout: float | None = None
+    ) -> dict | None:
         """
         Fetch fundamental data with provider fallback.
 
@@ -912,8 +971,9 @@ class DataProvider:
                 if provider_timeout:
                     fund = _call_with_timeout(fetch_fn, provider_timeout)
                     if fund is _TIMEOUT:
-                        logger.debug("Fundamentals provider %s timed out for %s",
-                                     name, ticker)
+                        logger.debug(
+                            "Fundamentals provider %s timed out for %s", name, ticker
+                        )
                         continue
                 else:
                     fund = fetch_fn()
@@ -922,7 +982,9 @@ class DataProvider:
                         self.last_provider = name
                     return fund
             except Exception as e:
-                logger.debug("Fundamentals provider %s failed for %s: %s", name, ticker, e)
+                logger.info(
+                    "Fundamentals provider %s failed for %s: %s", name, ticker, e
+                )
                 continue
 
         return None
@@ -930,6 +992,7 @@ class DataProvider:
     def clear_cache(self):
         """Clear all cached data."""
         import shutil
+
         if os.path.exists(CACHE_DIR):
             shutil.rmtree(CACHE_DIR)
             _ensure_cache_dir()

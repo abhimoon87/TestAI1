@@ -66,3 +66,23 @@ def test_ttl_survives_raw_file_write(tmp_path, monkeypatch):
     with open(settings_file, encoding="utf-8") as f:
         raw = json.load(f)
     assert raw["negative_cache_ttl_hours"] == 3
+
+
+def test_reduce_motion_defaults_off_and_round_trips(tmp_path, monkeypatch):
+    """reduce_motion is a bool setting: default False, persists verbatim."""
+    assert store_mod.DEFAULT_SETTINGS["reduce_motion"] is False
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    s = store_mod.load_settings()
+    assert s["reduce_motion"] is False
+    s["reduce_motion"] = True
+    store_mod.save_settings(s)
+    assert store_mod.load_settings()["reduce_motion"] is True
+
+
+def test_reduce_motion_rejects_non_bool(tmp_path, monkeypatch):
+    """A garbage value for reduce_motion falls back to the default."""
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"reduce_motion": "yes"}), encoding="utf-8")
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    assert store_mod.load_settings()["reduce_motion"] is False

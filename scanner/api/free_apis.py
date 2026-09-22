@@ -32,9 +32,11 @@ _FREE_API_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="free_api")
 
 # ── Frankfurter — Exchange Rates (Free, No Key) ────────────────────────────
 
+
 @dataclass
 class ForexData:
     """Exchange rate data from Frankfurter API."""
+
     base_currency: str
     target_currency: str
     rate: float
@@ -51,16 +53,18 @@ def fetch_forex_data(
 ) -> ForexData | None:
     """
     Fetch exchange rates from Frankfurter API (free, no key).
-    
+
     Args:
         base: Base currency (default: USD)
         target: Target currency (default: INR)
         days: Lookback days for historical rates
-    
+
     Returns:
         ForexData or None
     """
-    cache_k = hashlib.md5(f"forex:{base}:{target}:{days}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"forex:{base}:{target}:{days}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return ForexData(**cached, cached=True)
@@ -109,27 +113,32 @@ def fetch_forex_data(
             change_1w=round(change_1w, 3),
         )
 
-        _FREE_API_CACHE.set(cache_k, {
-            "base_currency": base,
-            "target_currency": target,
-            "rate": current_rate,
-            "historical_rates": rates_list,
-            "change_1d": result.change_1d,
-            "change_1w": result.change_1w,
-        })
+        _FREE_API_CACHE.set(
+            cache_k,
+            {
+                "base_currency": base,
+                "target_currency": target,
+                "rate": current_rate,
+                "historical_rates": rates_list,
+                "change_1d": result.change_1d,
+                "change_1w": result.change_1w,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("Frankfurter forex fetch failed: %s", e)
+        logger.info("Frankfurter forex fetch failed: %s", e)
         return None
 
 
 # ── CoinGecko — Crypto Sentiment (Free, No Key) ────────────────────────────
 
+
 @dataclass
 class CryptoSentiment:
     """Crypto market data for correlation with equities."""
+
     btc_price: float
     btc_change_24h: float  # %
     btc_change_7d: float  # %
@@ -139,7 +148,9 @@ class CryptoSentiment:
     total_volume_24h: float
     btc_dominance: float  # %
     fear_greed_index: float | None = None  # 0-100
-    fear_greed_label: str | None = None  # "Extreme Fear", "Fear", "Neutral", "Greed", "Extreme Greed"
+    fear_greed_label: str | None = (
+        None  # "Extreme Fear", "Fear", "Neutral", "Greed", "Extreme Greed"
+    )
     cached: bool = False
 
 
@@ -147,7 +158,7 @@ def fetch_crypto_sentiment() -> CryptoSentiment | None:
     """
     Fetch crypto market data from CoinGecko (free, no key).
     Used for BTC correlation and risk sentiment analysis.
-    
+
     Returns:
         CryptoSentiment or None
     """
@@ -195,7 +206,7 @@ def fetch_crypto_sentiment() -> CryptoSentiment | None:
             fear_greed = float(fg_data.get("value", 50))
             fear_greed_label = fg_data.get("value_classification", "Neutral")
         except Exception:
-            logger.debug("Fear & Greed Index fetch failed", exc_info=True)
+            logger.info("Fear & Greed Index fetch failed", exc_info=True)
 
         result = CryptoSentiment(
             btc_price=btc.get("usd", 0),
@@ -210,31 +221,36 @@ def fetch_crypto_sentiment() -> CryptoSentiment | None:
             fear_greed_label=fear_greed_label,
         )
 
-        _FREE_API_CACHE.set(cache_k, {
-            "btc_price": result.btc_price,
-            "btc_change_24h": result.btc_change_24h,
-            "btc_change_7d": result.btc_change_7d,
-            "eth_price": result.eth_price,
-            "eth_change_24h": result.eth_change_24h,
-            "total_market_cap": result.total_market_cap,
-            "total_volume_24h": result.total_volume_24h,
-            "btc_dominance": result.btc_dominance,
-            "fear_greed_index": result.fear_greed_index,
-            "fear_greed_label": result.fear_greed_label,
-        })
+        _FREE_API_CACHE.set(
+            cache_k,
+            {
+                "btc_price": result.btc_price,
+                "btc_change_24h": result.btc_change_24h,
+                "btc_change_7d": result.btc_change_7d,
+                "eth_price": result.eth_price,
+                "eth_change_24h": result.eth_change_24h,
+                "total_market_cap": result.total_market_cap,
+                "total_volume_24h": result.total_volume_24h,
+                "btc_dominance": result.btc_dominance,
+                "fear_greed_index": result.fear_greed_index,
+                "fear_greed_label": result.fear_greed_label,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("CoinGecko crypto sentiment fetch failed: %s", e)
+        logger.info("CoinGecko crypto sentiment fetch failed: %s", e)
         return None
 
 
 # ── Indian Mandi Prices — Commodity Data (Free, No Key) ────────────────────
 
+
 @dataclass
 class MandiPrice:
     """Commodity price from Indian mandi (wholesale market)."""
+
     commodity: str
     market: str
     state: str
@@ -253,15 +269,17 @@ def fetch_mandi_prices(
     """
     Fetch commodity prices from Indian mandi (free, no key).
     Useful for agri-sector stocks (sugar, cotton, spices, etc.).
-    
+
     Args:
         commodity: Filter by commodity name (e.g., "Wheat", "Cotton")
         state: Filter by state (e.g., "Maharashtra", "Punjab")
-    
+
     Returns:
         List of MandiPrice or None
     """
-    cache_k = hashlib.md5(f"mandi:{commodity}:{state}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"mandi:{commodity}:{state}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return [MandiPrice(**item) for item in cached.get("prices", [])]
@@ -287,39 +305,55 @@ def fetch_mandi_prices(
         records = data.get("records", [])
         for rec in records[:20]:
             try:
-                prices.append(MandiPrice(
-                    commodity=rec.get("commodity", ""),
-                    market=rec.get("market", ""),
-                    state=rec.get("state", ""),
-                    price_min=float(rec.get("min_price", 0) or 0),
-                    price_max=float(rec.get("max_price", 0) or 0),
-                    price_modal=float(rec.get("modal_price", 0) or 0),
-                    unit=rec.get("unit", "Quintal"),
-                    date=rec.get("date", ""),
-                ))
+                prices.append(
+                    MandiPrice(
+                        commodity=rec.get("commodity", ""),
+                        market=rec.get("market", ""),
+                        state=rec.get("state", ""),
+                        price_min=float(rec.get("min_price", 0) or 0),
+                        price_max=float(rec.get("max_price", 0) or 0),
+                        price_modal=float(rec.get("modal_price", 0) or 0),
+                        unit=rec.get("unit", "Quintal"),
+                        date=rec.get("date", ""),
+                    )
+                )
             except (ValueError, TypeError):
                 continue
 
         if prices:
-            _FREE_API_CACHE.set(cache_k, {"prices": [
-                {"commodity": p.commodity, "market": p.market, "state": p.state,
-                 "price_min": p.price_min, "price_max": p.price_max,
-                 "price_modal": p.price_modal, "unit": p.unit, "date": p.date}
-                for p in prices
-            ]})
+            _FREE_API_CACHE.set(
+                cache_k,
+                {
+                    "prices": [
+                        {
+                            "commodity": p.commodity,
+                            "market": p.market,
+                            "state": p.state,
+                            "price_min": p.price_min,
+                            "price_max": p.price_max,
+                            "price_modal": p.price_modal,
+                            "unit": p.unit,
+                            "date": p.date,
+                        }
+                        for p in prices
+                    ]
+                },
+            )
 
         return prices if prices else None
 
     except Exception as e:
-        logger.debug("Mandi prices fetch failed: %s", e)
+        logger.info("Mandi prices fetch failed: %s", e)
         return None
 
 
 # ── WallstreetBets — Reddit WSB Sentiment (Free, No Key) ───────────────────
 
+
 @dataclass
 class WallstreetBetsSentiment:
     """WallstreetBets sentiment data."""
+
     ticker: str
     mention_count: int
     sentiment_score: float  # -1.0 to 1.0
@@ -331,10 +365,10 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | Non
     """
     Fetch WallstreetBets sentiment for a ticker (free, no key).
     Uses Reddit's public JSON API to search r/wallstreetbets.
-    
+
     Args:
         ticker: Stock ticker (e.g., "RELIANCE")
-    
+
     Returns:
         WallstreetBetsSentiment or None
     """
@@ -371,8 +405,10 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | Non
 
         if mention_count == 0:
             return WallstreetBetsSentiment(
-                ticker=ticker.upper(), mention_count=0,
-                sentiment_score=0.0, top_posts=[],
+                ticker=ticker.upper(),
+                mention_count=0,
+                sentiment_score=0.0,
+                top_posts=[],
             )
 
         # Simple sentiment from upvotes and titles
@@ -384,11 +420,13 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | Non
             upvotes = p.get("ups", 0)
             sentiment = 0.1 if upvotes > 100 else (-0.1 if upvotes < -10 else 0)
             sentiments.append(sentiment)
-            top_posts.append({
-                "title": title[:120],
-                "upvotes": upvotes,
-                "url": f"https://reddit.com{p.get('permalink', '')}",
-            })
+            top_posts.append(
+                {
+                    "title": title[:120],
+                    "upvotes": upvotes,
+                    "url": f"https://reddit.com{p.get('permalink', '')}",
+                }
+            )
 
         avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
 
@@ -399,25 +437,30 @@ def fetch_wallstreetbets_sentiment(ticker: str) -> WallstreetBetsSentiment | Non
             top_posts=top_posts,
         )
 
-        _FREE_API_CACHE.set(cache_k, {
-            "ticker": result.ticker,
-            "mention_count": result.mention_count,
-            "sentiment_score": result.sentiment_score,
-            "top_posts": result.top_posts,
-        })
+        _FREE_API_CACHE.set(
+            cache_k,
+            {
+                "ticker": result.ticker,
+                "mention_count": result.mention_count,
+                "sentiment_score": result.sentiment_score,
+                "top_posts": result.top_posts,
+            },
+        )
 
         return result
 
     except Exception as e:
-        logger.debug("WallstreetBets sentiment fetch failed for %s: %s", ticker, e)
+        logger.info("WallstreetBets sentiment fetch failed for %s: %s", ticker, e)
         return None
 
 
 # ── Noozra — Free News Headlines (Free, No Key) ────────────────────────────
 
+
 @dataclass
 class NoozraNews:
     """News headline from Noozra RSS sources."""
+
     title: str
     url: str
     source: str
@@ -432,15 +475,17 @@ def fetch_noozra_news(
     """
     Fetch free news headlines from Google News RSS (free, no key).
     Fallback for Noozra API (domain may be unavailable).
-    
+
     Args:
         query: Search query (e.g., "RELIANCE", "NIFTY")
         max_items: Maximum items to return
-    
+
     Returns:
         List of NoozraNews or None
     """
-    cache_k = hashlib.md5(f"news:{query}:{max_items}".encode(), usedforsecurity=False).hexdigest()
+    cache_k = hashlib.md5(
+        f"news:{query}:{max_items}".encode(), usedforsecurity=False
+    ).hexdigest()
     cached = _FREE_API_CACHE.get(cache_k)
     if cached:
         return [NoozraNews(**item) for item in cached.get("news", [])]
@@ -452,9 +497,13 @@ def fetch_noozra_news(
         search_query = query or "Indian stock market"
         url = f"https://news.google.com/rss/search?q={search_query}+when:7d&hl=en-IN&gl=IN&ceid=IN:en"
 
-        resp = requests.get(url, timeout=15, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        resp = requests.get(
+            url,
+            timeout=15,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+        )
         resp.raise_for_status()
 
         root = ET.fromstring(resp.text)
@@ -466,21 +515,33 @@ def fetch_noozra_news(
             source = item.findtext("source", "")
             pub_date = item.findtext("pubDate", "")
 
-            news.append(NoozraNews(
-                title=title[:200],
-                url=link,
-                source=source or "Google News",
-                published=pub_date,
-            ))
+            news.append(
+                NoozraNews(
+                    title=title[:200],
+                    url=link,
+                    source=source or "Google News",
+                    published=pub_date,
+                )
+            )
 
         if news:
-            _FREE_API_CACHE.set(cache_k, {"news": [
-                {"title": n.title, "url": n.url, "source": n.source, "published": n.published}
-                for n in news
-            ]})
+            _FREE_API_CACHE.set(
+                cache_k,
+                {
+                    "news": [
+                        {
+                            "title": n.title,
+                            "url": n.url,
+                            "source": n.source,
+                            "published": n.published,
+                        }
+                        for n in news
+                    ]
+                },
+            )
 
         return news if news else None
 
     except Exception as e:
-        logger.debug("News fetch failed: %s", e)
+        logger.info("News fetch failed: %s", e)
         return None

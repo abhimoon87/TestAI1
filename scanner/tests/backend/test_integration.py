@@ -162,13 +162,24 @@ class TestScoringRealData:
         for ticker, df in real_stock_data.items():
             result = compute_scores(df, timeframe="D", index_df=real_index_data)
             if result is not None:
-                assert 0 <= result["total"] <= 100, \
+                assert 0 <= result["total"] <= 100, (
                     f"{ticker}: total={result['total']} out of range"
+                )
 
     def test_all_categories_present(self, real_stock_data, real_index_data):
         """All 10 scoring categories should be in the result."""
-        categories = ["trend", "momentum", "rsi", "macd", "stoch",
-                       "obv", "volume", "rel_str", "volatility", "fundamentals"]
+        categories = [
+            "trend",
+            "momentum",
+            "rsi",
+            "macd",
+            "stoch",
+            "obv",
+            "volume",
+            "rel_str",
+            "volatility",
+            "fundamentals",
+        ]
         for ticker, df in real_stock_data.items():
             result = compute_scores(df, timeframe="D", index_df=real_index_data)
             if result is not None:
@@ -178,24 +189,33 @@ class TestScoringRealData:
     def test_category_bounds(self, real_stock_data, real_index_data):
         """Each category should not exceed its max weight."""
         max_bounds = {
-            "trend": 15, "momentum": 15, "rsi": 8, "macd": 7,
-            "stoch": 5, "obv": 5, "volume": 10, "rel_str": 10,
-            "volatility": 5, "fundamentals": 20,
+            "trend": 15,
+            "momentum": 15,
+            "rsi": 8,
+            "macd": 7,
+            "stoch": 5,
+            "obv": 5,
+            "volume": 10,
+            "rel_str": 10,
+            "volatility": 5,
+            "fundamentals": 20,
         }
         for ticker, df in real_stock_data.items():
             result = compute_scores(df, timeframe="D", index_df=real_index_data)
             if result is not None:
                 for cat, max_val in max_bounds.items():
-                    assert result[cat] <= max_val + 0.1, \
+                    assert result[cat] <= max_val + 0.1, (
                         f"{ticker}: {cat}={result[cat]} exceeds max {max_val}"
+                    )
 
     def test_trend_dir_valid(self, real_stock_data, real_index_data):
         """trend_dir should be 'Bull' or 'Bear'."""
         for ticker, df in real_stock_data.items():
             result = compute_scores(df, timeframe="D", index_df=real_index_data)
             if result is not None:
-                assert result["trend_dir"] in ("Bull", "Bear"), \
+                assert result["trend_dir"] in ("Bull", "Bear"), (
                     f"{ticker}: trend_dir={result['trend_dir']}"
+                )
 
     def test_entry_signal_is_bool(self, real_stock_data, real_index_data):
         """entry_signal should be a boolean."""
@@ -208,23 +228,29 @@ class TestScoringRealData:
         """Full pipeline: check_filter → get_direction → compute_scores."""
         # Use matching MA params for filter and scorer
         settings = {
-            "fast_ma_type": "HMA", "fast_ma_len": 44,
-            "slow_ma_type": "EMA", "slow_ma_len": 30,
+            "fast_ma_type": "HMA",
+            "fast_ma_len": 44,
+            "slow_ma_type": "EMA",
+            "slow_ma_len": 30,
             "crossover_lookback": 20,
         }
         passed = 0
         for df in real_stock_data.values():
             filter_result = check_filter(
-                df, fast_ma_type="HMA", fast_ma_len=44,
-                slow_ma_type="EMA", slow_ma_len=30,
+                df,
+                fast_ma_type="HMA",
+                fast_ma_len=44,
+                slow_ma_type="EMA",
+                slow_ma_len=30,
                 crossover_lookback=20,
             )
             if filter_result is None:
                 continue  # filtered out — that's fine
             direction = get_direction(filter_result)
             assert direction in ("Bull", "Bear")
-            scores = compute_scores(df, timeframe="D", index_df=real_index_data,
-                                    settings=settings)
+            scores = compute_scores(
+                df, timeframe="D", index_df=real_index_data, settings=settings
+            )
             if scores is not None:
                 passed += 1
                 assert scores["total"] >= 0
@@ -247,7 +273,7 @@ class TestScoringRealData:
         for ticker, df in real_stock_data.items():
             fund = fetch_fundamentals(ticker)
             if fund is not None:
-                df.attrs['_fundamentals'] = fund
+                df.attrs["_fundamentals"] = fund
             result = compute_scores(df, timeframe="D")
             if result is not None:
                 assert 0 <= result["total"] <= 100
@@ -273,7 +299,7 @@ class TestEndToEndConsistency:
         for ticker, df in data.items():
             fund = fetch_fundamentals(ticker)
             if fund is not None:
-                df.attrs['_fundamentals'] = fund
+                df.attrs["_fundamentals"] = fund
             result = compute_scores(df, timeframe="D", index_df=index_df)
             if result is not None:
                 result["ticker"] = ticker
@@ -285,7 +311,9 @@ class TestEndToEndConsistency:
         top = scored[0]
 
         # Top scorer should have reasonable properties
-        assert top["total"] >= 20, f"Top scorer {top['ticker']} has suspiciously low score"
+        assert top["total"] >= 20, (
+            f"Top scorer {top['ticker']} has suspiciously low score"
+        )
         assert top["trend_dir"] in ("Bull", "Bear")
 
     def test_score_sum_matches_total(self):
@@ -296,11 +324,22 @@ class TestEndToEndConsistency:
         for ticker, df in data.items():
             result = compute_scores(df, timeframe="D", index_df=index_df)
             if result is not None:
-                categories = ["trend", "momentum", "rsi", "macd", "stoch",
-                               "obv", "volume", "rel_str", "volatility", "fundamentals"]
+                categories = [
+                    "trend",
+                    "momentum",
+                    "rsi",
+                    "macd",
+                    "stoch",
+                    "obv",
+                    "volume",
+                    "rel_str",
+                    "volatility",
+                    "fundamentals",
+                ]
                 cat_sum = sum(result[c] for c in categories)
-                assert abs(cat_sum - result["total"]) < 0.2, \
+                assert abs(cat_sum - result["total"]) < 0.2, (
                     f"{ticker}: category sum {cat_sum:.1f} != total {result['total']:.1f}"
+                )
 
 
 class TestLiveCancel:
@@ -325,8 +364,11 @@ class TestLiveCancel:
 
         def worker():
             holder["result"] = engine.scan_stream(
-                "FnO STOCKS", settings=settings, period="1y",
-                timeframe="D", index_symbol="NSEI",
+                "FnO STOCKS",
+                settings=settings,
+                period="1y",
+                timeframe="D",
+                index_symbol="NSEI",
             )
 
         th = threading.Thread(target=worker, daemon=True)

@@ -57,7 +57,8 @@ from .scanner_engine import _find_stale_members
 # NIFTY_BROAD copies before that); auditing them would just re-list the same
 # names.  Only the static universe map is audited.
 _STATIC_UNIVERSES = {
-    k: v for k, v in UNIVERSES.items()
+    k: v
+    for k, v in UNIVERSES.items()
     if "Live" not in k and not k.startswith("FULL MARKET")
 }
 
@@ -92,7 +93,7 @@ def _nse_mainboard() -> list:
         if symbols and len(symbols) > 500:
             return [str(s).strip().upper() for s in symbols if str(s).strip()]
     except Exception:
-        logger.debug("Stale-member NSE mainboard probe failed", exc_info=True)
+        logger.info("Stale-member NSE mainboard probe failed", exc_info=True)
     return []
 
 
@@ -127,8 +128,9 @@ def _rank_rename_candidates(missing: list, mainboard: list) -> dict:
         for s in difflib.get_close_matches(t, mb, n=10, cutoff=0.55):
             ratio = difflib.SequenceMatcher(None, t, s).ratio()
             scored[s] = max(scored.get(s, 0.0), 1.0 + ratio)
-        out[t] = [s for s, _ in sorted(scored.items(),
-                                       key=lambda kv: (-kv[1], kv[0]))][:6]
+        out[t] = [s for s, _ in sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))][
+            :6
+        ]
     return out
 
 
@@ -180,10 +182,13 @@ def _suggest_renames(missing: list, period: str = "3y") -> dict:
     return verified
 
 
-def audit_stale_members(tickers: list, period: str = "3y",
-                        max_age_days: float = 45.0,
-                        probe_missing: bool = True,
-                        suggest_renames: bool = True) -> dict:
+def audit_stale_members(
+    tickers: list,
+    period: str = "3y",
+    max_age_days: float = 45.0,
+    probe_missing: bool = True,
+    suggest_renames: bool = True,
+) -> dict:
     """Fetch ``tickers`` and split them by staleness vs the annotation list.
 
     Uses the same ``_find_stale_members`` the scan engine relies on, so the
@@ -212,10 +217,9 @@ def audit_stale_members(tickers: list, period: str = "3y",
 
         def _probe(t):
             try:
-                return t, fetch_stock_data(t, period=period,
-                                           timeframe="D", retries=1)
+                return t, fetch_stock_data(t, period=period, timeframe="D", retries=1)
             except Exception:
-                logger.debug("Live probe failed for %s", t, exc_info=True)
+                logger.info("Live probe failed for %s", t, exc_info=True)
                 return t, None
 
         workers = min(_PROBE_WORKERS, len(missing))
@@ -232,8 +236,7 @@ def audit_stale_members(tickers: list, period: str = "3y",
     annotated = set(SUSPENDED_OR_DELISTED)
     unannotated = [(t, stale_dates[t]) for t in stale_dates if t not in annotated]
     annotated_stale = [(t, stale_dates[t]) for t in stale_dates if t in annotated]
-    annotated_fresh = sorted(t for t in annotated
-                             if t in raw and t not in stale_set)
+    annotated_fresh = sorted(t for t in annotated if t in raw and t not in stale_set)
     # Names skipped by the dead-symbol cache never even reach the providers;
     # report them distinctly from genuine "no data in window" findings.
     neg_keys = set(_negative_cache_load())
@@ -250,7 +253,7 @@ def audit_stale_members(tickers: list, period: str = "3y",
         "tickers": len(tickers),
         "fetched": len(raw),
         "stale_total": len(stale),
-        "unannotated_stale": unannotated,     # [(ticker, 'YYYY-MM-DD')] oldest first
+        "unannotated_stale": unannotated,  # [(ticker, 'YYYY-MM-DD')] oldest first
         "annotated_stale": annotated_stale,
         "annotated_fresh": annotated_fresh,
         "missing": missing,
@@ -261,9 +264,12 @@ def audit_stale_members(tickers: list, period: str = "3y",
     }
 
 
-def audit_all_universes(period: str = "3y", max_age_days: float = 45.0,
-                        probe_missing: bool = True,
-                        suggest_renames: bool = True) -> dict:
+def audit_all_universes(
+    period: str = "3y",
+    max_age_days: float = 45.0,
+    probe_missing: bool = True,
+    suggest_renames: bool = True,
+) -> dict:
     """Audit every static universe in one union fetch (no repeat downloads).
 
     Returns the same report as ``audit_stale_members`` plus a
@@ -273,8 +279,11 @@ def audit_all_universes(period: str = "3y", max_age_days: float = 45.0,
     """
     tickers = sorted({t for lst in _STATIC_UNIVERSES.values() for t in lst})
     res = audit_stale_members(
-        tickers, period=period, max_age_days=max_age_days,
-        probe_missing=probe_missing, suggest_renames=suggest_renames,
+        tickers,
+        period=period,
+        max_age_days=max_age_days,
+        probe_missing=probe_missing,
+        suggest_renames=suggest_renames,
     )
     res["universe"] = "ALL STATIC UNIVERSES"
     missing_set = set(res["missing"])
@@ -295,6 +304,7 @@ def audit_all_universes(period: str = "3y", max_age_days: float = 45.0,
 
 def _days_stale(last: str) -> int:
     from datetime import date
+
     return (date.today() - date.fromisoformat(last)).days
 
 
@@ -306,10 +316,14 @@ def _paste_ready(unannotated: list) -> str:
 def format_report(res: dict) -> str:
     """Human-readable report (also printed by the CLI)."""
     lines = [
-        (f"=== Stale-member audit (period {res['period']}, "
-         f"cutoff {res['max_age_days']:.0f}d) ==="),
-        (f"Tickers: {res['tickers']} | fetched: {res['fetched']} | "
-         f"stale: {res['stale_total']} | missing: {len(res['missing'])}"),
+        (
+            f"=== Stale-member audit (period {res['period']}, "
+            f"cutoff {res['max_age_days']:.0f}d) ==="
+        ),
+        (
+            f"Tickers: {res['tickers']} | fetched: {res['fetched']} | "
+            f"stale: {res['stale_total']} | missing: {len(res['missing'])}"
+        ),
     ]
     per_universe = res.get("per_universe")
     if per_universe:
@@ -323,8 +337,10 @@ def format_report(res: dict) -> str:
                 + mark
             )
     lines.append("")
-    lines.append(f"1) STALE — NOT ANNOTATED ({len(res['unannotated_stale'])}) "
-                 "-> add to SUSPENDED_OR_DELISTED:")
+    lines.append(
+        f"1) STALE — NOT ANNOTATED ({len(res['unannotated_stale'])}) "
+        "-> add to SUSPENDED_OR_DELISTED:"
+    )
     if res["unannotated_stale"]:
         for t, d in res["unannotated_stale"]:
             lines.append(
@@ -332,21 +348,27 @@ def format_report(res: dict) -> str:
                 f"in: {', '.join(res['membership'].get(t, [])) or '(direct list)'}"
             )
         lines.append("   paste-ready:")
-        lines.append("   " + _paste_ready(res["unannotated_stale"]).replace("\n", "\n   "))
+        lines.append(
+            "   " + _paste_ready(res["unannotated_stale"]).replace("\n", "\n   ")
+        )
     else:
         lines.append("   (none — annotation list is current)")
 
     lines.append("")
-    lines.append(f"2) STALE — ALREADY ANNOTATED ({len(res['annotated_stale'])}) "
-                 "(engine skips these):")
+    lines.append(
+        f"2) STALE — ALREADY ANNOTATED ({len(res['annotated_stale'])}) "
+        "(engine skips these):"
+    )
     for t, d in res["annotated_stale"]:
         lines.append(f"   {t:<14} last {d}  ({_days_stale(d)}d)")
     if not res["annotated_stale"]:
         lines.append("   (none)")
 
     lines.append("")
-    lines.append(f"3) ANNOTATED BUT FRESH ({len(res['annotated_fresh'])}) "
-                 "-> candidates to REMOVE (trading resumed?):")
+    lines.append(
+        f"3) ANNOTATED BUT FRESH ({len(res['annotated_fresh'])}) "
+        "-> candidates to REMOVE (trading resumed?):"
+    )
     for t in res["annotated_fresh"]:
         lines.append(f"   {t}")
     if not res["annotated_fresh"]:
@@ -354,8 +376,10 @@ def format_report(res: dict) -> str:
 
     lines.append("")
     neg = set(res["neg_cache_skipped"])
-    lines.append(f"4) NO DATA IN WINDOW ({len(res['missing'])}) "
-                 "-> possibly delisted before the window / bad symbol:")
+    lines.append(
+        f"4) NO DATA IN WINDOW ({len(res['missing'])}) "
+        "-> possibly delisted before the window / bad symbol:"
+    )
     for t in res["missing"]:
         suffix = "  [dead-symbol cache — skipped, try clearing it]" if t in neg else ""
         lines.append(f"   {t}{suffix}")
@@ -364,8 +388,10 @@ def format_report(res: dict) -> str:
 
     lines.append("")
     renames = res.get("rename_suggestions", {})
-    lines.append(f"5) MISSING — RENAME SUGGESTED ({len(renames)}) "
-                 "-> live-verified against the NSE mainboard:")
+    lines.append(
+        f"5) MISSING — RENAME SUGGESTED ({len(renames)}) "
+        "-> live-verified against the NSE mainboard:"
+    )
     for bad, good in sorted(renames.items()):
         lines.append(f"   {bad} -> {good}   (candidate has data on {res['period']})")
     if not renames:
@@ -373,8 +399,7 @@ def format_report(res: dict) -> str:
     return "\n".join(lines)
 
 
-def apply_fixes(res: dict, path: str | None = None,
-                dry_run: bool = False) -> dict:
+def apply_fixes(res: dict, path: str | None = None, dry_run: bool = False) -> dict:
     """Apply audit findings directly to universes.py (in place).
 
     * renames      — every ``"BAD"`` occurrence (universe lists, SECTOR_MAP)
@@ -411,8 +436,12 @@ def apply_fixes(res: dict, path: str | None = None,
         text = f.read()
     orig = text
 
-    summary: dict = {"renamed": [], "annotated_added": [],
-                     "annotated_removed": [], "not_found": []}
+    summary: dict = {
+        "renamed": [],
+        "annotated_added": [],
+        "annotated_removed": [],
+        "not_found": [],
+    }
 
     # 1) Verified renames — quoted-string replacement everywhere.
     for bad, good in sorted(res.get("rename_suggestions", {}).items()):
@@ -435,43 +464,53 @@ def apply_fixes(res: dict, path: str | None = None,
     #    SUSPENDED_OR_DELISTED dict block.  Existing entry lines are kept
     #    verbatim; new entries are merged in and the whole block is rewritten
     #    with keys in alphabetical order (matching the hand-maintained style).
-    adds = list(res.get("unannotated_stale", []))       # [(ticker, last_date)]
-    removes = list(res.get("annotated_fresh", []))      # [ticker]
+    adds = list(res.get("unannotated_stale", []))  # [(ticker, last_date)]
+    removes = list(res.get("annotated_fresh", []))  # [ticker]
     entry_re = re.compile(r'^[ \t]*"([A-Za-z0-9._-]+)":')
     lines = text.splitlines(keepends=True)
-    block_i = next((i for i, ln in enumerate(lines)
-                    if ln.lstrip().startswith("SUSPENDED_OR_DELISTED")
-                    and "= {" in ln), None)
+    block_i = next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if ln.lstrip().startswith("SUSPENDED_OR_DELISTED") and "= {" in ln
+        ),
+        None,
+    )
     close_i = None
     if block_i is not None:
-        close_i = next((j for j in range(block_i + 1, len(lines))
-                        if lines[j].strip() == "}"), None)
+        close_i = next(
+            (j for j in range(block_i + 1, len(lines)) if lines[j].strip() == "}"), None
+        )
     if (adds or removes) and (block_i is None or close_i is None):
-        summary["skipped"] = "SUSPENDED_OR_DELISTED block not found/closed — " \
-                              "annotation edits skipped (renames still applied)"
+        summary["skipped"] = (
+            "SUSPENDED_OR_DELISTED block not found/closed — "
+            "annotation edits skipped (renames still applied)"
+        )
     elif adds or removes:
         existing = []  # (key or None, original line) for every inner line
-        for ln in lines[block_i + 1:close_i]:
+        for ln in lines[block_i + 1 : close_i]:
             m = entry_re.match(ln)
             existing.append((m.group(1) if m else None, ln))
         existing_keys = {k for k, _ln in existing if k is not None}
         removed = [t for t in removes if t in existing_keys]
         # Survivors (kept verbatim) + new entries, together key-sorted.
         entries = sorted(
-            [(k, ln) for k, ln in existing
-             if k is not None and k not in removes]
-            + [(t, f'    "{t}": "no trades since {d}",\n')
-               for t, d in adds if t not in existing_keys],
+            [(k, ln) for k, ln in existing if k is not None and k not in removes]
+            + [
+                (t, f'    "{t}": "no trades since {d}",\n')
+                for t, d in adds
+                if t not in existing_keys
+            ],
             key=lambda kv: kv[0],
         )
         tails = [ln for k, ln in existing if k is None]  # non-entry lines
-        text = ("".join(lines[:block_i + 1])
-                + "".join(ln for _k, ln in entries)
-                + "".join(tails)
-                + "".join(lines[close_i:]))
-        summary["annotated_added"] = [
-            (t, d) for t, d in adds if t not in existing_keys
-        ]
+        text = (
+            "".join(lines[: block_i + 1])
+            + "".join(ln for _k, ln in entries)
+            + "".join(tails)
+            + "".join(lines[close_i:])
+        )
+        summary["annotated_added"] = [(t, d) for t, d in adds if t not in existing_keys]
         summary["annotated_removed"] = removed
 
     changed = text != orig
@@ -485,12 +524,14 @@ def apply_fixes(res: dict, path: str | None = None,
     if dry_run:
         import difflib
 
-        summary["diff"] = "".join(difflib.unified_diff(
-            orig.splitlines(keepends=True),
-            text.splitlines(keepends=True),
-            fromfile="universes.py (current)",
-            tofile="universes.py (after --fix)",
-        )).rstrip("\n")
+        summary["diff"] = "".join(
+            difflib.unified_diff(
+                orig.splitlines(keepends=True),
+                text.splitlines(keepends=True),
+                fromfile="universes.py (current)",
+                tofile="universes.py (after --fix)",
+            )
+        ).rstrip("\n")
         return summary
     shutil.copy2(path, path + ".bak")
     tmp = path + ".fix.tmp"
@@ -517,7 +558,7 @@ def _dedupe_sector_map_keys(text: str):
     start_m = re.search(r"SECTOR_MAP = \{", text)
     if not start_m:
         return text, []
-    close_m = re.search(r"^\}", text[start_m.end():], re.MULTILINE)
+    close_m = re.search(r"^\}", text[start_m.end() :], re.MULTILINE)
     if not close_m:
         return text, []
     body_start = start_m.end()
@@ -557,8 +598,10 @@ def format_fix_summary(summary: dict) -> str:
     """Human-readable summary of what apply_fixes() changed (or didn't)."""
     if not summary.get("changed"):
         if summary.get("dry_run"):
-            return ("--- --fix --dry-run: nothing would change "
-                    "(annotation list and symbols current)")
+            return (
+                "--- --fix --dry-run: nothing would change "
+                "(annotation list and symbols current)"
+            )
         return "--- --fix: nothing to apply (annotation list and symbols current)"
     if summary.get("dry_run"):
         lines = ["--- --fix DRY RUN — would change scanner/universes.py ---"]
@@ -573,8 +616,10 @@ def format_fix_summary(summary: dict) -> str:
     for t in summary.get("not_found", []):
         lines.append(f"Skipped  {t} -> not present in universes.py (already fixed?)")
     for t in summary.get("sector_map_deduped", []):
-        lines.append(f"Sector map: {t} kept its existing entry "
-                     "(duplicate from the rename removed)")
+        lines.append(
+            f"Sector map: {t} kept its existing entry "
+            "(duplicate from the rename removed)"
+        )
     if summary.get("skipped"):
         lines.append(f"Warning: {summary['skipped']}")
     if summary.get("backup"):
@@ -588,52 +633,96 @@ def format_fix_summary(summary: dict) -> str:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Audit universe members for stale (unannotated) data")
-    ap.add_argument("--universe", default="ALL (Combined)",
-                    help="Static universe key (default: ALL (Combined))")
-    ap.add_argument("--tickers", nargs="*", default=None,
-                    help="Explicit ticker list (overrides --universe)")
-    ap.add_argument("--period", default="3y",
-                    help="Data window; 3y catches suspensions up to ~3y old")
-    ap.add_argument("--days", type=float, default=45.0,
-                    help="Stale cutoff in days (default 45, matches settings)")
-    ap.add_argument("--all", action="store_true",
-                    help="Audit every static universe in one union fetch")
-    ap.add_argument("--no-probe", action="store_true",
-                    help="Skip the per-ticker live re-probe of missing names")
-    ap.add_argument("--no-renames", action="store_true",
-                    help="Skip rename suggestions for missing names")
-    ap.add_argument("--fix", action="store_true",
-                    help="Apply verified renames + annotation updates directly "
-                         "to universes.py (report-only without it; .bak kept)")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="Preview the exact universes.py edits --fix would "
-                         "make (unified diff), without writing anything")
-    ap.add_argument("--json", action="store_true",
-                    help="Print the raw result dict instead of the table")
+        description="Audit universe members for stale (unannotated) data"
+    )
+    ap.add_argument(
+        "--universe",
+        default="ALL (Combined)",
+        help="Static universe key (default: ALL (Combined))",
+    )
+    ap.add_argument(
+        "--tickers",
+        nargs="*",
+        default=None,
+        help="Explicit ticker list (overrides --universe)",
+    )
+    ap.add_argument(
+        "--period",
+        default="3y",
+        help="Data window; 3y catches suspensions up to ~3y old",
+    )
+    ap.add_argument(
+        "--days",
+        type=float,
+        default=45.0,
+        help="Stale cutoff in days (default 45, matches settings)",
+    )
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="Audit every static universe in one union fetch",
+    )
+    ap.add_argument(
+        "--no-probe",
+        action="store_true",
+        help="Skip the per-ticker live re-probe of missing names",
+    )
+    ap.add_argument(
+        "--no-renames",
+        action="store_true",
+        help="Skip rename suggestions for missing names",
+    )
+    ap.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply verified renames + annotation updates directly "
+        "to universes.py (report-only without it; .bak kept)",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the exact universes.py edits --fix would "
+        "make (unified diff), without writing anything",
+    )
+    ap.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the raw result dict instead of the table",
+    )
     args = ap.parse_args()
 
     probe_missing = not args.no_probe
     suggest_renames = not args.no_renames
     if args.all:
-        res = audit_all_universes(period=args.period, max_age_days=args.days,
-                                  probe_missing=probe_missing,
-                                  suggest_renames=suggest_renames)
+        res = audit_all_universes(
+            period=args.period,
+            max_age_days=args.days,
+            probe_missing=probe_missing,
+            suggest_renames=suggest_renames,
+        )
     elif args.tickers:
         tickers = [t.upper() for t in args.tickers]
-        res = audit_stale_members(tickers, period=args.period,
-                                  max_age_days=args.days,
-                                  probe_missing=probe_missing,
-                                  suggest_renames=suggest_renames)
+        res = audit_stale_members(
+            tickers,
+            period=args.period,
+            max_age_days=args.days,
+            probe_missing=probe_missing,
+            suggest_renames=suggest_renames,
+        )
     else:
         tickers = list(_STATIC_UNIVERSES.get(args.universe, []))
         if not tickers:
-            ap.error(f"unknown static universe: {args.universe} "
-                     f"(choices: {sorted(_STATIC_UNIVERSES)})")
-        res = audit_stale_members(tickers, period=args.period,
-                                  max_age_days=args.days,
-                                  probe_missing=probe_missing,
-                                  suggest_renames=suggest_renames)
+            ap.error(
+                f"unknown static universe: {args.universe} "
+                f"(choices: {sorted(_STATIC_UNIVERSES)})"
+            )
+        res = audit_stale_members(
+            tickers,
+            period=args.period,
+            max_age_days=args.days,
+            probe_missing=probe_missing,
+            suggest_renames=suggest_renames,
+        )
     fix_mode = args.fix or args.dry_run
     if args.json:
         print(json.dumps(res, indent=2, default=str))
@@ -646,8 +735,10 @@ def main():
             print()
             print(format_fix_summary(apply_fixes(res, dry_run=args.dry_run)))
         elif res["unannotated_stale"] or res.get("rename_suggestions"):
-            print("\nNext step: re-run with --fix to apply renames and "
-                  "annotation updates directly to universes.py.")
+            print(
+                "\nNext step: re-run with --fix to apply renames and "
+                "annotation updates directly to universes.py."
+            )
 
 
 if __name__ == "__main__":

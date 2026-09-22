@@ -171,7 +171,9 @@ class TestVwma:
         v = vwma(close, vol, 20)
         s = sma(close, 20)
         both_valid = v.notna() & s.notna()
-        np.testing.assert_allclose(v[both_valid].values, s[both_valid].values, atol=1e-10)
+        np.testing.assert_allclose(
+            v[both_valid].values, s[both_valid].values, atol=1e-10
+        )
 
 
 class TestKama:
@@ -199,7 +201,9 @@ class TestKama:
 
         new = kama(s, length)
         both_valid = new.notna() & ref.notna()
-        np.testing.assert_allclose(new[both_valid].values, ref[both_valid].values, atol=1e-10)
+        np.testing.assert_allclose(
+            new[both_valid].values, ref[both_valid].values, atol=1e-10
+        )
 
     def test_constant_series(self):
         """KAMA of constant series should equal that constant."""
@@ -260,7 +264,9 @@ class TestRsi:
         rs = avg_gain / avg_loss
         expected = 100 - (100 / (1 + rs))
 
-        np.testing.assert_allclose(result.dropna().values, expected.dropna().values, atol=1e-10)
+        np.testing.assert_allclose(
+            result.dropna().values, expected.dropna().values, atol=1e-10
+        )
 
 
 class TestMacd:
@@ -389,7 +395,9 @@ class TestVolumeProfilePoc:
     def test_poc_within_price_range(self, synthetic_ohlcv):
         """POC should always be between low and high of the lookback window."""
         df = synthetic_ohlcv
-        poc = volume_profile_poc(df["high"], df["low"], df["close"], df["volume"], lookback=50)
+        poc = volume_profile_poc(
+            df["high"], df["low"], df["close"], df["volume"], lookback=50
+        )
         valid = poc.dropna()
         rolling_low = df["low"].rolling(50).min()
         rolling_high = df["high"].rolling(50).max()
@@ -400,6 +408,8 @@ class TestVolumeProfilePoc:
     def test_short_lookback(self, synthetic_ohlcv):
         """POC with small lookback should still produce valid values."""
         df = synthetic_ohlcv
-        poc = volume_profile_poc(df["high"], df["low"], df["close"], df["volume"], lookback=10)
+        poc = volume_profile_poc(
+            df["high"], df["low"], df["close"], df["volume"], lookback=10
+        )
         # At least some values should be non-NaN
         assert poc.notna().sum() > 0

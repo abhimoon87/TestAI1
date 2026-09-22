@@ -56,7 +56,8 @@ class NewsPrefetcher:
             if not by_ticker:
                 return
             targets = [
-                r for r in sorted(by_ticker.values(), key=score_of, reverse=True)[:top_n]
+                r
+                for r in sorted(by_ticker.values(), key=score_of, reverse=True)[:top_n]
                 if "_news_items" not in r
             ]
             if not targets:
@@ -70,7 +71,9 @@ class NewsPrefetcher:
             with self._results_lock:
                 if epoch != self._get_epoch() or self._get_cancelled():
                     return  # a newer scan owns the results now
-                live = {r.get("ticker"): r for r in self._get_results() if r.get("ticker")}
+                live = {
+                    r.get("ticker"): r for r in self._get_results() if r.get("ticker")
+                }
                 updates: dict[str, dict] = {}
                 for ticker, items in news_map.items():
                     row = live.get(ticker)
@@ -83,10 +86,13 @@ class NewsPrefetcher:
                             u["_article_count"] = n
                         if "_sentiment_score" not in row:
                             tone = {"Good": 1.0, "Bad": -1.0}
-                            u["_sentiment_score"] = sum(
-                                tone.get(i.get("sentiment", "Neutral"), 0.0)
-                                for i in items
-                            ) / n
+                            u["_sentiment_score"] = (
+                                sum(
+                                    tone.get(i.get("sentiment", "Neutral"), 0.0)
+                                    for i in items
+                                )
+                                / n
+                            )
                     updates[ticker] = u
                 for ticker, u in updates.items():
                     row = live[ticker]
@@ -95,7 +101,9 @@ class NewsPrefetcher:
             if attached and self._on_update:
                 self._on_update()
             if self._on_log and attached:
-                self._on_log(f"News prefetched for {attached}/{len(targets)} top stocks")
+                self._on_log(
+                    f"News prefetched for {attached}/{len(targets)} top stocks"
+                )
         except Exception as e:
             if self._on_log:
                 self._on_log(f"News prefetch failed: {e!s}")
