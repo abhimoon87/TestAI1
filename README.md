@@ -277,6 +277,10 @@ python -m pytest
 
 # Include tests that hit live network APIs
 python -m pytest -m integration
+
+# With coverage (config in .coveragerc)
+pip install pytest-cov
+python -m pytest --cov=scanner --cov-report=term-missing
 ```
 
 Test files live in `scanner/tests/`; external APIs are mocked for the offline suite.

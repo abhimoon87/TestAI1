@@ -43,3 +43,8 @@ scanner/**/.cache/
 
 # Test output
 pytest_out.txt
+
+# Coverage artifacts
+.coverage
+coverage.xml
+htmlcov/

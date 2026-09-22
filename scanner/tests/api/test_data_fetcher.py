@@ -1025,7 +1025,11 @@ class TestStreamYieldsPerChunk:
         """A stalled chunk must not delay the fast chunk's yield."""
         import time as _time
 
-        SLOW_SLEEP = 4.0
+        # Generous margins: under coverage instrumentation or a loaded CI
+        # runner the fast path can take ~4s, while the old group-barrier
+        # behavior always waited the full SLOW_SLEEP. Keep >=2s of headroom
+        # on both sides of the assertion.
+        SLOW_SLEEP = 8.0
         fast = [f"T{i}" for i in range(200)]
         slow = [f"SLOW{i}" for i in range(200)]
 
@@ -1046,8 +1050,8 @@ class TestStreamYieldsPerChunk:
                 rest = list(gen)
 
         # Fast chunk (~0.5s of frame processing) must paint well before the
-        # stalled sibling finishes; old group-barrier code waited 4s+.
-        assert first_dt < SLOW_SLEEP - 1.0, f"first paint took {first_dt:.2f}s"
+        # stalled sibling finishes; old group-barrier code waited SLOW_SLEEP+.
+        assert first_dt < SLOW_SLEEP - 2.0, f"first paint took {first_dt:.2f}s"
         assert set(first) == set(fast)
         assert {t for chunk in rest for t in chunk} == set(slow)
 
