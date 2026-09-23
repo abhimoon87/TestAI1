@@ -56,16 +56,6 @@ class LayoutViewMixin:
                 icon = ft.Icons.SETTINGS
             elif kind == "play":
                 icon = ft.Icons.PLAY_ARROW
-            elif kind == "chart":
-                icon = ft.Icons.INSIGHTS
-            elif kind == "collapse":
-                icon = ft.Icons.CHEVRON_LEFT
-            elif kind == "expand":
-                icon = ft.Icons.CHEVRON_RIGHT
-            elif kind == "sun":
-                icon = ft.Icons.LIGHT_MODE
-            elif kind == "moon":
-                icon = ft.Icons.DARK_MODE
             else:
                 icon = ft.Icons.CIRCLE
             return ft.Container(
@@ -160,23 +150,14 @@ class LayoutViewMixin:
 
     def _styled_dropdown(self, options, value, on_select=None) -> ft.Dropdown:
         """Full-width modern dropdown matching the app theme."""
-        c = self.theme_colors
-        return ft.Dropdown(
-            options=[ft.dropdown.Option(v) for v in options],
-            value=value,
-            expand=True,
-            height=46,
-            text_size=13,
-            bgcolor=c["option_bg"],
-            color=c["text"],
-            border_color=c["border"],
-            border_width=1,
-            border_radius=10,
-            focused_border_color=c["purple"],
-            content_padding=_padding_only(left=12, right=8, top=8, bottom=8),
-            menu_height=260,
-            on_select=on_select,
-        )
+        from .ui_kit import themed_dropdown
+
+        dd = themed_dropdown(options, value, self.theme_colors, on_select=on_select)
+        dd.expand = True
+        dd.height = 46
+        dd.content_padding = _padding_only(left=12, right=8, top=8, bottom=8)
+        dd.menu_height = 260
+        return dd
 
     def _cache_card(self, title, status_lbl, clear_btn) -> ft.Container:
         """Labeled cache row: title + clear action on top, status below."""
@@ -738,33 +719,53 @@ class LayoutViewMixin:
             expand=True,
         )
 
-        # Build both views once; switching only flips ``visible`` flags.
-        # Re-parenting or replacing live controls breaks Flet's client tree
-        # (vanishing panes), and rebuilding the page resizes a maximized
-        # window — so the main area is a stable stack of two siblings.
-        self.dashboard_view = self.dashboard_content
-        self.settings_view = self._build_settings_view()
-        _active = getattr(self, "active_view", "dashboard")
-        self.dashboard_view.visible = _active == "dashboard"
-        self.settings_view.visible = _active == "settings"
-        # Soft fade on view switches — _fade_view_in drives opacity 0 -> 1.
-        for _v in (self.dashboard_view, self.settings_view):
-            _v.opacity = 1.0
-            _v.animate_opacity = ANIM_NORMAL
+        # Dashboard stays permanently mounted and visible. Settings is an
+        # opaque overlay on top — switching never touches dashboard layout.
+        # Both panes are positioned fill (left/top/right/bottom=0): Flet's
+        # expand only works under Column/Row/View/Page, and StackFit.EXPAND
+        # alone left the dashboard Column collapsed to topbar height.
+        # ponytail: overlay not routes — split panes only if both must show.
+        self.dashboard_view = ft.Container(
+            content=self.dashboard_content,
+            left=0,
+            top=0,
+            right=0,
+            bottom=0,
+            visible=True,
+            opacity=1.0,
+            animate_opacity=ANIM_NORMAL,
+        )
 
-        # Main area holds both views; only one visible at a time.
-        self.main_area_box = ft.Container(
-            content=ft.Column(
-                controls=[self.dashboard_view, self.settings_view],
-                spacing=0,
-                expand=True,
-            ),
-            expand=True,
+        settings_body = self._build_settings_view()
+        self.settings_view = ft.Container(
+            content=settings_body,
+            left=0,
+            top=0,
+            right=0,
+            bottom=0,
             bgcolor=c["main_bg"],
-            gradient=ft.RadialGradient(
-                center=Alignment(x=-1.0, y=-1.0),
-                colors=[c["bg_radial"], c["main_bg"]],
-            ),
+            visible=getattr(self, "active_view", "dashboard") == "settings",
+            opacity=1.0,
+            animate_opacity=ANIM_NORMAL,
+        )
+
+        self.main_area_box = ft.Stack(
+            controls=[
+                ft.Container(
+                    left=0,
+                    top=0,
+                    right=0,
+                    bottom=0,
+                    bgcolor=c["main_bg"],
+                    gradient=ft.RadialGradient(
+                        center=Alignment(x=-1.0, y=-1.0),
+                        colors=[c["bg_radial"], c["main_bg"]],
+                    ),
+                ),
+                self.dashboard_view,
+                self.settings_view,
+            ],
+            expand=True,
         )
         if getattr(self, "_last_market", None) is not None:
             self._render_market(self._last_market)

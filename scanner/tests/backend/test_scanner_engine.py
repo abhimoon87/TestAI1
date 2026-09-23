@@ -17,6 +17,7 @@ from scanner.backend.scanner_engine import (
     rating_ok_for_trend_filter,
 )
 from scanner.backend.settings_store import DEFAULT_SETTINGS
+from scanner.tests.conftest import _frame_ending
 
 
 @pytest.fixture(autouse=True)
@@ -444,13 +445,6 @@ class TestScanWarnings:
 # ══════════════════════════════════════════════════════════════════════════════
 # Stale universe members — suspended/delisted names still fetched each scan
 # ══════════════════════════════════════════════════════════════════════════════
-
-
-def _frame_ending(days_ago, n=20):
-    """OHLCV frame whose last bar is ``days_ago`` calendar days before today."""
-    end = pd.Timestamp.now().normalize() - pd.Timedelta(days=days_ago)
-    dates = pd.bdate_range(end - pd.Timedelta(days=n), periods=n)
-    return pd.DataFrame({"close": [1.0] * n, "volume": [1] * n}, index=dates)
 
 
 class TestStaleMembers:

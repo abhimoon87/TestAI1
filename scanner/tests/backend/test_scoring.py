@@ -380,11 +380,7 @@ class TestComputeScores:
             "slope_ma_len": 50,
             "slope_lookback": 10,
             "flat_threshold": 0.5,
-            "sc_pivot_len": 3,
-            "sc_bands_mult": 0.6,
             "vp_lookback": 200,
-            "vp_rows": 30,
-            "vp_width": 40,
             "crossover_lookback": 20,
         }
         result = compute_scores(synthetic_ohlcv, timeframe="D", settings=settings)

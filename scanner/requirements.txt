@@ -3,7 +3,6 @@
 # built and tested against this version's control API (page.open/close and
 # page.snack_bar were removed in 1.0 in favor of show_dialog/pop_dialog).
 flet==1.0.0
-Pillow>=9.0.0
 pandas>=2.0.0
 numpy>=1.24.0
 pyarrow>=12.0.0

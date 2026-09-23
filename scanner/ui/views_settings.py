@@ -107,13 +107,11 @@ class SettingsViewMixin:
             "Volume profile",
             [
                 ("vp_lookback", "VP lookback (bars)", "int", 2, 1000),
-                ("vp_rows", "VP rows", "int", 2, 200),
             ],
         ),
         (
             "Output & cache",
             [
-                ("min_score", "Min score", "float", 0, 100),
                 (
                     "negative_cache_ttl_hours",
                     "Dead-cache TTL (hours)",

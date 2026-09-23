@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 import scanner.backend.settings_store as store_mod
 
 
@@ -86,3 +88,68 @@ def test_reduce_motion_rejects_non_bool(tmp_path, monkeypatch):
     settings_file.write_text(json.dumps({"reduce_motion": "yes"}), encoding="utf-8")
     monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
     assert store_mod.load_settings()["reduce_motion"] is False
+
+
+# ── Results persistence ──────────────────────────────────────────────────────
+
+
+def test_results_round_trip(tmp_path, monkeypatch):
+    """save_results -> load_results returns the same dict rows."""
+    results_file = tmp_path / "last_results.json"
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(results_file))
+
+    rows = [
+        {"ticker": "TCS", "total": 72.5, "ma_bullish": True, "px_tail": [1.0, 2.0]},
+        {"ticker": "INFY", "total": 61.0, "ma_bullish": False},
+    ]
+    store_mod.save_results(rows)
+    assert store_mod.load_results() == rows
+
+
+def test_results_missing_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "nope.json"))
+    assert store_mod.load_results() == []
+
+
+def test_results_corrupt_file_returns_empty(tmp_path, monkeypatch):
+    results_file = tmp_path / "last_results.json"
+    results_file.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(results_file))
+    assert store_mod.load_results() == []
+
+
+def test_results_non_list_returns_empty(tmp_path, monkeypatch):
+    results_file = tmp_path / "last_results.json"
+    results_file.write_text(json.dumps({"ticker": "TCS"}), encoding="utf-8")
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(results_file))
+    assert store_mod.load_results() == []
+
+
+def test_results_filters_non_dict_entries(tmp_path, monkeypatch):
+    results_file = tmp_path / "last_results.json"
+    results_file.write_text(
+        json.dumps([{"ticker": "TCS"}, "garbage", 42]), encoding="utf-8"
+    )
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(results_file))
+    assert store_mod.load_results() == [{"ticker": "TCS"}]
+
+
+def test_results_numpy_scalars_serialized(tmp_path, monkeypatch):
+    """numpy bool/float must not crash json.dump (coerced via default=)."""
+    np = pytest.importorskip("numpy")
+    results_file = tmp_path / "last_results.json"
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(results_file))
+
+    rows = [
+        {
+            "ticker": "TCS",
+            "ma_bullish": np.bool_(True),
+            "close": np.float64(123.45),
+            "total": np.float64(70.0),
+        }
+    ]
+    store_mod.save_results(rows)
+    loaded = store_mod.load_results()
+    assert loaded[0]["ma_bullish"] is True
+    assert loaded[0]["close"] == 123.45
+    assert loaded[0]["total"] == 70.0

@@ -16,7 +16,6 @@ import flet as ft
 # ── Animation presets ───────────────────────────────────────────────
 ANIM_FAST = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
 ANIM_NORMAL = ft.Animation(300, ft.AnimationCurve.EASE_OUT)
-ANIM_SLOW = ft.Animation(500, ft.AnimationCurve.EASE_OUT)
 ANIM_BOUNCE = ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
 
 
@@ -82,16 +81,6 @@ def _margin_only(
     return ft.Margin(left=left, top=top, right=right, bottom=bottom)
 
 
-def _score_of(r: dict) -> float:
-    """Total score of a result row, tolerant of missing/None values.
-
-    Backward-compat re-export — canonical definition lives in constants.py.
-    """
-    from ..shared.constants import score_of as _so
-
-    return _so(r)
-
-
 def score_color(score: float, c: dict) -> str:
     """Tier color for a numeric score (single source of truth)."""
     try:
@@ -114,20 +103,6 @@ def rating_color(rating: str, c: dict) -> str:
         "GOOD": c["lime"],
         "MODERATE": c["orange"],
     }.get((rating or "POOR").upper(), c["red"])
-
-
-def glass_card(content, c: dict, padding=None) -> ft.Container:
-    """Frosted-glass card container shared by all views."""
-    return ft.Container(
-        content=content,
-        bgcolor=_glass_bg(),
-        border=_glass_border(),
-        border_radius=14,
-        shadow=_card_shadow(),
-        padding=padding
-        if padding is not None
-        else _padding_only(left=14, right=14, top=10, bottom=10),
-    )
 
 
 def themed_dropdown(

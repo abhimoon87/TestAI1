@@ -5,20 +5,8 @@ Extracted from app.py for testability and reusability.
 
 import logging
 import threading
-import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-
-try:
-    # Private CPython internals — used solely to spawn daemon worker threads
-    # so a hung provider can never block process exit (see the executor class
-    # below). Guarded so a CPython upgrade that moves/renames these names
-    # degrades to the standard executor instead of failing at import time.
-    from concurrent.futures.thread import _threads_queues, _worker
-
-    _HAS_TPE_INTERNALS = hasattr(ThreadPoolExecutor, "_adjust_thread_count")
-except ImportError:  # pragma: no cover - non-CPython or future CPython
-    _HAS_TPE_INTERNALS = False
 from datetime import datetime
 from typing import Any
 
@@ -36,6 +24,7 @@ from ..api.cache_manager import (
     reset_negative_skips,
 )
 from ..api.data_fetcher import (
+    _DaemonThreadPoolExecutor,
     fetch_batch_yfinance,
     fetch_batch_yfinance_stream,
     fetch_fundamentals,
@@ -336,52 +325,6 @@ def _parallel_score(items, score_fn, cancel_event, max_workers=8):
     return ordered, cancelled
 
 
-if _HAS_TPE_INTERNALS:
-
-    class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
-        """ThreadPoolExecutor that creates daemon threads.
-
-        On cancel/timeout, running futures continue in background threads but
-        because they are daemon threads, they won't prevent process exit.
-        """
-
-        def _adjust_thread_count(self):
-            # Identical to the base class, but sets daemon=True *before* start().
-            if self._idle_semaphore.acquire(timeout=0):
-                return
-
-            def weakref_cb(_, q=self._work_queue):
-                q.put(None)
-
-            num_threads = len(self._threads)
-            if num_threads < self._max_workers:
-                thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
-                t = threading.Thread(
-                    name=thread_name,
-                    target=_worker,
-                    args=(
-                        weakref.ref(self, weakref_cb),
-                        self._work_queue,
-                        self._initializer,
-                        self._initargs,
-                    ),
-                    daemon=True,
-                )
-                t.start()
-                self._threads.add(t)
-                _threads_queues[t] = self._work_queue
-
-else:  # pragma: no cover - only hit on interpreters lacking the private API
-    # Degraded fallback: workers are non-daemon, so a hung worker thread can
-    # delay (but not corrupt) interpreter shutdown after a cancel. Everything
-    # else — ordering, cancellation, timeouts — behaves identically.
-    logger.debug(
-        "concurrent.futures internals unavailable; "
-        "falling back to standard ThreadPoolExecutor"
-    )
-    _DaemonThreadPoolExecutor = ThreadPoolExecutor
-
-
 def _enrich_rows_in_place(
     rows: list[dict],
     batch_data: dict,
@@ -622,7 +565,6 @@ class ScannerEngine:
         self._cancel_event = threading.Event()
         self._progress_callback: Callable[[float, str], None] | None = None
         self._log_callback: Callable[[str], None] | None = None
-        self._batch_callback: Callable[[list[dict]], None] | None = None
 
     def cancel(self):
         """Signal the scan to cancel."""
@@ -635,10 +577,6 @@ class ScannerEngine:
     def set_log_callback(self, callback: Callable[[str], None]):
         """Set callback for log messages: callback(message: str)"""
         self._log_callback = callback
-
-    def set_batch_callback(self, callback: Callable[[list[dict]], None] | None):
-        """Set callback for incremental batch results: callback(batch: list[dict])"""
-        self._batch_callback = callback
 
     def _progress(self, value: float, text: str = ""):
         if self._progress_callback:
@@ -815,7 +753,7 @@ class ScannerEngine:
         """
         Fetch macro/mandi data ONCE (not per-ticker) — parallelized.
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import as_completed
 
         global_data: dict = {}
         api_config = load_api_config()
@@ -880,7 +818,7 @@ class ScannerEngine:
         Runs all 5 per-ticker providers in parallel via ThreadPoolExecutor.
         If an executor is provided, reuses it; otherwise creates a temporary one.
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import as_completed
 
         enriched = settings.copy()
 
@@ -1343,8 +1281,7 @@ class ScannerEngine:
         then after all chunks enrich the global top-200 and emit an update
         batch (existing rows are replaced in-place in the UI).
         """
-        # Allow callback via setter or direct param
-        batch_cb = on_batch or self._batch_callback
+        batch_cb = on_batch
         self._cancel_event.clear()
         result = ScanResult()
         import time as _time

@@ -92,6 +92,13 @@ class ResultsViewMixin:
                 logger.info("Sort failed for col %s: %s", self.sort_col, ex)
 
         # ── Streaming fast path: patch rows in-place, no full rebuild ──
+        threshold = self.settings.get("min_score", 50)
+        page_size = self.page_size
+        total_pages = max(1, (len(shown) + page_size - 1) // page_size) if shown else 1
+        self.current_page = max(0, min(self.current_page, total_pages - 1))
+        start = self.current_page * page_size
+        page_shown = shown[start : start + page_size] if shown else []
+
         pool = getattr(self, "_row_pool", None)
         cells = getattr(self, "_row_cells", None)
         is_stream = (
@@ -113,13 +120,6 @@ class ResultsViewMixin:
         )
 
         if is_stream and shown:
-            threshold = self.settings.get("min_score", 50)
-            page_size = self.page_size
-            total_pages = max(1, (len(shown) + page_size - 1) // page_size)
-            self.current_page = max(0, min(self.current_page, total_pages - 1))
-            start = self.current_page * page_size
-            page_shown = shown[start : start + page_size]
-
             # Remove scan placeholder if present (it blocks row display)
             if self.table_column.controls:
                 first = self.table_column.controls[0]
@@ -153,149 +153,113 @@ class ResultsViewMixin:
                         else (c["row_alt"] if rank % 2 else c["main_bg"])
                     )
                     row = self._create_row_controls(r, rank, c, row_bg, threshold)
-                    row.opacity = 1  # no fade-in for streaming appends
                     self.table_column.controls.append(row)
 
-            self.pagination_bar.visible = bool(shown and len(shown) > page_size)
-            self.page_label.value = (
-                f"Page {self.current_page + 1} / {total_pages}  ({len(shown)} stocks)"
-            )
-
-            # Update summary/hero/chart even during streaming (same as
-            # the full rebuild path below — the table update is the only
-            # part we skip).
-            if results:
-                threshold = self.settings.get("min_score", 50)
-                filter_parts = []
-                if self.filter_text:
-                    filter_parts.append(f"'{self.filter_text}'")
-                rating = self._rating_filter()
-                if rating != "ALL":
-                    filter_parts.append(f"rating {rating.title()}")
-                suffix = (
-                    f"  |  filter: {', '.join(filter_parts)} ({len(shown)})"
-                    if filter_parts
-                    else ""
-                )
-                self.result_count_label.value = f"{len(results)} scanned  |  {len([r for r in results if _score_of(r) >= threshold])} above {threshold:.0f}+{suffix}"
-            else:
-                self.result_count_label.value = "no scan yet"
-            self._update_summary(results)
-            self._update_hero_status(results)
-            self._render_topicks(shown[:5])
-            self._render_chart(results)
             logger.info(
                 "_render_current_page STREAM DONE: table_ctrls=%d, shown=%d, results=%d",
                 len(self.table_column.controls),
                 len(shown),
                 len(results),
             )
-            return  # skip full rebuild below
 
         # ── Full rebuild path ─────────────────────────────────────────
-        if getattr(self, "_row_pool", None):
-            self._row_pool.clear()
-        if getattr(self, "_row_cells", None):
-            self._row_cells.clear()
-        self.table_column.controls.clear()
-        self.pagination_bar.visible = False
+        else:
+            if getattr(self, "_row_pool", None):
+                self._row_pool.clear()
+            if getattr(self, "_row_cells", None):
+                self._row_cells.clear()
+            self.table_column.controls.clear()
 
-        if not shown:
-            if self.scanning and not results:
-                live = (getattr(self.progress_label, "value", "") or "").strip()
-                headline = (
-                    live
-                    if live and live not in ("Ready", "Done", "Stopped")
-                    else "Scanning — fetching batches…"
-                )
-                self.table_column.controls.append(self._make_scan_placeholder(headline))
-            else:
-                has_active_filter = self._is_filter_active()
-                filtered_empty = bool(results) and has_active_filter
-                msg = (
-                    "No results match your filter."
-                    if filtered_empty
-                    else "No results found."
-                )
-                empty_body = [
-                    ft.Icon(
-                        ft.Icons.FILTER_ALT_OFF
+            if not shown:
+                if self.scanning and not results:
+                    live = (getattr(self.progress_label, "value", "") or "").strip()
+                    headline = (
+                        live
+                        if live and live not in ("Ready", "Done", "Stopped")
+                        else "Scanning — fetching batches…"
+                    )
+                    self.table_column.controls.append(
+                        self._make_scan_placeholder(headline)
+                    )
+                else:
+                    has_active_filter = self._is_filter_active()
+                    filtered_empty = bool(results) and has_active_filter
+                    msg = (
+                        "No results match your filter."
                         if filtered_empty
-                        else ft.Icons.SEARCH_OFF,
-                        size=34,
-                        color=c["text_faint"],
-                    ),
-                    ft.Text(
-                        msg,
-                        size=13,
-                        color=c["text_dim"] if filtered_empty else c["red"],
-                    ),
-                    ft.Text(
-                        "Loosen the search/rating filter to see the hidden rows."
-                        if filtered_empty
-                        else "Try a lower min-score threshold or a different universe.",
-                        size=11,
-                        color=c["text_faint"],
-                    ),
-                ]
-                if filtered_empty:
-                    empty_body.append(
-                        ft.TextButton(
-                            content=ft.Text("Reset filters", size=12),
-                            on_click=self._reset_filters,
-                            style=ft.ButtonStyle(color=c["cyan"]),
+                        else "No results found."
+                    )
+                    empty_body = [
+                        ft.Icon(
+                            ft.Icons.FILTER_ALT_OFF
+                            if filtered_empty
+                            else ft.Icons.SEARCH_OFF,
+                            size=34,
+                            color=c["text_faint"],
+                        ),
+                        ft.Text(
+                            msg,
+                            size=13,
+                            color=c["text_dim"] if filtered_empty else c["red"],
+                        ),
+                        ft.Text(
+                            "Loosen the search/rating filter to see the hidden rows."
+                            if filtered_empty
+                            else "Try a lower min-score threshold or a different universe.",
+                            size=11,
+                            color=c["text_faint"],
+                        ),
+                    ]
+                    if filtered_empty:
+                        empty_body.append(
+                            ft.TextButton(
+                                content=ft.Text("Reset filters", size=12),
+                                on_click=self._reset_filters,
+                                style=ft.ButtonStyle(color=c["cyan"]),
+                            )
+                        )
+                    self.table_column.controls.append(
+                        ft.Container(
+                            content=ft.Column(
+                                empty_body,
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                spacing=4,
+                            ),
+                            alignment=Alignment.CENTER,
+                            padding=30,
                         )
                     )
-                self.table_column.controls.append(
-                    ft.Container(
-                        content=ft.Column(
-                            empty_body,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=4,
-                        ),
-                        alignment=Alignment.CENTER,
-                        padding=30,
-                    )
-                )
-        else:
-            threshold = self.settings.get("min_score", 50)
-            page_size = self.page_size
-            total_pages = max(1, (len(shown) + page_size - 1) // page_size)
-            self.current_page = max(0, min(self.current_page, total_pages - 1))
-            start = self.current_page * page_size
-            page_shown = shown[start : start + page_size]
+            else:
+                header_row = self._make_header_row(c)
+                self.table_column.controls.append(header_row)
 
-            header_row = self._make_header_row(c)
-            self.table_column.controls.append(header_row)
+                for rank, r in enumerate(page_shown, start + 1):
+                    try:
+                        score = _score_of(r)
+                        is_above = score >= threshold
+                        row_bg = (
+                            c["card"]
+                            if is_above
+                            else (c["row_alt"] if rank % 2 else c["main_bg"])
+                        )
+                        row = self._create_row_controls(r, rank, c, row_bg, threshold)
+                        self.table_column.controls.append(row)
+                    except Exception:
+                        logger.info(
+                            "Full rebuild: _create_row_controls FAILED rank=%d ticker=%s",
+                            rank,
+                            r.get("ticker", "?"),
+                            exc_info=True,
+                        )
 
-            for rank, r in enumerate(page_shown, start + 1):
-                try:
-                    score = _score_of(r)
-                    is_above = score >= threshold
-                    row_bg = (
-                        c["card"]
-                        if is_above
-                        else (c["row_alt"] if rank % 2 else c["main_bg"])
-                    )
-                    row = self._create_row_controls(r, rank, c, row_bg, threshold)
-                    self.table_column.controls.append(row)
-                except Exception:
-                    logger.info(
-                        "Full rebuild: _create_row_controls FAILED rank=%d ticker=%s",
-                        rank,
-                        r.get("ticker", "?"),
-                        exc_info=True,
-                    )
-
-            self._animate_rows_in()
-
-            self.pagination_bar.visible = bool(shown and len(shown) > page_size)
+        # ── Shared tail: pagination + summary/hero/chart ──────────────
+        self.pagination_bar.visible = bool(shown and len(shown) > page_size)
+        if shown:
             self.page_label.value = (
                 f"Page {self.current_page + 1} / {total_pages}  ({len(shown)} stocks)"
             )
 
         if results:
-            threshold = self.settings.get("min_score", 50)
             filter_parts = []
             if self.filter_text:
                 filter_parts.append(f"'{self.filter_text}'")
@@ -322,47 +286,6 @@ class ResultsViewMixin:
             len(results),
         )
 
-    def _animate_rows_in(self):
-        """Trigger fade-in on newly added data rows.
-
-        Rows are built with ``opacity=0`` + ``animate_opacity=ANIM_FAST``.
-        The caller's ``page.update()`` pushes them to the client at opacity 0,
-        then this method sets ``opacity=1`` so the client renders the fade-in
-        transition.
-
-        Pooled rows that were already visible (streaming updates) keep
-        ``opacity=1`` — only truly new rows animate.
-        """
-        try:
-            motion = getattr(self, "_motion_reduced", None)
-            if motion is not None and motion():
-                return
-            pool = getattr(self, "_row_pool", None) or {}
-            rows = [
-                ctrl
-                for ctrl in self.table_column.controls
-                if isinstance(ctrl, ft.Container)
-                and hasattr(ctrl, "opacity")
-                and ctrl.opacity == 0
-            ]
-            logger.info(
-                "_animate_rows_in: found %d rows with opacity=0, pool=%d, total_ctrls=%d",
-                len(rows),
-                len(pool),
-                len(self.table_column.controls),
-            )
-            if not rows:
-                return
-            for row in rows:
-                # Pooled rows already visible stay at opacity 1
-                ticker = getattr(row, "_pool_ticker", None)
-                if ticker and ticker in pool:
-                    row.opacity = 1
-                else:
-                    row.opacity = 1
-        except Exception:
-            logger.info("Row stagger animation failed", exc_info=True)
-
     def _make_header_row(self, c):
         headers = []
         for idx, text in enumerate(RESULT_COLS):
@@ -380,7 +303,9 @@ class ResultsViewMixin:
                         size=10,
                         weight=ft.FontWeight.BOLD,
                         color=color,
-                        text_align=ft.TextAlign.LEFT if idx == 1 else None,
+                        text_align=ft.TextAlign.LEFT if idx in (0, 1) else None,
+                        max_lines=1,
+                        no_wrap=True,
                     ),
                     expand=2 if idx == 1 else True,
                     on_click=lambda e, i=idx: self._on_sort(i),
@@ -500,167 +425,7 @@ class ResultsViewMixin:
             tooltip=f"{ticker}: {move:+.1f}% over the last {len(px)} closes",
         )
 
-    def _make_data_row(self, r, rank, c, bg, threshold):
-        total = _score_of(r)
-        ticker = r.get("ticker", "?")
-        trend_dir = r.get("trend_dir") or ""
-        is_above = total >= threshold
-        rating = r.get("combined_rating", "POOR")
-        rating_txt_color = rating_color(rating, c)
-        entry = bool(r.get("entry_signal"))
-        accent = self._rating_accent(rating)
-        cols = [
-            (str(rank), c["text_dim"], 11, False),
-            (ticker, c["green"] if is_above else c["text"], 12, True),
-            (f"{total:.0f}", score_color(total, c), 14, True),
-            (rating, rating_txt_color, 11, True),
-            (
-                "YES" if entry else "--",
-                c["green"] if entry else c["text_dim"],
-                11,
-                True,
-            ),
-            (f"₹{r.get('close', 0) or 0:.0f}", c["text"], 12, True),
-            (self._ma_text(r), self._ma_color(r), 11, False),
-            (f"{r.get('trend', 0) or 0:.0f}", c["green"], 11, False),
-            (f"{r.get('momentum', 0) or 0:.0f}", c["cyan"], 11, False),
-            (f"{r.get('rsi', 0) or 0:.0f}", c["blue"], 11, False),
-            (f"{r.get('macd', 0) or 0:.0f}", c.get("macd", c["blue"]), 11, False),
-            (f"{r.get('volume', 0) or 0:.0f}", c["orange"], 11, False),
-            (f"{r.get('rel_str', 0) or 0:.0f}", c["lime"], 11, False),
-            (
-                f"{r.get('fundamentals', 0) or 0:.0f}",
-                c.get("fund", c["yellow"]),
-                11,
-                False,
-            ),
-            (
-                f"{r.get('pc1m', 0) or 0:+.1f}%",
-                c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"],
-                11,
-                False,
-            ),
-            (
-                ("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?"),
-                c["green"] if trend_dir == "Bull" else c["red"],
-                11,
-                False,
-            ),
-            (f"{r.get('adx_val', 0) or 0:.0f}", c["text"], 11, False),
-            (
-                "Chop" if r.get("is_sideways") else "OK",
-                c["orange"] if r.get("is_sideways") else c["green"],
-                11,
-                False,
-            ),
-        ]
-
-        # Subtle chip washes for the rating and ENTRY columns — the text color
-        # (asserted by tests) is untouched, only the cell background differs.
-        wash_for = {}
-        if entry:
-            wash_for[4] = ft.Colors.with_opacity(0.14, c["green"])
-        wash_for[3] = {
-            "EXCELLENT": ft.Colors.with_opacity(0.12, c["green"]),
-            "GOOD": ft.Colors.with_opacity(0.09, c["lime"]),
-            "MODERATE": ft.Colors.with_opacity(0.12, c["orange"]),
-            "POOR": ft.Colors.with_opacity(0.12, c["red"]),
-        }.get(rating)
-
-        controls = []
-        ticker_cell = None
-        for idx, ((text, color, size, bold), _col_name) in enumerate(
-            zip(cols, RESULT_COLS)
-        ):
-            w = ft.Text(
-                text,
-                size=size,
-                weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
-                color=color,
-                max_lines=1,
-                overflow=ft.TextOverflow.CLIP,
-            )
-            cell = ft.Container(content=w, expand=2 if idx == 1 else True)
-            if idx == 0:
-                # Rank cell carries a rating-colored accent rail so rows read
-                # as green/lime/orange/red bands at a glance.
-                cell.content = ft.Row(
-                    controls=[
-                        ft.Container(
-                            width=3, height=18, border_radius=2, bgcolor=accent
-                        ),
-                        w,
-                    ],
-                    spacing=5,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
-                cell.tooltip = rating.title()
-            if idx in wash_for and wash_for[idx] is not None:
-                cell.bgcolor = wash_for[idx]
-                cell.border_radius = 6
-            if idx == 1:
-                ticker_cell = cell
-                w.text_align = ft.TextAlign.LEFT
-                w.max_lines = 1
-                w.overflow = ft.TextOverflow.CLIP
-                w.no_wrap = True
-                badge = self._sentiment_badge(r, c)
-                if badge is not None:
-                    # Keep the ticker text as the row's first control so the
-                    # news-expansion scanners can still find it by value; the
-                    # text shrinks to make room for the badge.
-                    w.expand = True
-                    cell.content = ft.Row(
-                        controls=[w, badge],
-                        spacing=5,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    )
-            if idx == 2:
-                pass  # score column: just the value text, no bar
-            controls.append(cell)
-
-        # Trailing column: mini 1-month sparkline from the closes the engine
-        # attached to each row (``px_tail``); dim dash when unavailable.
-        px = [
-            v
-            for v in (r.get("px_tail") or [])
-            if v is not None and isinstance(v, (int, float))
-        ]
-        if len(px) >= 2:
-            spark_cell = self._make_sparkline(px, ticker, c)
-        else:
-            spark_cell = ft.Container(
-                content=ft.Text(
-                    "—", size=10, color=c["text_faint"], text_align=ft.TextAlign.CENTER
-                ),
-                expand=True,
-            )
-        controls.append(spark_cell)
-
-        ticker_cell.on_click = lambda e, t=ticker: self._toggle_stock_news(t)
-        ticker_cell.tooltip = "Click for news & sentiment"
-
-        row = ft.Container(
-            content=ft.Row(
-                controls=controls,
-                spacing=2,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            bgcolor=bg,
-            border_radius=8,
-            border=_border_all(1, c["border"]) if is_above else None,
-            height=34,
-            padding=_padding_only(left=6, right=6),
-            margin=_margin_only(bottom=1),
-            opacity=0,
-            animate_opacity=ANIM_FAST,
-        )
-        row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
-        return row
-
-    # ── Pool-based row creation and incremental update ────────────────
-
-    def _build_cell(self, text, color, size, bold, expand_extra=False):
+    def _build_cell(self, text, color, size, bold):
         """Create a single cell: ft.Text inside ft.Container."""
         w = ft.Text(
             text,
@@ -675,9 +440,8 @@ class ResultsViewMixin:
     def _create_row_controls(self, r, rank, c, bg, threshold):
         """Build a row's Flet controls and store text refs in the pool.
 
-        Returns the outermost ``ft.Container`` (identical structure to
-        ``_make_data_row``) and registers it in ``_row_pool`` /
-        ``_row_cells`` so that ``_update_row`` can patch values in-place.
+        Returns the outermost ``ft.Container`` and registers it in
+        ``_row_pool`` / ``_row_cells`` so ``_update_row`` can patch values.
         """
         total = _score_of(r)
         ticker = r.get("ticker", "?")
@@ -748,6 +512,9 @@ class ResultsViewMixin:
         cell_texts = []
         for idx, (text, color, size, bold) in enumerate(cols):
             cell, txt = self._build_cell(text, color, size, bold)
+            # Match header: Ticker is double-width, rest flex equally
+            if idx == 1:
+                cell.expand = 2
             cell_texts.append(txt)
 
             if idx == 0:
@@ -811,8 +578,6 @@ class ResultsViewMixin:
             height=34,
             padding=_padding_only(left=6, right=6),
             margin=_margin_only(bottom=1),
-            opacity=0,
-            animate_opacity=ANIM_FAST,
         )
         row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
 
@@ -911,9 +676,6 @@ class ResultsViewMixin:
             rail = rank_inner.controls[0]
             if isinstance(rail, ft.Container):
                 rail.bgcolor = accent
-
-        # Ensure the row is visible (streaming updates patch in-place)
-        row.opacity = 1
 
         return True
 

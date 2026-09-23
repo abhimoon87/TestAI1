@@ -5,10 +5,8 @@ the same ``_make_app`` mock harness as the view tests (``_safe_update``
 stubbed to run inline, as the existing error-path tests do).
 """
 
-import json
 import threading
 
-import scanner.backend.settings_store as store
 from scanner.tests.ui.test_view_mixins import _make_app
 from scanner.ui.ui_kit import (
     PaletteAction,
@@ -34,10 +32,6 @@ def _ready_app():
     app._safe_update = lambda fn: fn()
     app._build_ui()
     return app
-
-
-def _visible_views(app):
-    return [v for v in (app.dashboard_view, app.settings_view) if v.visible]
 
 
 # ── Fuzzy matcher (pure, no page needed) ──────────────────────────────
@@ -74,20 +68,61 @@ def test_fuzzy_score_none_on_missing_letter():
 
 def test_build_shows_only_dashboard():
     app = _ready_app()
-    assert [type(v).__name__ for v in _visible_views(app)] == ["Column"]
     assert app.dashboard_view.visible is True
     assert app.settings_view.visible is False
 
 
-def test_show_view_toggles_exactly_one_pane():
+def test_show_view_overlays_settings_without_hiding_dashboard():
+    """Settings is an overlay — dashboard stays mounted/visible underneath."""
     app = _ready_app()
     app._show_settings()
-    assert app.dashboard_view.visible is False
+    assert app.dashboard_view.visible is True
     assert app.settings_view.visible is True
     app._show_view("dashboard")
     assert app.dashboard_view.visible is True
     assert app.settings_view.visible is False
     assert app._rail_pills["dashboard"].opacity == 1.0
+
+
+def test_show_view_rebuilds_table_after_settings():
+    """Settings → Home must full-rebuild the grid, not leave it blank."""
+    app = _ready_app()
+    rows = [
+        {
+            "ticker": f"STK{i:03d}",
+            "total": 60.0 + i,
+            "close": 100.0 + i,
+            "combined_rating": "GOOD",
+            "entry_signal": False,
+            "trend_dir": "Bull",
+            "trend": 10,
+            "momentum": 10,
+            "rsi": 55,
+            "macd": 5,
+            "volume": 8,
+            "rel_str": 7,
+            "fundamentals": 12,
+            "pc1m": 2.5,
+            "adx_val": 25,
+            "is_sideways": False,
+            "ma_bullish": True,
+        }
+        for i in range(5)
+    ]
+    app.results = list(rows)
+    app.all_results = list(rows)
+    app.filtered_results = list(rows)
+    app._render_current_page()
+    assert len(app.table_column.controls) == 6  # header + 5
+
+    app._show_settings()
+    app._show_view("dashboard")
+
+    data_rows = [
+        c for c in app.table_column.controls if getattr(c, "_pool_ticker", None)
+    ]
+    assert len(data_rows) == 5
+    assert len(app._row_pool) == 5
 
 
 # ── Palette dialog ────────────────────────────────────────────────────
@@ -231,13 +266,6 @@ def test_dark_is_the_only_theme():
     from scanner.shared.themes import THEMES
 
     assert set(THEMES) == {"dark"}
-
-
-def test_saved_light_theme_self_heals_to_dark(tmp_path, monkeypatch):
-    cfg = tmp_path / "settings.json"
-    cfg.write_text(json.dumps({"theme": "light"}), encoding="utf-8")
-    monkeypatch.setattr(store, "SETTINGS_FILE", str(cfg))
-    assert store.load_settings()["theme"] == "dark"
 
 
 def test_stream_batch_multi_removal_keeps_grid_updating():

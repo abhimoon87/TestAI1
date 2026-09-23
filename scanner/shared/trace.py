@@ -11,7 +11,7 @@ Creates a single `trace.log` that captures:
 - Errors with full stack traces
 
 Usage:
-    from .trace import setup_trace, trace, get_trace_path
+    from .trace import setup_trace, trace
 
     setup_trace()  # call once at startup (idempotent)
     @trace
@@ -59,10 +59,6 @@ logging.Logger.trace = _trace  # type: ignore[attr-defined]
 
 _configured = False
 _trace_path: Path = DEFAULT_TRACE_FILE
-
-
-def get_trace_path() -> Path:
-    return _trace_path
 
 
 def setup_trace(

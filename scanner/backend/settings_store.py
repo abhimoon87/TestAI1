@@ -42,8 +42,6 @@ class ScannerSettings(TypedDict, total=False):
     index_symbol: str
     # Volume Profile
     vp_lookback: int
-    vp_rows: int
-    vp_width: int
     # Sideways Filter
     adx_len: int
     adx_threshold: float
@@ -56,9 +54,6 @@ class ScannerSettings(TypedDict, total=False):
     sideways_strong_move_pct: float
     volume_participation_len: int
     # Step Channel
-    sc_pivot_len: int
-    sc_bands_mult: float
-    # MA Crossover
     crossover_lookback: int
     # Entry gate (mirrors backtest engine): require ADX >= this for entry signal
     min_adx_entry: float
@@ -72,7 +67,6 @@ class ScannerSettings(TypedDict, total=False):
     # Scan hygiene: warn when a universe member's data is this old (days)
     stale_member_max_age_days: float
     # UI
-    theme: str
     reduce_motion: bool  # suppress decorative transitions/animations
     # Provider toggles
     use_market_sentiment: bool
@@ -91,6 +85,7 @@ class ScannerSettings(TypedDict, total=False):
 SCANNER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
 API_CONFIG_FILE = os.path.join(SCANNER_DIR, "api_config.json")
+RESULTS_FILE = os.path.join(SCANNER_DIR, "last_results.json")
 
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
 DEFAULT_SETTINGS: ScannerSettings = {
@@ -108,8 +103,6 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "index_symbol": "NSEI",
     # Volume Profile
     "vp_lookback": 200,
-    "vp_rows": 30,
-    "vp_width": 40,
     # Sideways Filter
     "adx_len": 14,
     "adx_threshold": 20.0,
@@ -121,9 +114,6 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "flat_threshold": 0.5,
     "sideways_strong_move_pct": 5.0,
     "volume_participation_len": 5,
-    # Step Channel
-    "sc_pivot_len": 3,
-    "sc_bands_mult": 0.6,
     # MA Crossover
     "crossover_lookback": 20,
     # Entry gate (mirrors backtest engine): require ADX >= this for entry signal
@@ -138,7 +128,6 @@ DEFAULT_SETTINGS: ScannerSettings = {
     # Scan hygiene: warn when a universe member's data is this old (days)
     "stale_member_max_age_days": 45.0,
     # UI
-    "theme": "dark",
     "reduce_motion": False,
     # Provider toggles
     "use_market_sentiment": True,
@@ -157,9 +146,8 @@ DEFAULT_SETTINGS: ScannerSettings = {
 
 # ── API Key Management ───────────────────────────────────────────────────────
 
-# All known API keys with descriptions and free tier info
+# Keys the scanner actually reads (via get_api_key / _get_api_key / env).
 API_KEY_REGISTRY = {
-    # Finance providers
     "FINNHUB_API_KEY": {
         "description": "Finnhub — Institutional-grade fundamental data",
         "free_tier": "60 calls/min",
@@ -170,12 +158,6 @@ API_KEY_REGISTRY = {
         "description": "Alpha Vantage — Technical indicators & fundamentals",
         "free_tier": "25 calls/day",
         "url": "https://www.alphavantage.co/support/#api-key",
-        "category": "finance",
-    },
-    "TWELVE_DATA_API_KEY": {
-        "description": "Twelve Data — Stock market data (real-time & historical)",
-        "free_tier": "800 calls/day",
-        "url": "https://twelvedata.com/register",
         "category": "finance",
     },
     "MARKETAUX_API_KEY": {
@@ -196,75 +178,12 @@ API_KEY_REGISTRY = {
         "url": "https://gnews.io/register",
         "category": "news",
     },
-    # NLP/Sentiment
-    "MEANINGCLOUD_API_KEY": {
-        "description": "MeaningCloud — Multilingual sentiment analysis",
-        "free_tier": "500 calls/day",
-        "url": "https://www.meaningcloud.com/developer/login",
-        "category": "nlp",
-    },
-    "NLPCLOUD_API_KEY": {
-        "description": "NLP Cloud — NER, sentiment, classification",
-        "free_tier": "500 calls/day",
-        "url": "https://nlpcloud.com/register",
-        "category": "nlp",
-    },
-    "HF_API_KEY": {
-        "description": "Hugging Face — Open-source sentiment models",
-        "free_tier": "300 calls/day",
-        "url": "https://huggingface.co/settings/tokens",
-        "category": "nlp",
-    },
-    "GROQ_API_KEY": {
-        "description": "Groq — Fast LLM inference for analysis",
-        "free_tier": "14,400 req/day",
-        "url": "https://console.groq.com/keys",
-        "category": "nlp",
-    },
     "TWITTER_API_KEY": {
         "description": "GetXAPI — Twitter/X posts for social sentiment",
         "free_tier": "Paid (trial available)",
         "url": "https://getxapi.com/",
         "category": "nlp",
     },
-    # Premium finance
-    "EOD_API_KEY": {
-        "description": "EOD Historical Data — 150+ exchanges, fundamentals",
-        "free_tier": "20 calls/day",
-        "url": "https://eodhistoricaldata.com/register",
-        "category": "finance",
-    },
-    "FMP_API_KEY": {
-        "description": "Financial Modeling Prep — Financial statements & ratios",
-        "free_tier": "250 calls/day",
-        "url": "https://financialmodelingprep.com/register",
-        "category": "finance",
-    },
-    "IEX_API_KEY": {
-        "description": "IEX Cloud — Real-time US + India market data",
-        "free_tier": "50,000 calls/month",
-        "url": "https://iexcloud.io/register",
-        "category": "finance",
-    },
-    "POLYGON_API_KEY": {
-        "description": "Polygon — Historical stock market data",
-        "free_tier": "5 req/min",
-        "url": "https://polygon.io/register",
-        "category": "finance",
-    },
-    "STOCKDATA_API_KEY": {
-        "description": "StockData — Real-time news & sentiment API",
-        "free_tier": "500 calls/month",
-        "url": "https://stockdata.org/register",
-        "category": "finance",
-    },
-    "STYVIO_API_KEY": {
-        "description": "Styvio — Stock sentiment scores",
-        "free_tier": "Free tier available",
-        "url": "https://styvio.com/register",
-        "category": "finance",
-    },
-    # Insider data
     "ALETHEIA_API_KEY": {
         "description": "Aletheia — Insider trading data",
         "free_tier": "100 calls/day",
@@ -277,7 +196,6 @@ API_KEY_REGISTRY = {
         "url": "https://congressinvests.com/register",
         "category": "insider",
     },
-    # Macro
     "FRED_API_KEY": {
         "description": "FRED — Federal Reserve economic data",
         "free_tier": "120 calls/min",
@@ -296,32 +214,11 @@ API_KEY_REGISTRY = {
         "url": "https://www.econdb.com/register",
         "category": "macro",
     },
-    # Environment/ESG
-    "CARBON_INTERFACE_API_KEY": {
-        "description": "Carbon Interface — CO2 emissions estimates",
-        "free_tier": "100 calls/month",
-        "url": "https://www.carboninterface.com/register",
-        "category": "esg",
-    },
-    "CLIMATIQ_API_KEY": {
-        "description": "Climatiq — Environmental footprint calculation",
-        "free_tier": "1,000 calls/month",
-        "url": "https://www.climatiq.io/register",
-        "category": "esg",
-    },
-    # Shariah
     "HALAL_API_KEY": {
         "description": "Halal Terminal — Shariah-compliant stock screening",
         "free_tier": "Free tier available",
         "url": "https://halalterminal.com/register",
         "category": "shariah",
-    },
-    # Time series
-    "TIMEDOOR_API_KEY": {
-        "description": "Time Door — Time series anomaly detection",
-        "free_tier": "Free tier available",
-        "url": "https://timedoor.com/register",
-        "category": "ml",
     },
 }
 
@@ -424,7 +321,6 @@ def _sanitize_settings(saved: dict) -> dict:
             elif isinstance(default, str):
                 sval = str(val)
                 enums = {
-                    "theme": ("dark",),
                     "entry_mode": ("classic", "high_probability", "custom"),
                     "fast_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
                     "slow_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
@@ -477,3 +373,46 @@ def save_settings(settings: ScannerSettings):
     except Exception as e:
         logger.warning("Failed to save settings: %s", e)
         raise
+
+
+def _json_default(o):
+    """Coerce numpy/pandas scalars to plain Python for json.dump."""
+    if hasattr(o, "item"):
+        return o.item()
+    return str(o)
+
+
+def save_results(rows: list[dict]):
+    """Persist the last scan's result rows atomically."""
+    try:
+        dir_name = os.path.dirname(RESULTS_FILE) or "."
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(rows, f, default=_json_default)
+            os.replace(tmp_path, RESULTS_FILE)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                logger.debug("Failed to clean up temp results file", exc_info=True)
+            raise
+    except Exception as e:
+        logger.warning("Failed to save results: %s", e)
+        raise
+
+
+def load_results() -> list[dict]:
+    """Load the last scan's result rows; missing/corrupt → []."""
+    if not os.path.exists(RESULTS_FILE):
+        return []
+    try:
+        with open(RESULTS_FILE, encoding="utf-8") as f:
+            saved = json.load(f)
+        if isinstance(saved, list):
+            return [r for r in saved if isinstance(r, dict)]
+        logger.warning("Results file is not a JSON list; ignoring")
+        return []
+    except Exception as e:
+        logger.warning("Failed to load results: %s", e)
+        return []

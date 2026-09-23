@@ -102,12 +102,12 @@ STOCH_HIGH = 80.0
 VOL_CROSSOVER_MULT = 0.8
 
 # ── UI thresholds ────────────────────────────────────────────────────────────
-# Log file rotation interval (hours)
-LOG_ROTATE_HOURS = 12
-# Maximum log lines before truncation
-LOG_MAX_LINES = 500
 # Top-scored rows whose news is prefetched after a scan
 NEWS_PREFETCH_TOP = 50
+# Rotating scan.log: keep at most this many lines in the UI log viewer
+LOG_MAX_LINES = 500
+# Rotate scan.log when it is older than this many hours
+LOG_ROTATE_HOURS = 24
 
 
 # ── Shared helpers (pure data, no Flet dependency) ───────────────────────────

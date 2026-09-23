@@ -28,7 +28,6 @@ from scanner.shared.universes import (
     NIFTY_SMALLCAP_100,
     SUSPENDED_OR_DELISTED,
     UNIVERSES,
-    dead_member_reason,
     strip_dead_members,
 )
 
@@ -234,7 +233,7 @@ class TestDeadMembers:
         assert active == tickers
         assert dead == []
 
-    def test_dead_member_reason(self):
-        assert "suspended" in (dead_member_reason("GSPL") or "")
-        assert "delisted" in (dead_member_reason("TATAMETALI") or "")
-        assert dead_member_reason("RELIANCE") is None
+    def test_dead_members_in_suspended_map(self):
+        assert "GSPL" in SUSPENDED_OR_DELISTED
+        assert "TATAMETALI" in SUSPENDED_OR_DELISTED
+        assert "RELIANCE" not in SUSPENDED_OR_DELISTED

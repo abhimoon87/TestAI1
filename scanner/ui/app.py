@@ -19,6 +19,7 @@ from datetime import datetime
 
 import flet as ft
 
+from ..shared.constants import LOG_MAX_LINES, LOG_ROTATE_HOURS
 from ..shared.trace import setup_trace
 
 try:
@@ -45,8 +46,6 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(SCANNER_DIR))
 APPLOG_DIR = os.path.join(_PROJECT_ROOT, "AppLog")
 REPORTS_DIR = os.path.join(_PROJECT_ROOT, "Reports")
 LOG_FILE = os.path.join(APPLOG_DIR, "scan.log")
-LOG_ROTATE_HOURS = 12
-LOG_MAX_LINES = 500
 
 # The UI lock guards control mutation + page.update() in _safe_update.
 # It MUST be re-entrant: _safe_update runs the wrapped fn while holding it,
@@ -105,10 +104,6 @@ class ScannerApp(
         self.sort_col = None
         self.sort_reverse = False
 
-        # Dark-only UI: any saved non-dark value self-heals to dark here,
-        # and _sanitize_settings drops unknown theme values on load.
-        if self.settings.get("theme", "dark") != "dark":
-            self.settings["theme"] = "dark"
         self.current_theme = "dark"
         self.theme_colors = THEMES["dark"]
 
@@ -125,6 +120,7 @@ class ScannerApp(
         self.page.on_keyboard_event = self._on_keyboard_event
         self._load_settings_to_ui()
         self._load_ui_prefs()
+        self._restore_saved_results()
         self._refresh_neg_cache_ui()
         self._refresh_enrich_cache_ui()
         self._refresh_price_cache_ui()
@@ -166,6 +162,30 @@ class ScannerApp(
         except Exception:
             logger.info("Failed to apply cache TTL settings", exc_info=True)
 
+    def _restore_saved_results(self):
+        """Repopulate the grid from last_results.json after a relaunch."""
+        try:
+            from ..backend.settings_store import load_results
+
+            rows = load_results()
+            if not rows:
+                return
+            with self._results_lock:
+                self.results = rows
+                self.all_results = list(rows)
+                self.filtered_results = [
+                    r for r in rows if self._row_matches_filters(r)
+                ]
+            self.current_page = 0
+            self._render_current_page()
+            self.html_btn.disabled = False
+            self.csv_btn.disabled = False
+            self.clear_btn.disabled = False
+            self._log(f"Restored {len(rows)} results from last scan")
+            self.page.update()
+        except Exception:
+            logger.info("Failed to restore saved results", exc_info=True)
+
     def _build_ui(self):
         c = self.theme_colors
         self.page.bgcolor = c["main_bg"]
@@ -196,24 +216,44 @@ class ScannerApp(
     # ── View switching ──────────────────────────────────────────────────
 
     def _restore_main_area(self):
-        """Show the dashboard view — visibility toggle, no rebuild.
+        """Return to dashboard — settings overlay off, hero/grid reload independently.
 
-        The main area permanently holds dashboard/settings as sibling
-        views (built once in ``_build_main_area``). Switching only
-        flips ``visible`` flags, so Flet's client tree and the window size
-        are never disturbed. Saved state (settings UI, log, results, market
-        readout, live scan callbacks) is then re-applied to the fresh view.
+        Dashboard is never hidden or re-laid-out (it sits under a Stack
+        overlay). Only the settings overlay is dismissed, then hero and
+        grid are re-applied in separate try/except blocks so one failure
+        cannot blank the other.
+
+        Row pool is cleared so ``_render_current_page`` full-rebuilds —
+        the streaming fast-path can leave a blank grid after Settings.
         """
-        had_results = bool(self.results)
+        rows = self.all_results or self.results
+        self.active_view = "dashboard"
+        if hasattr(self, "_row_pool"):
+            self._row_pool.clear()
+        if hasattr(self, "_row_cells"):
+            self._row_cells.clear()
         saved_log = self._get_log_lines()
-        self.dashboard_view.visible = True
-        self.settings_view.visible = False
+        # Overlay only — do not touch dashboard_view.visible/opacity/layout.
+        settings = getattr(self, "settings_view", None)
+        if settings is not None:
+            settings.visible = False
+        self.page.update()
         self._load_settings_to_ui()
         self._set_log_lines(saved_log)
-        if had_results:
-            self._display_results(self.results)
-        if getattr(self, "_last_market", None) is not None:
-            self._render_market(self._last_market)
+
+        # Hero independent of grid.
+        try:
+            if getattr(self, "_last_market", None) is not None:
+                self._render_market(self._last_market)
+        except Exception:
+            logger.info("Hero reload failed", exc_info=True)
+
+        # Grid independent of hero (always render, even empty).
+        try:
+            self._display_results(rows)
+        except Exception:
+            logger.info("Grid reload failed", exc_info=True)
+
         engine = getattr(self, "_scan_engine", None)
         if engine is not None and self.scanning:
             engine.set_progress_callback(
@@ -259,9 +299,8 @@ class ScannerApp(
             else:
                 pill.opacity = 0.0
         if name == "dashboard":
+            # Overlay off + independent hero/grid reload; dashboard never re-laid-out.
             self._restore_main_area()
-            self._render_current_page()
-            self._fade_view_in(self.dashboard_view)
         else:
             self.page.update()
 
@@ -269,7 +308,7 @@ class ScannerApp(
         self.active_view = "settings"
         for vname, pill in self._rail_pills.items():
             pill.opacity = 1.0 if vname == "settings" else 0.0
-        self.dashboard_view.visible = False
+        # Overlay on — dashboard stays visible and laid out underneath.
         self.settings_view.visible = True
         self._fade_view_in(self.settings_view)
 
@@ -534,14 +573,15 @@ class ScannerApp(
             logger.info("Universe length lookup failed", exc_info=True)
             base = 0
         if base == 0:
-            if "NSE ALL" in choice:
-                base = 2567
-            elif "BSE ALL" in choice:
-                base = 4500
-            elif "FULL MARKET" in choice:
-                base = 5900
-            else:
-                base = 50  # sensible default for unknown universes
+            from ..shared.constants import UNIVERSE_DEFAULT_SIZE, UNIVERSE_SIZES
+
+            base = UNIVERSE_SIZES.get(
+                next(
+                    (k for k in UNIVERSE_SIZES if k in choice),
+                    "",
+                ),
+                UNIVERSE_DEFAULT_SIZE,
+            )
         label = f"{base} stocks"
         if base > 1000:
             label += " (~5-10 min)"
@@ -1304,6 +1344,12 @@ class ScannerApp(
         self.csv_btn.disabled = True
         self.clear_btn.disabled = True
         self._log("Results cleared")
+        try:
+            from ..backend.settings_store import save_results
+
+            save_results([])
+        except Exception:
+            logger.info("Failed to clear persisted results", exc_info=True)
         self.page.update()
 
     def _clear_log(self, e=None):

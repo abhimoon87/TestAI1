@@ -23,10 +23,12 @@ from scanner.tests.ui.test_view_mixins import _make_app
 @pytest.fixture(autouse=True)
 def _isolate_settings_write(monkeypatch):
     """_on_page_size_change / _load_all_pages call _save_ui_prefs — never
-    write the real settings.json from unit tests."""
+    write the real settings.json from unit tests. _scan_complete also
+    persists rows — never write the real last_results.json either."""
     import scanner.backend.settings_store as store_mod
 
     monkeypatch.setattr(store_mod, "save_settings", lambda s: None)
+    monkeypatch.setattr(store_mod, "save_results", lambda rows: None)
 
 
 def _result(i: int, score: float = 60.0) -> dict:
@@ -112,7 +114,7 @@ class TestFullRebuildRendersRows:
         assert len(app._row_pool) == 150
         assert len(app._row_cells) == 150
 
-    def test_rows_have_pool_ticker_and_opacity_animated(self):
+    def test_rows_have_pool_ticker_and_are_visible(self):
         app = _make_app()
         app.all_results = [_result(i) for i in range(5)]
         app.filtered_results = list(app.all_results)
@@ -128,9 +130,8 @@ class TestFullRebuildRendersRows:
             if isinstance(c, ft.Container) and getattr(c, "_pool_ticker", None)
         ]
         assert len(data_rows) == 5
-        app._animate_rows_in()
         for row in data_rows:
-            assert row.opacity == 1
+            assert row.opacity != 0
 
     def test_summary_and_count_label_populated(self):
         app = _make_app()
@@ -176,6 +177,26 @@ class TestFullRebuildRendersRows:
         assert len(app._row_pool) == 8
         ctrls = app.table_column.controls
         assert len(ctrls) == 1 + 8
+
+    def test_scan_complete_persists_results(self, monkeypatch):
+        """_scan_complete writes all_results through save_results."""
+        import scanner.backend.settings_store as store_mod
+
+        saved = []
+        monkeypatch.setattr(store_mod, "save_results", saved.append)
+
+        app = _make_app()
+        app.all_results = [_result(i) for i in range(3)]
+        app.filtered_results = list(app.all_results)
+        app.results = app.all_results
+        app.active_view = "dashboard"
+        app.scanning = True
+        app._scan_cancelled = False
+
+        app._scan_complete()
+
+        assert len(saved) == 1
+        assert [r["ticker"] for r in saved[0]] == ["STK000", "STK001", "STK002"]
 
 
 class TestFinalSync:

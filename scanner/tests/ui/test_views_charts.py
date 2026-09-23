@@ -15,7 +15,6 @@ from flet.canvas import Canvas
 
 from scanner.shared.themes import THEMES
 from scanner.ui.views_charts import (
-    build_donut,
     build_price_chart,
     build_score_breakdown,
     build_score_histogram,
@@ -126,18 +125,4 @@ class TestOtherCharts:
             "fundamentals": 15,
         }
         w = build_score_breakdown(row, c)
-        assert isinstance(w, ft.Container)
-
-    def test_donut_renders(self):
-        c = THEMES["dark"]
-        w = build_donut([("A", 60, "#34d399"), ("B", 40, "#f87171")], c)
-        assert isinstance(w, ft.Container)
-        stack = w.content
-        assert isinstance(stack, ft.Stack)
-        canvases = [x for x in stack.controls if isinstance(x, Canvas)]
-        assert canvases and canvases[0].shapes
-
-    def test_donut_zero_total(self):
-        c = THEMES["dark"]
-        w = build_donut([("A", 0, "#34d399")], c)
         assert isinstance(w, ft.Container)

@@ -8,7 +8,6 @@ Charts use the Aurora v3 dark theme tokens passed via the ``c`` dict.
 """
 
 import logging
-import math
 
 import flet as ft
 from flet.canvas import Canvas, Path
@@ -18,19 +17,6 @@ from ..shared.constants import score_of as _score_of
 from .ui_kit import _border_all, _padding_only
 
 logger = logging.getLogger(__name__)
-
-
-# ── Colour helpers ──────────────────────────────────────────────────
-
-
-def _lerp_color(c1: str, c2: str, t: float) -> str:
-    """Linearly interpolate between two hex colours (0 ≤ t ≤ 1)."""
-    r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
-    r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
-    r = int(r1 + (r2 - r1) * t)
-    g = int(g1 + (g2 - g1) * t)
-    b = int(b1 + (b2 - b1) * t)
-    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _score_bucket_color(score: float, c: dict) -> str:
@@ -482,96 +468,4 @@ def build_score_breakdown(
         border_radius=12,
         border=_border_all(1, c.get("border", "#2a2b38")),
         padding=_padding_only(left=4, right=4, top=4, bottom=4),
-    )
-
-
-# ── Donut / Pie Chart ──────────────────────────────────────────────
-
-
-def build_donut(
-    segments: list[tuple[str, float, str]],
-    c: dict,
-    width: int = 180,
-    height: int = 180,
-    center_label: str = "",
-) -> ft.Container:
-    """Canvas donut chart for allocation visualisation.
-
-    ``segments``: list of (label, value, hex_color).
-    The chart draws arc segments proportional to each value.
-    """
-    total = sum(v for _, v, _ in segments) if segments else 1
-    if total == 0:
-        total = 1
-
-    cx, cy = width / 2, height / 2
-    outer_r = min(width, height) / 2 - 8
-    inner_r = outer_r * 0.55  # donut hole
-
-    shapes: list = []
-    angle = -math.pi / 2  # start at 12 o'clock
-
-    for label, value, color in segments:
-        if value <= 0:
-            continue
-        sweep = (value / total) * 2 * math.pi
-        end_angle = angle + sweep
-
-        # Outer arc
-        x1 = cx + outer_r * math.cos(angle)
-        y1 = cy + outer_r * math.sin(angle)
-        x2 = cx + outer_r * math.cos(end_angle)
-        y2 = cy + outer_r * math.sin(end_angle)
-
-        # Inner arc (reverse direction)
-        x3 = cx + inner_r * math.cos(end_angle)
-        y3 = cy + inner_r * math.sin(end_angle)
-        x4 = cx + inner_r * math.cos(angle)
-        y4 = cy + inner_r * math.sin(angle)
-
-        large_arc = 1 if sweep > math.pi else 0
-
-        # Draw as a filled wedge shape
-        shapes.append(
-            Path(
-                elements=[
-                    Path.MoveTo(x1, y1),
-                    Path.ArcTo(x2, y2, outer_r, 0, large_arc, False),
-                    Path.LineTo(x3, y3),
-                    Path.ArcTo(x4, y4, inner_r, 0, large_arc, True),
-                    Path.Close(),
-                ],
-                paint=ft.Paint(color=color, style=ft.PaintingStyle.FILL),
-            )
-        )
-
-        angle = end_angle
-
-    canvas = Canvas(width=width, height=height, shapes=shapes)
-
-    # Center label
-    center_controls = []
-    if center_label:
-        center_controls.append(
-            ft.Text(
-                center_label,
-                size=14,
-                weight=ft.FontWeight.BOLD,
-                color=c.get("text", "#e8eaf2"),
-                text_align=ft.TextAlign.CENTER,
-            )
-        )
-
-    content = ft.Stack(
-        controls=[
-            canvas,
-            *center_controls,
-        ],
-        width=width,
-        height=height,
-    )
-
-    return ft.Container(
-        content=content,
-        alignment=Alignment.CENTER,
     )

@@ -1,15 +1,7 @@
 """Unit tests for scanner.audit_stale_members — all fetches mocked offline."""
 
-import pandas as pd
-
 import scanner.backend.audit_stale_members as audit
-
-
-def _frame_ending(days_ago, n=20):
-    """OHLCV frame whose last bar is ``days_ago`` calendar days before today."""
-    end = pd.Timestamp.now().normalize() - pd.Timedelta(days=days_ago)
-    dates = pd.bdate_range(end - pd.Timedelta(days=n), periods=n)
-    return pd.DataFrame({"close": [1.0] * n, "volume": [1] * n}, index=dates)
+from scanner.tests.conftest import _frame_ending
 
 
 def _patch_fetch(monkeypatch, batch):

@@ -29,7 +29,7 @@ Requires **Python 3.10+**.
 pip install -r scanner/requirements.txt
 ```
 
-The GUI also needs `Pillow` (already listed above) and a display server.
+The GUI also needs a display server.
 
 ---
 
@@ -53,40 +53,6 @@ Keyboard-first workflow: `Ctrl+K` command palette · `Ctrl+R` run/stop · `Ctrl+
 
 ## Architecture
 
-```
-HMA_EMA_Swing_Strategy_v2.pine   ← strategy spec (TradingView reference)
-
-scanner/__main__.py ???> scanner/ui/app.py        Flet GUI ("Aurora") ? scan wiring, page
-                     ?                              layout, pagination, exports, logging,
-                     ?                              palette, shortcuts, snackbars
-                     ?        ui/views_layout.py    dashboard panes: rail / sidebar / main /
-                     ?                              right panel (+ summary & top-pick cards)
-                     ?        ui/views_results.py   results grid (rows, sort), chart, news rows
-                     ?        ui/views_settings.py  settings page + input builder
-                     ?        ui/ui_kit.py          shared primitives + palette matcher
-                     ??> scanner/backend/run_scanner.py   interactive CLI
-scanner/backend/run_alpha_backtest.py ?> backend/backtest.py   backtesting engine
-
-                              ?????????????????????????????????
-                              ? backend/scanner_engine.py       ?  headless pipeline
-                              ? universe ? index ? batch ?      ?  with cancel + progress
-                              ? filter ? enrich ? score         ?  callbacks
-                              ?????????????????????????????????
-                                               ?
-        ????????????????????????????????????????????????????????????????????
-        ?                                     ?                               ?
-shared/universes.py                     api/data_fetcher.py             backend/scoring.py
-static universes + sector map           chunked yfinance batch          filter + 10-category
-api/symbol_fetcher.py                   (+ NSE fallback pass)           scoring, sideways
-live NSE/BSE symbol lists               api/data_providers.py           filter, entry signals
-                                        3-tier OHLCV fallback:          shared/indicators.py
-                                        jugaad-data ? yfinance ?        vectorized HMA/EMA/SMA/
-                                        nselib (disk cache 4h)          KAMA/VWMA/RSI/MACD/ATR/
-                                        fundamentals: Finnhub ?         ADX/OBV/VP-POC
-                                        Alpha Vantage ? yfinance ?
-                                        nselib
-```
-
 ### Module map
 
 | Module | Responsibility |
@@ -95,7 +61,7 @@ live NSE/BSE symbol lists               api/data_providers.py           filter, 
 | `scanner/ui/views_layout.py` | `LayoutViewMixin` — dashboard panes (rail, sidebar, main area, right panel), summary + top-pick cards |
 | `scanner/ui/views_results.py` | `ResultsViewMixin` — paginated results grid, data-row/header builders, sorting keys, score chart, row-level news expansion, summary/hero updates |
 | `scanner/ui/views_settings.py` | `SettingsViewMixin` — declarative settings spec + settings-page builder/inputs |
-| `scanner/ui/ui_kit.py` | Shared primitives (`_border_all`, `_glass_bg`, ...), `RESULT_COLS`, `_score_of`, palette matcher (`fuzzy_score`, `filter_actions`) |
+| `scanner/ui/ui_kit.py` | Shared primitives (`_border_all`, `_glass_bg`, ...), palette matcher (`fuzzy_score`, `filter_actions`) |
 | `scanner/backend/scanner_engine.py` | Headless scan orchestration (`scan`, `scan_stream`) shared by GUI/CLI; "fast mode" for >500 tickers (technicals first, enrich top 200) |
 | `scanner/backend/scoring.py` | Stock filter (MA crossover), Bull/Bear direction, 10-category scoring, weekly-HTF check, sideways filter, entry signals |
 | `scanner/shared/indicators.py` | Vectorized pandas/numpy indicators used by scoring & backtest |
@@ -130,17 +96,10 @@ Enrichment modules (all optional, all guarded, in `scanner/api/`): `market_senti
 
 ### Cache hygiene (price data)
 
-- **One trade-date calendar.** Every daily frame is normalized onto tz-naive IST midnights at the cache boundary (`data_providers._normalize_cache_frame` on both write and read), so the UTC-close 18:30 stamps some fallback providers return can never make cross-ticker date unions double-count (the FNO 2×-calendar bug) or drift the relative-strength date masks.
-- **Auto-prune on scan start.** The cache key embeds the fetch date, so entries from previous days are unreachable and would accumulate forever. `fetch_batch_yfinance` sweeps them (`data_providers.prune_stale_cache`, rate-limited to once per hour per process) before the first chunk of any scan/backtest; a manual **Prune** button lives on the sidebar's **Price data** card, which also shows the live fresh/stale entry counts (`cache_health`).
-- **Short frames are honest data.** Names whose history is shorter than the requested window (recent listings, or suspended/delisted names like GSPL — halted May 2026 — and TATAMETALI — merged into Tata Steel 2024) come back with whatever exists, contiguous and ending at the last trade day; they are **not** fetch truncation. Anything under 260 bars is dropped by the engine's warm-up gate.
-- **Dead members are skipped, stale ones are warned.** GSPL and TATAMETALI are annotated in `universes.SUSPENDED_OR_DELISTED` (kept in their lists so published membership is intact) and every scan skips them with a log line — no more pointless re-fetching. If a *different* member's data ends more than `stale_member_max_age_days` ago (Settings → Output, cache & theme, default 45), the scan appends an amber warning under the results hero naming the member and its last bar date.
-- **Keep the annotation current with the audit script.** Run `python -m scanner.backend.audit_stale_members` (or the **Check stale members** button on the Settings page) roughly weekly to catch new suspensions: it reports stale-but-unannotated names (with a paste-ready `SUSPENDED_OR_DELISTED` snippet), annotated names whose trading resumed, and names with no data in the window — flagged separately when they are only dead-symbol-cache skips. It also caught real symbol bugs in the universe lists (AVALONLABS→AVALON, ASTER→ASTERDM, BIRLASOFT→BSOFT), so treat its "no data" section as a symbol-integrity check too.
-
-- **Audit every static universe & auto-suggest renames.** `python -m scanner.backend.audit_stale_members --all` checks every static universe in one union fetch (no repeat downloads) and prints a per-universe missing/members breakdown so a bad symbol is attributed to the exact list that carries it. Two safety passes run on any "no data" name before it is reported: a **live probe** re-attempts it through the per-ticker provider chain (bypassing the dead-symbol-cache skip that gates the batch fallback, so wrongly-marked symbols get a second chance), and a **rename search** matches it against the live NSE mainboard list (prefix rules for ASTER→ASTERDM / AVALONLABS→AVALON, fuzzy match for BIRLASOFT→BSOFT) and suggests only candidates verified to have data — section 5 of the report. Use `--no-probe --no-renames` for a pure report-only run, and `--json` for machine-readable output (the GUI's audit verdict also mentions how many renames were suggested).
-
-- **Apply fixes with `--fix`.** Re-running an audit with `--fix` applies section 1 + 5 + 3 findings directly to `scanner/shared/universes.py`: verified renames are rewritten everywhere (universe lists and `SECTOR_MAP`, via quoted-symbol replacement so `ASTER→ASTERDM` can never corrupt `ASTERMINDS`), stale-unannotated names are inserted into `SUSPENDED_OR_DELISTED` in the same style as the hand-written entries, and annotated-but-fresh names are removed. The edited text is `ast.parse`-validated before an atomic write, and a `universes.py.bak` of the pre-fix file is kept. Report-only stays the default — nothing is written without the flag. Add `--dry-run` to preview the exact lines (unified diff) without writing.
-
-- **Apply from the GUI too.** The Settings page ships an **Apply fixes** button next to **Check stale members**. After an audit the verdict shows `— fixes ready` when renames or annotation updates exist and the button enables; clicking it opens a confirmation dialog listing exactly what will change (renames / annotation adds / removals). Confirming runs the same `apply_fixes` path in a background thread, logs the full summary (including the `.bak` location), reloads `universes.py`, and automatically re-runs the audit to confirm the file is clean. Restarting the app re-reads `universes.py`, so the fix is durable.
+- Daily frames are normalized onto tz-naive IST midnights at the cache boundary so cross-ticker date unions stay consistent.
+- Stale cache entries are pruned on scan start (rate-limited); the sidebar **Price data** card shows fresh/stale counts with a manual **Prune**.
+- Suspended/delisted names live in `universes.SUSPENDED_OR_DELISTED` and are skipped at scan time. Members whose data ends older than `stale_member_max_age_days` produce an amber warning under the results hero.
+- Keep annotations current with `python -m scanner.backend.audit_stale_members` (or **Check stale members** on Settings). `--all` audits every universe; `--fix` applies verified renames/annotation updates (writes `universes.py.bak` first). The Settings page **Apply fixes** button runs the same path.
 
 ---
 
@@ -189,12 +148,12 @@ Every known key, its purpose, and its free tier is registered in `API_KEY_REGIST
 
 | Category | Keys |
 |---|---|
-| Finance | `FINNHUB_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `TWELVE_DATA_API_KEY`, `EOD_API_KEY`, `FMP_API_KEY`, `IEX_API_KEY`, `POLYGON_API_KEY`, `STOCKDATA_API_KEY`, `STYVIO_API_KEY` |
+| Finance | `FINNHUB_API_KEY`, `ALPHA_VANTAGE_API_KEY` |
 | News | `MARKETAUX_API_KEY`, `NEWS_API_KEY`, `GNEWS_API_KEY` |
-| NLP / sentiment | `MEANINGCLOUD_API_KEY`, `NLPCLOUD_API_KEY`, `HF_API_KEY`, `GROQ_API_KEY`, `TWITTER_API_KEY` |
+| Social | `TWITTER_API_KEY` |
 | Insider | `ALETHEIA_API_KEY`, `CONGRESS_API_KEY` |
 | Macro | `FRED_API_KEY`, `ECONPULSE_API_KEY`, `ECONDB_API_KEY` |
-| ESG / Shariah / ML | `CARBON_INTERFACE_API_KEY`, `CLIMATIQ_API_KEY`, `HALAL_API_KEY`, `TIMEDOOR_API_KEY` |
+| Shariah | `HALAL_API_KEY` |
 
 Without keys, provider fetches return empty results and the scanner simply scores on technicals + yfinance fundamentals.
 
@@ -222,50 +181,10 @@ precomputed causally on the full series — each window is an independent,
 lookahead-free simulation, and positions left open at a window end are closed
 at that window's last bar rather than the data's last bar.
 
-### What the ADX gate did (2024-09 → 2026-09, NIFTY 50, HMA40×EMA50)
-
-A 2026 losing-trade audit found 92% of trades stopped out at −2% with a 9%
-win rate, and that entry score / day-of-week / sector did not separate winners
-from losers. Weak-trend entries (ADX < 20) were ~60% more likely to lose, so a
-`min_adx_entry` gate was added to **both** engines (backtest entry logic and the
-live scanner's `entry_signal`) — screening and backtest now agree.
-
-| Configuration (3y window) | FULL (in-sample) | Out-of-sample |
-|---|---|---|
-| S5/T15, no gate | −3.8% | −5.1% |
-| S5/T15, ADX≥20 | +5.9% | −2.3% |
-| S5/T12, ADX≥20 | +2.6% | +0.2% |
-| S2/T10, ADX≥20 | −0.6% | **+3.2%** |
-| S5/T8, ADX≥20 | +1.7% | **+3.8%** (PF 1.30) |
-
-Findings, in order of confidence:
-
-1. **The gate's direction holds out-of-sample.** ADX≥20 improved 13 of 15 risk
-   configs out-of-sample (avg ≈ +2–3 pts) and was the best threshold on both
-   the full and out-of-sample windows (it is the standard ADX convention, not
-   an overfit spike). But out-of-sample magnitudes were far smaller than
-   in-sample numbers — losses became smaller losses / break-even, not the +5%
-   the full window suggested.
-2. **In-sample ranking misleads.** S5/T15 was the full-window star (+5.9%)
-   yet ranked 12th of 15 out-of-sample. Short-target configs (T8/T10/T12)
-   dominated the OOS ranking with ADX≥20.
-3. **Do not stack gates.** Adding the index-regime gate or sector rotation on
-   top of ADX≥20 helped in at most one half and hurt elsewhere; rotation
-   became inert once the ADX gate filtered the pool.
-4. **The edge is NIFTY-50-specific and MA-set-specific.** The same S5/T8+ADX≥20
-   config was negative on BANK NIFTY in every window (−4% OOS) and on the FNO
-   universe, and the saved **loose 20×40 filter collapses**: S5/T8 full-window
-   went +1.7% (40×50) to −16.9% (20×40), with the ADX gate no longer helping
-   out-of-sample. The loose filter is only a broad candidate *screener*; it is
-   not a tradeable parameter set — no single MA configuration works everywhere,
-   so treat it as a broad screener rather than a saved parameter set.
-5. **Default scanner setting:** `min_adx_entry: 20` now gates the live
-   `entry_signal` in the GUI grid and CLI scan, dropping weak-trend names
-   (e.g. RELIANCE at ADX 14 and SBICARD at ADX 19 no longer show "entry YES").
-
-Caveat: every number above is one 2-year window on one universe — the correct
-next step before trusting any config is re-running the backtest on fresh data
-(or a 5y window) and only keeping settings that stay positive out-of-sample.
+**ADX gate:** entries require `min_adx_entry` (default 20) in both the live
+scanner and the backtest — weak-trend entries lost more often in a 2-year
+audit, and the gate held out-of-sample on NIFTY 50. It is a broad filter, not
+a tradeable parameter set; re-run the backtest before trusting a config.
 
 ---
 
@@ -289,7 +208,7 @@ Test files live in `scanner/tests/`; external APIs are mocked for the offline su
 
 ## Troubleshooting
 
-- **GUI fails to start** — make sure `Pillow` is installed (`pip install Pillow`); the app imports it at startup.
+- **GUI fails to start** — check `AppLog/trace.log` for the import error.
 - **Scan returns few/no stocks** — check `AppLog/scan.log` and `AppLog/trace.log`. If Yahoo is rate-limiting, the batch fallback (jugaad-data/nselib) kicks in automatically; if all three providers fail the ticker is skipped and reported.
 - **No data for a specific stock** — BSE-only symbols without NSE listings may be unavailable from the free providers.
 - **Reset everything** — Settings: delete `scanner/settings.json`. Cache: Settings → "Clear Cache" in the GUI, or delete `scanner/.cache/`.

@@ -19,11 +19,6 @@ SUSPENDED_OR_DELISTED = {
 }
 
 
-def dead_member_reason(ticker: str) -> str | None:
-    """Why a ticker is skipped as suspended/delisted (None = active)."""
-    return SUSPENDED_OR_DELISTED.get(ticker)
-
-
 def strip_dead_members(tickers: list) -> tuple[list, list]:
     """Split a ticker list into (active, dead) on SUSPENDED_OR_DELISTED."""
     active = [t for t in tickers if t not in SUSPENDED_OR_DELISTED]

@@ -104,6 +104,7 @@ def _make_app():
 
     # Lightweight controls read by _render_current_page / _scan_complete
     app.table_column = ft.Column(spacing=0)
+    app.empty_label = ft.Container(visible=False)
     app.pagination_bar = ft.Container(visible=False)
     app.page_label = ft.Text("Page 1 / 1")
     app.result_count_label = ft.Text("no scan yet")
@@ -595,8 +596,12 @@ class TestDataRowColoring:
     def test_score_coloring_and_threshold_highlight(self):
         app = _make_app()
         c = app.theme_colors
-        above = app._make_data_row(_row(ticker="HIGH", total=72), 1, c, c["card"], 50)
-        below = app._make_data_row(_row(ticker="LOW", total=20), 2, c, c["main_bg"], 50)
+        above = app._create_row_controls(
+            _row(ticker="HIGH", total=72), 1, c, c["card"], 50
+        )
+        below = app._create_row_controls(
+            _row(ticker="LOW", total=20), 2, c, c["main_bg"], 50
+        )
 
         # Ticker cell: green when above threshold, theme text otherwise
         assert _cell(above, 1).value == "HIGH"
@@ -615,7 +620,7 @@ class TestDataRowColoring:
     def test_rating_and_entry_cells(self):
         app = _make_app()
         c = app.theme_colors
-        row = app._make_data_row(
+        row = app._create_row_controls(
             _row(
                 ticker="HDFC",
                 combined_rating="EXCELLENT",
@@ -639,7 +644,7 @@ class TestDataRowColoring:
     def test_bearish_row_shows_down_arrow(self):
         app = _make_app()
         c = app.theme_colors
-        row = app._make_data_row(_row(ticker="SBI"), 1, c, c["card"], 50)
+        row = app._create_row_controls(_row(ticker="SBI"), 1, c, c["card"], 50)
         assert _cell(row, 15).value == "v Bear"
 
 
@@ -769,7 +774,7 @@ class TestSentimentBadge:
         """Rows with enrichment data get an arrow+count pill; ticker stays first."""
         app = _make_app()
         c = app.theme_colors
-        row = app._make_data_row(
+        row = app._create_row_controls(
             _row(ticker="TCS", _article_count=4, _sentiment_score=0.6),
             1,
             c,
@@ -788,14 +793,14 @@ class TestSentimentBadge:
         """Keyless rows keep a plain ticker Text (existing layout preserved)."""
         app = _make_app()
         c = app.theme_colors
-        row = app._make_data_row(_row(ticker="TCS"), 1, c, c["card"], 50)
+        row = app._create_row_controls(_row(ticker="TCS"), 1, c, c["card"], 50)
         assert _cell(row, 1).value == "TCS"
 
     def test_badge_negative_tone(self):
         """Negative sentiment scores render a down arrow + red count."""
         app = _make_app()
         c = app.theme_colors
-        row = app._make_data_row(
+        row = app._create_row_controls(
             _row(ticker="XYZ", _article_count=2, _sentiment_score=-0.8),
             1,
             c,
@@ -811,7 +816,7 @@ class TestSentimentBadge:
         """_row_ticker_text resolves the ticker even when a badge Row wraps it."""
         app = _make_app()
         c = app.theme_colors
-        row = app._make_data_row(
+        row = app._create_row_controls(
             _row(ticker="HDFC", _article_count=3, _sentiment_score=0.0),
             1,
             c,
@@ -1037,7 +1042,7 @@ class TestTickerNewsToggle:
         app = _make_app()
         app.table_column = ft.Column(spacing=0)
         c = app.theme_colors
-        row = app._make_data_row(_row(ticker="TCS"), 1, c, c["card"], 50)
+        row = app._create_row_controls(_row(ticker="TCS"), 1, c, c["card"], 50)
         app.table_column.controls.append(row)
         return app
 
@@ -1293,7 +1298,7 @@ class TestPrefetchedRowClick:
         app.table_column = ft.Column(spacing=0)
         c = app.theme_colors
         app.table_column.controls.append(
-            app._make_data_row(dict(row), 1, c, c["card"], 50)
+            app._create_row_controls(dict(row), 1, c, c["card"], 50)
         )
         import scanner.ui.views_results as vr_mod
 
@@ -1416,16 +1421,192 @@ class TestUxPolish:
         assert app.page.update_calls == before + 1
         assert app.settings_view.visible is True
 
-    def test_reduce_motion_skips_row_fade(self):
-        """_animate_rows_in no-ops under reduce_motion (rows stay instant)."""
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Results persistence — restore on launch, clear wipes disk
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestResultsPersistence:
+    def _rows(self, n=3):
+        return [
+            {
+                "ticker": f"STK{i:03d}",
+                "total": 60.0,
+                "close": 100.0,
+                "combined_rating": "GOOD",
+                "entry_signal": False,
+                "trend_dir": "Bull",
+                "ma_bullish": True,
+            }
+            for i in range(n)
+        ]
+
+    def test_restore_saved_results_populates_grid(self, monkeypatch):
+        import scanner.backend.settings_store as store_mod
+
+        rows = self._rows()
+        monkeypatch.setattr(store_mod, "load_results", lambda: rows)
+
         app = _make_app()
-        app.settings["reduce_motion"] = True
-        app.table_column = ft.Column(spacing=0)
-        row = ft.Container(
-            opacity=0, animate_opacity=ft.Animation(200, ft.AnimationCurve.EASE_OUT)
-        )
-        app.table_column.controls.append(row)
-        before = app.page.update_calls
-        app._animate_rows_in()
-        assert row.opacity == 0  # untouched - no animation scheduled
-        assert app.page.update_calls == before
+        app.active_view = "dashboard"
+        app._restore_saved_results()
+
+        assert len(app.all_results) == 3
+        assert len(app.filtered_results) == 3
+        assert app.html_btn.disabled is False
+        assert app.csv_btn.disabled is False
+        assert app.clear_btn.disabled is False
+        data_rows = [
+            c for c in app.table_column.controls if getattr(c, "_pool_ticker", None)
+        ]
+        assert len(data_rows) == 3
+
+    def test_restore_saved_results_noop_when_empty(self, monkeypatch):
+        import scanner.backend.settings_store as store_mod
+
+        monkeypatch.setattr(store_mod, "load_results", list)
+        app = _make_app()
+        app._restore_saved_results()
+        assert app.all_results == []
+        assert app.html_btn.disabled is True
+
+    def test_restore_saved_results_swallows_errors(self, monkeypatch):
+        import scanner.backend.settings_store as store_mod
+
+        def _boom():
+            raise RuntimeError("disk gone")
+
+        monkeypatch.setattr(store_mod, "load_results", _boom)
+        app = _make_app()
+        app._restore_saved_results()  # must not raise
+        assert app.all_results == []
+
+    def test_clear_results_persists_empty(self, monkeypatch):
+        import scanner.backend.settings_store as store_mod
+
+        saved = []
+        monkeypatch.setattr(store_mod, "save_results", saved.append)
+
+        app = _make_app()
+        app.all_results = self._rows()
+        app.filtered_results = list(app.all_results)
+        app.results = app.all_results
+        app._clear_results()
+
+        assert saved == [[]]
+        assert app.all_results == []
+
+
+class TestRestoreMainArea:
+    def test_restore_main_area_clears_pool_and_rebuilds(self):
+        """Settings→Home must clear the pool so the grid full-rebuilds."""
+        app = _make_app()
+        app.active_view = "dashboard"
+        app._build_ui()
+        rows = [
+            {
+                "ticker": f"STK{i:03d}",
+                "total": 60.0,
+                "close": 100.0,
+                "combined_rating": "GOOD",
+                "entry_signal": False,
+                "trend_dir": "Bull",
+                "ma_bullish": True,
+            }
+            for i in range(4)
+        ]
+        app.all_results = list(rows)
+        app.filtered_results = list(rows)
+        app.results = list(rows)
+        app._render_current_page()
+        assert len(app._row_pool) == 4
+
+        # Simulate open settings overlay with stale pool refs
+        app.dashboard_view.visible = True  # stays visible under overlay
+        app.settings_view.visible = True
+        app.active_view = "settings"
+
+        app._restore_main_area()
+
+        # Pool was cleared then repopulated by the full rebuild
+        assert len(app._row_pool) == 4
+        data_rows = [
+            c for c in app.table_column.controls if getattr(c, "_pool_ticker", None)
+        ]
+        assert len(data_rows) == 4
+        assert app.dashboard_view.visible is True
+        assert app.settings_view.visible is False
+
+    def test_restore_main_area_prefers_all_results(self):
+        """When results and all_results diverge, all_results wins."""
+        app = _make_app()
+        app.active_view = "dashboard"
+        app._build_ui()
+        app.results = []  # stale/empty
+        app.all_results = [
+            {
+                "ticker": "AAA",
+                "total": 70.0,
+                "close": 100.0,
+                "combined_rating": "GOOD",
+                "entry_signal": False,
+                "trend_dir": "Bull",
+                "ma_bullish": True,
+            }
+        ]
+        app.filtered_results = list(app.all_results)
+
+        app._restore_main_area()
+
+        assert len(app.all_results) == 1
+        data_rows = [
+            c for c in app.table_column.controls if getattr(c, "_pool_ticker", None)
+        ]
+        assert len(data_rows) == 1
+
+    def test_restore_main_area_toggles_visibility_under_stack(self):
+        """main_area_box is the Stack; restore only dismisses the overlay."""
+        app = _make_app()
+        app.active_view = "settings"
+        app._build_ui()
+        app.dashboard_view.visible = True
+        app.settings_view.visible = True
+        stack = app.main_area_box
+
+        app._restore_main_area()
+
+        assert isinstance(stack, ft.Stack)
+        assert stack.expand is True
+        assert app.dashboard_view in stack.controls
+        assert app.settings_view in stack.controls
+        # Positioned fill — both panes pin to all edges (expand ignored in Stack).
+        for pane in (app.dashboard_view, app.settings_view):
+            assert pane.left == 0
+            assert pane.top == 0
+            assert pane.right == 0
+            assert pane.bottom == 0
+        # Dashboard never toggled — overlay dismissed only.
+        assert app.dashboard_view.visible is True
+        assert app.dashboard_view.opacity == 1.0
+        assert app.settings_view.visible is False
+        # Layout commit happens before hero/grid reload.
+        assert app.page.update_calls >= 1
+
+    def test_show_settings_toggles_visibility_under_stack(self):
+        """Settings overlay on; dashboard stays visible underneath."""
+        app = _make_app()
+        app._build_ui()
+        stack = app.main_area_box
+
+        app._show_settings()
+
+        assert isinstance(stack, ft.Stack)
+        assert app.dashboard_view in stack.controls
+        assert app.settings_view in stack.controls
+        assert app.dashboard_view.visible is True
+        assert app.settings_view.visible is True
+        assert app.settings_view.opacity == 1.0
+        # Dashboard content stays the live Column inside the fill wrapper.
+        assert app.dashboard_view.content is app.dashboard_content
+        assert app.dashboard_content.expand is True

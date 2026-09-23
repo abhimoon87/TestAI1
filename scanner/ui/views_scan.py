@@ -253,6 +253,12 @@ class ScanOrchestrationMixin:
             self._render_current_page()
         except Exception:
             logger.info("_scan_complete: _render_current_page FAILED", exc_info=True)
+        try:
+            from ..backend.settings_store import save_results
+
+            save_results(self.all_results)
+        except Exception:
+            logger.info("Failed to persist results", exc_info=True)
         # The scan just re-fetched NIFTY through the provider chain — refresh
         # the hero readout from that cache (fast, mostly disk reads).
         threading.Thread(target=self._warm_market, daemon=True).start()

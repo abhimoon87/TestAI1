@@ -741,55 +741,8 @@ def _fetch_fundamentals_nselib(ticker: str) -> dict | None:
 # MAIN PROVIDER CLASS
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Sentinel + runner used to bound individual provider calls (e.g. in the
-# batch fallback pass) so one hung request cannot stall a worker forever.
-_TIMEOUT = object()
-
-
-def _call_with_timeout(fn, timeout: float):
-    """Run fn on a daemon thread; return _TIMEOUT if it exceeds timeout.
-
-    Sets a socket-level timeout in the worker thread so that underlying HTTP
-    calls made by third-party libraries (jugaad-data, nselib) cannot hang
-    indefinitely on unresponsive NSE servers.  The daemon thread is abandoned
-    on timeout, but because the socket timeout is enforced at the TCP layer,
-    the kernel will close the connection once the timeout fires — preventing
-    resource exhaustion from accumulated zombie connections.
-    """
-    import socket as _socket
-
-    box: dict = {}
-
-    def _run():
-        # Impose a socket-level deadline so third-party HTTP calls (which
-        # typically ignore ``requests`` timeout kwargs) cannot block the
-        # thread forever.  Save and restore the previous value so concurrent
-        # callers with different timeouts don't corrupt each other.
-        old_timeout = None
-        try:
-            old_timeout = _socket.getdefaulttimeout()
-            _socket.setdefaulttimeout(timeout)
-        except Exception:
-            logger.info("Failed to set socket timeout", exc_info=True)
-        try:
-            box["value"] = fn()
-        except Exception as e:
-            box["error"] = e
-        finally:
-            try:
-                if old_timeout is not None:
-                    _socket.setdefaulttimeout(old_timeout)
-            except Exception:
-                logger.info("Failed to restore socket timeout", exc_info=True)
-
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-    thread.join(timeout)
-    if thread.is_alive():
-        return _TIMEOUT
-    if "error" in box:
-        raise box["error"]
-    return box.get("value")
+from .providers import TIMEOUT as _TIMEOUT
+from .providers import call_with_timeout as _call_with_timeout
 
 
 class DataProvider:
