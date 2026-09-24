@@ -697,6 +697,27 @@ UNIVERSES = {
     "FULL MARKET (NSE+BSE ~5,900)": _FULL_MARKET_PLACEHOLDER,
 }
 
+# No-space alias → canonical lowercased universe name (keys match low without spaces)
+_UNIVERSE_ALIASES = {
+    "nifty50": "nifty 50",
+    "banknifty": "bank nifty",
+    "niftynext50": "nifty next 50",
+    "niftymidcap100": "nifty midcap 100",
+    "niftysmallcap100": "nifty smallcap 100",
+    "mainboard": "nse all",
+    "niftyit": "nifty it",
+    "niftypharma": "nifty pharma",
+    "niftyauto": "nifty auto",
+    "niftymetal": "nifty metal",
+    "niftyrealty": "nifty realty",
+    "niftyenergy": "nifty energy",
+    "niftyfinancial": "nifty financial",
+    "bsesensex": "bse sensex",
+    "bsemidcap": "bse midcap",
+    "bsesmallcap": "bse smallcap",
+    "cashmarket": "cash market",
+}
+
 
 def get_universe(name: str) -> list:
     """Get universe tickers by name, case-insensitive.
@@ -709,44 +730,10 @@ def get_universe(name: str) -> list:
     """
     # Dynamic full-market — live fetch (cached 4h)
     low = name.strip().lower()
-    # Normalise common no-space aliases
     _alias = low.replace(" ", "")
-    if _alias in ("nifty50",):
-        low = "nifty 50"
-    elif _alias in ("banknifty",):
-        low = "bank nifty"
-    elif _alias in ("niftynext50",):
-        low = "nifty next 50"
-    elif _alias in ("niftymidcap100",):
-        low = "nifty midcap 100"
-    elif _alias in ("niftysmallcap100",):
-        low = "nifty smallcap 100"
-    elif _alias in ("mainboard",):
-        low = "nse all"
-    elif low == "all":
+    low = _UNIVERSE_ALIASES.get(_alias, low)
+    if low == "all":
         low = "all (combined)"
-    elif _alias in ("niftyit",):
-        low = "nifty it"
-    elif _alias in ("niftypharma",):
-        low = "nifty pharma"
-    elif _alias in ("niftyauto",):
-        low = "nifty auto"
-    elif _alias in ("niftymetal",):
-        low = "nifty metal"
-    elif _alias in ("niftyrealty",):
-        low = "nifty realty"
-    elif _alias in ("niftyenergy",):
-        low = "nifty energy"
-    elif _alias in ("niftyfinancial",):
-        low = "nifty financial"
-    elif _alias in ("bsesensex",):
-        low = "bse sensex"
-    elif _alias in ("bsemidcap",):
-        low = "bse midcap"
-    elif _alias in ("bsesmallcap",):
-        low = "bse smallcap"
-    elif _alias in ("cashmarket",):
-        low = "cash market"
 
     if low in ("nse all (live ~2,200)", "nse all", "nse all (live)"):
         try:
@@ -995,8 +982,3 @@ SECTOR_MAP = {
     "HINDCOPPER": "Other",
     "ZEEL": "Other",
 }
-
-
-def get_sector(ticker: str) -> str:
-    """Get the sector for a stock ticker."""
-    return SECTOR_MAP.get(ticker, "Other")

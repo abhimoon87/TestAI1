@@ -343,93 +343,6 @@ def fetch_52week_data(ticker: str) -> Week52Data | None:
         return None
 
 
-# ── Industry PE Data ────────────────────────────────────────────────────────
-
-
-@dataclass
-class IndustryPEData:
-    """Industry PE ratio data from NSE."""
-
-    ticker: str
-    stock_pe: float
-    industry_pe: float
-    industry_name: str
-    pe_relative_to_industry: float  # Stock PE / Industry PE
-    is_cheap: bool  # Stock PE < Industry PE
-    cached: bool = False
-
-
-def fetch_industry_pe(ticker: str) -> IndustryPEData | None:
-    """
-    Fetch industry PE comparison from NSE (free, no API key).
-
-    Args:
-        ticker: NSE ticker symbol
-
-    Returns:
-        IndustryPEData or None
-    """
-    cache_k = hashlib.md5(
-        f"industry_pe:{ticker}".encode(), usedforsecurity=False
-    ).hexdigest()
-    cached = _INDIA_CACHE.get(cache_k)
-    if cached:
-        return IndustryPEData(**cached, cached=True)
-
-    try:
-        import yfinance as yf
-
-        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-        stock = yf.Ticker(nse_ticker)
-        info = stock.info
-
-        if not info:
-            return None
-
-        stock_pe = info.get("trailingPE") or info.get("forwardPE")
-        industry_pe = info.get("industryPE") or info.get("trailingPE")
-        industry_name = info.get("industry", "Unknown")
-
-        if not stock_pe or not industry_pe:
-            return None
-
-        stock_pe = float(stock_pe)
-        industry_pe = float(industry_pe)
-
-        if industry_pe == 0:
-            return None
-
-        relative_pe = stock_pe / industry_pe
-
-        result = IndustryPEData(
-            ticker=ticker,
-            stock_pe=round(stock_pe, 2),
-            industry_pe=round(industry_pe, 2),
-            industry_name=industry_name,
-            pe_relative_to_industry=round(relative_pe, 3),
-            is_cheap=relative_pe < 1.0,
-            cached=False,
-        )
-
-        _INDIA_CACHE.set(
-            cache_k,
-            {
-                "ticker": ticker,
-                "stock_pe": result.stock_pe,
-                "industry_pe": result.industry_pe,
-                "industry_name": result.industry_name,
-                "pe_relative_to_industry": result.pe_relative_to_industry,
-                "is_cheap": result.is_cheap,
-            },
-        )
-
-        return result
-
-    except Exception as e:
-        logger.info("Industry PE fetch failed for %s: %s", ticker, e)
-        return None
-
-
 # ── Unified Indian Market Data ─────────────────────────────────────────────
 
 
@@ -442,14 +355,12 @@ def fetch_indian_market_data(ticker: str) -> dict:
             "delivery": DeliveryData | None,
             "fii_dii": FIIDIIActivity | None,
             "week52": Week52Data | None,
-            "industry_pe": IndustryPEData | None,
             "source": str,
         }
     """
     delivery = fetch_delivery_data(ticker)
     fii_dii = fetch_fii_dii_activity()
     week52 = fetch_52week_data(ticker)
-    industry_pe = fetch_industry_pe(ticker)
 
     sources = []
     if delivery:
@@ -458,13 +369,10 @@ def fetch_indian_market_data(ticker: str) -> dict:
         sources.append("fii_dii")
     if week52:
         sources.append("week52")
-    if industry_pe:
-        sources.append("industry_pe")
 
     return {
         "delivery": delivery,
         "fii_dii": fii_dii,
         "week52": week52,
-        "industry_pe": industry_pe,
         "source": "+".join(sources) if sources else "none",
     }

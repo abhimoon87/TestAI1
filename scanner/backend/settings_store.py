@@ -147,80 +147,21 @@ DEFAULT_SETTINGS: ScannerSettings = {
 # ── API Key Management ───────────────────────────────────────────────────────
 
 # Keys the scanner actually reads (via get_api_key / _get_api_key / env).
-API_KEY_REGISTRY = {
-    "FINNHUB_API_KEY": {
-        "description": "Finnhub — Institutional-grade fundamental data",
-        "free_tier": "60 calls/min",
-        "url": "https://finnhub.io/register",
-        "category": "finance",
-    },
-    "ALPHA_VANTAGE_API_KEY": {
-        "description": "Alpha Vantage — Technical indicators & fundamentals",
-        "free_tier": "25 calls/day",
-        "url": "https://www.alphavantage.co/support/#api-key",
-        "category": "finance",
-    },
-    "MARKETAUX_API_KEY": {
-        "description": "MarketAux — Live stock market news with ticker tags",
-        "free_tier": "100 calls/day",
-        "url": "https://marketaux.com/register",
-        "category": "news",
-    },
-    "NEWS_API_KEY": {
-        "description": "NewsAPI — 80k+ news sources worldwide",
-        "free_tier": "100 calls/day",
-        "url": "https://newsapi.org/register",
-        "category": "news",
-    },
-    "GNEWS_API_KEY": {
-        "description": "GNews — News search API",
-        "free_tier": "100 calls/day",
-        "url": "https://gnews.io/register",
-        "category": "news",
-    },
-    "TWITTER_API_KEY": {
-        "description": "GetXAPI — Twitter/X posts for social sentiment",
-        "free_tier": "Paid (trial available)",
-        "url": "https://getxapi.com/",
-        "category": "nlp",
-    },
-    "ALETHEIA_API_KEY": {
-        "description": "Aletheia — Insider trading data",
-        "free_tier": "100 calls/day",
-        "url": "https://aletheia.com/register",
-        "category": "insider",
-    },
-    "CONGRESS_API_KEY": {
-        "description": "CongressInvests — Congressional stock trades",
-        "free_tier": "100 calls/day",
-        "url": "https://congressinvests.com/register",
-        "category": "insider",
-    },
-    "FRED_API_KEY": {
-        "description": "FRED — Federal Reserve economic data",
-        "free_tier": "120 calls/min",
-        "url": "https://fred.stlouisfed.org/docs/api/api_key.html",
-        "category": "macro",
-    },
-    "ECONPULSE_API_KEY": {
-        "description": "EconPulse — Live economic data",
-        "free_tier": "100 calls/day",
-        "url": "https://econpulse.com/register",
-        "category": "macro",
-    },
-    "ECONDB_API_KEY": {
-        "description": "Econdb — Global macroeconomic data",
-        "free_tier": "Free tier available",
-        "url": "https://www.econdb.com/register",
-        "category": "macro",
-    },
-    "HALAL_API_KEY": {
-        "description": "Halal Terminal — Shariah-compliant stock screening",
-        "free_tier": "Free tier available",
-        "url": "https://halalterminal.com/register",
-        "category": "shariah",
-    },
-}
+# Metadata (description, free tier, URL) lives in README — code only needs names.
+API_KEY_NAMES = (
+    "FINNHUB_API_KEY",
+    "ALPHA_VANTAGE_API_KEY",
+    "MARKETAUX_API_KEY",
+    "NEWS_API_KEY",
+    "GNEWS_API_KEY",
+    "TWITTER_API_KEY",
+    "ALETHEIA_API_KEY",
+    "CONGRESS_API_KEY",
+    "FRED_API_KEY",
+    "ECONPULSE_API_KEY",
+    "ECONDB_API_KEY",
+    "HALAL_API_KEY",
+)
 
 
 def load_api_config() -> dict:
@@ -236,7 +177,7 @@ def load_api_config() -> dict:
             logger.info("Failed to load API config: %s", e)
 
     # Environment variables override config file
-    for key in API_KEY_REGISTRY:
+    for key in API_KEY_NAMES:
         env_val = os.environ.get(key)
         if env_val:
             config[key] = env_val
@@ -305,8 +246,6 @@ def _sanitize_settings(saved: dict) -> dict:
                     raise ValueError(key)
             elif isinstance(default, int) and not isinstance(default, bool):
                 ival = int(float(val))
-                if key == "ui_sort_col":
-                    raise ValueError(key)  # not a default key; guarded above
                 cleaned[key] = ival
             elif isinstance(default, float):
                 fval = float(val)

@@ -1538,25 +1538,3 @@ class ScannerEngine:
             )
 
         return result
-
-
-# Convenience function for simple usage
-def run_scan(
-    universe: str,
-    settings: dict[str, Any],
-    period: str = "1y",
-    timeframe: str = "D",
-    trend_filter: str = "All",
-    index_symbol: str = "NSEI",
-    progress_callback: Callable[[float, str], None] | None = None,
-    log_callback: Callable[[str], None] | None = None,
-) -> ScanResult:
-    """Convenience function to run a scan without managing engine instance."""
-    engine = ScannerEngine()
-    if progress_callback:
-        engine.set_progress_callback(progress_callback)
-    if log_callback:
-        engine.set_log_callback(log_callback)
-    return engine.scan(
-        universe, settings, period, timeframe, trend_filter, index_symbol
-    )

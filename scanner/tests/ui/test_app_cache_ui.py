@@ -1,71 +1,15 @@
 """Unit tests for the GUI enrichment-cache status/clear handlers in scanner.app.
 
-The handlers are exercised without a display by creating an un-initialized
-ScannerApp (``__new__``) and attaching recorder stand-ins for the Flet label,
-button and page, so no window or event loop is required.
+Harness lives in ``tests/ui/conftest.py`` (``make_app`` / ``FakeLabel`` / …).
 """
 
 from scanner.api import cache_manager, data_fetcher
 from scanner.ui.app import ScannerApp
 
-
-class _FakeLabel:
-    """Recorder stand-in for a Flet Text control (uses ``.value``)."""
-
-    def __init__(self):
-        self.value = None
-
-
-class _FakeButton:
-    """Recorder stand-in for a Flet button (uses ``.visible``)."""
-
-    def __init__(self):
-        self.visible = True
-
-
-class _FakePage:
-    """Recorder stand-in for a Flet Page (tracks ``update()`` calls)."""
-
-    def __init__(self):
-        self.update_calls = 0
-
-    def update(self):
-        self.update_calls += 1
-
-    def run_task(self, handler):
-        """Run async coroutines synchronously in the test harness.
-
-        Flet's ``page.run_task(handler)`` calls ``handler()`` to obtain a
-        coroutine, then schedules it.  We replicate that here.
-        """
-        import asyncio
-
-        coro = handler()
-        if asyncio.iscoroutine(coro):
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop and loop.is_running():
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    pool.submit(asyncio.run, coro).result(timeout=2)
-            else:
-                asyncio.run(coro)
-
-
-def _make_app():
-    """Un-initialized ScannerApp with recorder widgets + a _log hook."""
-    app = ScannerApp.__new__(ScannerApp)
-    app.enrich_cache_status_lbl = _FakeLabel()
-    app.enrich_cache_clear_btn = _FakeButton()
-    app.price_cache_status_lbl = _FakeLabel()
-    app.price_cache_prune_btn = _FakeButton()
-    app.page = _FakePage()
-    app.logged = []
-    app._log = app.logged.append
-    return app
+from .conftest import FakeButton as _FakeButton  # noqa: F401
+from .conftest import FakeLabel as _FakeLabel  # noqa: F401
+from .conftest import FakePage as _FakePage  # noqa: F401
+from .conftest import make_app as _make_app  # noqa: F401
 
 
 def _populated_text(n):

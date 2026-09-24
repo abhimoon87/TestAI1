@@ -733,7 +733,6 @@ class LayoutViewMixin:
             bottom=0,
             visible=True,
             opacity=1.0,
-            animate_opacity=ANIM_NORMAL,
         )
 
         settings_body = self._build_settings_view()

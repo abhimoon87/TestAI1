@@ -7,7 +7,7 @@ stubbed to run inline, as the existing error-path tests do).
 
 import threading
 
-from scanner.tests.ui.test_view_mixins import _make_app
+from scanner.tests.ui.conftest import make_app as _make_app
 from scanner.ui.ui_kit import (
     PaletteAction,
     filter_actions,

@@ -19,7 +19,7 @@ from datetime import datetime
 
 import flet as ft
 
-from ..shared.constants import LOG_MAX_LINES, LOG_ROTATE_HOURS
+from ..shared.constants import LOG_MAX_LINES
 from ..shared.trace import setup_trace
 
 try:
@@ -125,7 +125,6 @@ class ScannerApp(
         self._refresh_enrich_cache_ui()
         self._refresh_price_cache_ui()
         self._log("Scanner ready — pick a universe and hit RUN SCAN")
-        self._rotate_log()
 
         def _warm_symbols():
             try:
@@ -170,19 +169,12 @@ class ScannerApp(
             rows = load_results()
             if not rows:
                 return
-            with self._results_lock:
-                self.results = rows
-                self.all_results = list(rows)
-                self.filtered_results = [
-                    r for r in rows if self._row_matches_filters(r)
-                ]
-            self.current_page = 0
-            self._render_current_page()
+            self.results = rows
+            self._display_results(rows)
             self.html_btn.disabled = False
             self.csv_btn.disabled = False
             self.clear_btn.disabled = False
             self._log(f"Restored {len(rows)} results from last scan")
-            self.page.update()
         except Exception:
             logger.info("Failed to restore saved results", exc_info=True)
 
@@ -232,14 +224,12 @@ class ScannerApp(
             self._row_pool.clear()
         if hasattr(self, "_row_cells"):
             self._row_cells.clear()
-        saved_log = self._get_log_lines()
         # Overlay only — do not touch dashboard_view.visible/opacity/layout.
         settings = getattr(self, "settings_view", None)
         if settings is not None:
             settings.visible = False
         self.page.update()
         self._load_settings_to_ui()
-        self._set_log_lines(saved_log)
 
         # Hero independent of grid.
         try:
@@ -818,23 +808,70 @@ class ScannerApp(
 
     # ── Cache management ───────────────────────────────────────────────
 
-    def _refresh_neg_cache_ui(self):
-        if not hasattr(self, "cache_status_lbl"):
+    def _refresh_cache_ui(self, kind: str):
+        """Shared status/clear wiring for the three cache cards."""
+        loaders = {
+            "neg": (
+                "cache_status_lbl",
+                "cache_clear_btn",
+                "Dead-symbol cache",
+                lambda: (
+                    len(cache_manager.negative_load()),
+                    cache_manager.negative_ttl_hours(),
+                ),
+            ),
+            "enrich": (
+                "enrich_cache_status_lbl",
+                "enrich_cache_clear_btn",
+                "Enrichment cache",
+                lambda: (
+                    cache_manager.enrichment_size(),
+                    cache_manager.ENRICHMENT_CACHE_TTL_HOURS,
+                ),
+            ),
+        }
+        if kind in loaders:
+            lbl_name, btn_name, title, load = loaders[kind]
+            lbl = getattr(self, lbl_name, None)
+            if lbl is None:
+                return
+            try:
+                from ..api import cache_manager
+
+                n, ttl_h = load()
+            except Exception:
+                logger.info("Failed to load %s info", title, exc_info=True)
+                n, ttl_h = 0, 24
+            lbl.value = (
+                f"{title}: {n} (auto-resets ~{ttl_h}h)" if n else f"{title}: empty"
+            )
+            getattr(self, btn_name).visible = bool(n)
+            return
+
+        # price cache has a different shape (stale count)
+        lbl = getattr(self, "price_cache_status_lbl", None)
+        if lbl is None:
             return
         try:
             from ..api import cache_manager
 
-            n = len(cache_manager.negative_load())
-            ttl_h = cache_manager.negative_ttl_hours()
+            h = cache_manager.cache_health()
+            n, stale = h["price_entries"], h["stale_entries"]
         except Exception:
-            logger.info("Failed to load negative cache info", exc_info=True)
-            n, ttl_h = 0, 24
-        self.cache_status_lbl.value = (
-            f"Dead-symbol cache: {n} (auto-resets ~{ttl_h}h)"
-            if n
-            else "Dead-symbol cache: empty"
-        )
-        self.cache_clear_btn.visible = bool(n)
+            logger.info("Failed to load price cache health", exc_info=True)
+            n, stale = 0, 0
+        if not n:
+            lbl.value = "Price cache: empty"
+        elif stale:
+            lbl.value = f"Price cache: {n} ({stale} stale — auto-prunes on next scan)"
+        else:
+            lbl.value = f"Price cache: {n} (clean)"
+        self.price_cache_prune_btn.visible = bool(stale)
+
+    def _refresh_neg_cache_ui(self):
+        if not hasattr(self, "cache_status_lbl"):
+            return
+        self._refresh_cache_ui("neg")
 
     def _clear_negative_cache(self, e=None):
         try:
@@ -856,20 +893,7 @@ class ScannerApp(
     def _refresh_enrich_cache_ui(self):
         if not hasattr(self, "enrich_cache_status_lbl"):
             return
-        try:
-            from ..api import cache_manager
-
-            n = cache_manager.enrichment_size()
-            ttl_h = cache_manager.ENRICHMENT_CACHE_TTL_HOURS
-        except Exception:
-            logger.info("Failed to load enrichment cache info", exc_info=True)
-            n, ttl_h = 0, 24
-        self.enrich_cache_status_lbl.value = (
-            f"Enrichment cache: {n} (auto-resets ~{ttl_h}h)"
-            if n
-            else "Enrichment cache: empty"
-        )
-        self.enrich_cache_clear_btn.visible = bool(n)
+        self._refresh_cache_ui("enrich")
 
     def _clear_enrichment_cache(self, e=None):
         try:
@@ -887,23 +911,7 @@ class ScannerApp(
     def _refresh_price_cache_ui(self):
         if not hasattr(self, "price_cache_status_lbl"):
             return
-        try:
-            from ..api import cache_manager
-
-            h = cache_manager.cache_health()
-            n, stale = h["price_entries"], h["stale_entries"]
-        except Exception:
-            logger.info("Failed to load price cache health", exc_info=True)
-            n, stale = 0, 0
-        if not n:
-            self.price_cache_status_lbl.value = "Price cache: empty"
-        elif stale:
-            self.price_cache_status_lbl.value = (
-                f"Price cache: {n} ({stale} stale — auto-prunes on next scan)"
-            )
-        else:
-            self.price_cache_status_lbl.value = f"Price cache: {n} (clean)"
-        self.price_cache_prune_btn.visible = bool(stale)
+        self._refresh_cache_ui("price")
 
     def _prune_price_cache(self, e=None):
         try:
@@ -1360,28 +1368,6 @@ class ScannerApp(
         except Exception:
             logger.info("_clear_log failed", exc_info=True)
 
-    def _get_log_lines(self) -> list:
-        try:
-            col = getattr(self, "log_column", None)
-            if col is None:
-                return []
-            return [t.value for t in col.controls if isinstance(t, ft.Text)]
-        except Exception:
-            logger.info("_get_log_lines failed", exc_info=True)
-            return []
-
-    def _set_log_lines(self, lines):
-        try:
-            col = getattr(self, "log_column", None)
-            if col is None:
-                return
-            c = self.theme_colors
-            col.controls.clear()
-            for line in lines[-LOG_MAX_LINES:]:
-                col.controls.append(self._make_log_line(line, c))
-        except Exception:
-            logger.info("_set_log_lines failed", exc_info=True)
-
     def _reset_filters(self, e=None):
         self.filter_text = ""
         if getattr(self, "search_entry", None) is not None:
@@ -1428,22 +1414,6 @@ class ScannerApp(
 
         # Control mutation must happen on the page's event-loop thread.
         self._run_on_ui_thread(_append_to_panel)
-
-    def _rotate_log(self):
-        try:
-            if os.path.exists(LOG_FILE):
-                age_hours = (
-                    datetime.now().timestamp() - os.path.getmtime(LOG_FILE)
-                ) / 3600
-                if age_hours >= LOG_ROTATE_HOURS:
-                    with _log_lock:
-                        # open("w") already truncates — no explicit truncate needed.
-                        # Truncation stays inside the lock so a concurrent _log
-                        # can neither interleave a write nor reopen a stale handle.
-                        with open(LOG_FILE, "w"):
-                            pass
-        except Exception:
-            logger.info("Log rotation failed", exc_info=True)
 
 
 def main(page: ft.Page):

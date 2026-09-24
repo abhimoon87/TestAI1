@@ -17,7 +17,7 @@ from __future__ import annotations
 import flet as ft
 import pytest
 
-from scanner.tests.ui.test_view_mixins import _make_app
+from scanner.tests.ui.conftest import make_app as _make_app
 
 
 @pytest.fixture(autouse=True)
@@ -113,6 +113,28 @@ class TestFullRebuildRendersRows:
         # every data row registered in the pool
         assert len(app._row_pool) == 150
         assert len(app._row_cells) == 150
+
+    def test_pagination_bar_and_row_shown_when_results_exceed_page(self):
+        app = _make_app()
+        app.all_results = [_result(i) for i in range(150)]
+        app.filtered_results = list(app.all_results)
+        app.active_view = "dashboard"
+        app.scanning = False
+        app.sort_col = None
+        app.page_size = 100
+
+        app._render_current_page()
+
+        assert app.pagination_bar.visible is True
+        assert app.pagination_row.visible is True
+
+        app.pagination_bar.visible = False
+        app.pagination_row.visible = False
+        app.all_results = app.all_results[:50]
+        app.filtered_results = list(app.all_results)
+        app._render_current_page()
+        assert app.pagination_bar.visible is False
+        assert app.pagination_row.visible is False
 
     def test_rows_have_pool_ticker_and_are_visible(self):
         app = _make_app()

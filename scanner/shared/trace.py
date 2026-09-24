@@ -67,7 +67,6 @@ def setup_trace(
     max_bytes: int = MAX_BYTES,
     backup_count: int = BACKUP_COUNT,
     console: bool = True,
-    also_scan_log: bool = True,
 ) -> Path:
     """
     Configure root logging to file + console. Idempotent -- safe to call

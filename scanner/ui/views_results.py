@@ -41,6 +41,66 @@ _RATING_ACCENT = {
     "POOR": "red",
 }
 
+# Per-column (size, bold) — pairs with _row_specs() value/color order.
+_ROW_STYLE = (
+    (11, False),
+    (12, True),
+    (14, True),
+    (11, True),
+    (11, True),
+    (12, True),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+)
+
+
+def _row_specs(r, rank, c, threshold):
+    """Shared 18-cell (text, color) pairs for create and update."""
+    total = _score_of(r)
+    is_above = total >= threshold
+    trend_dir = r.get("trend_dir") or ""
+    rating = r.get("combined_rating", "POOR")
+    entry = bool(r.get("entry_signal"))
+    return [
+        (str(rank), c["text_dim"]),
+        (r.get("ticker", "?"), c["green"] if is_above else c["text"]),
+        (f"{total:.0f}", score_color(total, c)),
+        (rating, rating_color(rating, c)),
+        ("YES" if entry else "--", c["green"] if entry else c["text_dim"]),
+        (f"₹{r.get('close', 0) or 0:.0f}", c["text"]),
+        (None, None),  # MA cell — caller patches via _ma_text/_ma_color
+        (f"{r.get('trend', 0) or 0:.0f}", c["green"]),
+        (f"{r.get('momentum', 0) or 0:.0f}", c["cyan"]),
+        (f"{r.get('rsi', 0) or 0:.0f}", c["blue"]),
+        (f"{r.get('macd', 0) or 0:.0f}", c.get("macd", c["blue"])),
+        (f"{r.get('volume', 0) or 0:.0f}", c["orange"]),
+        (f"{r.get('rel_str', 0) or 0:.0f}", c["lime"]),
+        (f"{r.get('fundamentals', 0) or 0:.0f}", c.get("fund", c["yellow"])),
+        (
+            f"{r.get('pc1m', 0) or 0:+.1f}%",
+            c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"],
+        ),
+        (
+            ("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?"),
+            c["green"] if trend_dir == "Bull" else c["red"],
+        ),
+        (f"{r.get('adx_val', 0) or 0:.0f}", c["text"]),
+        (
+            "Chop" if r.get("is_sideways") else "OK",
+            c["orange"] if r.get("is_sideways") else c["green"],
+        ),
+    ]
+
 
 def _spark_move(r: dict) -> float:
     """Net % move across the row's sparkline closes (for column sorting)."""
@@ -58,6 +118,12 @@ class ResultsViewMixin:
     _row_pool: dict[str, ft.Container]
     # Maps ticker → list[ft.Text] (the 19 text cells in column order).
     _row_cells: dict[str, list[ft.Text]]
+
+    def _row_specs(self, r, rank, c, threshold):
+        """Shared 18-cell (text, color) pairs; MA cell filled from helpers."""
+        specs = _row_specs(r, rank, c, threshold)
+        specs[6] = (self._ma_text(r), self._ma_color(r))
+        return specs
 
     def _display_results(self, results):
         with self._results_lock:
@@ -130,14 +196,6 @@ class ResultsViewMixin:
                     content = getattr(first, "content", None)
                     if isinstance(content, ft.Column):
                         self.table_column.controls.pop(0)
-
-            # Build a set of currently displayed tickers
-            displayed = set()
-            for ctrl in self.table_column.controls:
-                if isinstance(ctrl, ft.Container):
-                    t = getattr(ctrl, "_pool_ticker", None)
-                    if t:
-                        displayed.add(t)
 
             # Update existing rows and append new ones
             for rank, r in enumerate(page_shown, start + 1):
@@ -253,7 +311,9 @@ class ResultsViewMixin:
                         )
 
         # ── Shared tail: pagination + summary/hero/chart ──────────────
-        self.pagination_bar.visible = bool(shown and len(shown) > page_size)
+        show_bar = bool(shown and len(shown) > page_size)
+        self.pagination_bar.visible = show_bar
+        self.pagination_row.visible = show_bar
         if shown:
             self.page_label.value = (
                 f"Page {self.current_page + 1} / {total_pages}  ({len(shown)} stocks)"
@@ -443,59 +503,14 @@ class ResultsViewMixin:
         Returns the outermost ``ft.Container`` and registers it in
         ``_row_pool`` / ``_row_cells`` so ``_update_row`` can patch values.
         """
-        total = _score_of(r)
         ticker = r.get("ticker", "?")
-        trend_dir = r.get("trend_dir") or ""
-        is_above = total >= threshold
+        is_above = _score_of(r) >= threshold
         rating = r.get("combined_rating", "POOR")
-        rating_txt_color = rating_color(rating, c)
         entry = bool(r.get("entry_signal"))
         accent = self._rating_accent(rating)
-
         cols = [
-            (str(rank), c["text_dim"], 11, False),
-            (ticker, c["green"] if is_above else c["text"], 12, True),
-            (f"{total:.0f}", score_color(total, c), 14, True),
-            (rating, rating_txt_color, 11, True),
-            (
-                "YES" if entry else "--",
-                c["green"] if entry else c["text_dim"],
-                11,
-                True,
-            ),
-            (f"₹{r.get('close', 0) or 0:.0f}", c["text"], 12, True),
-            (self._ma_text(r), self._ma_color(r), 11, False),
-            (f"{r.get('trend', 0) or 0:.0f}", c["green"], 11, False),
-            (f"{r.get('momentum', 0) or 0:.0f}", c["cyan"], 11, False),
-            (f"{r.get('rsi', 0) or 0:.0f}", c["blue"], 11, False),
-            (f"{r.get('macd', 0) or 0:.0f}", c.get("macd", c["blue"]), 11, False),
-            (f"{r.get('volume', 0) or 0:.0f}", c["orange"], 11, False),
-            (f"{r.get('rel_str', 0) or 0:.0f}", c["lime"], 11, False),
-            (
-                f"{r.get('fundamentals', 0) or 0:.0f}",
-                c.get("fund", c["yellow"]),
-                11,
-                False,
-            ),
-            (
-                f"{r.get('pc1m', 0) or 0:+.1f}%",
-                c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"],
-                11,
-                False,
-            ),
-            (
-                ("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?"),
-                c["green"] if trend_dir == "Bull" else c["red"],
-                11,
-                False,
-            ),
-            (f"{r.get('adx_val', 0) or 0:.0f}", c["text"], 11, False),
-            (
-                "Chop" if r.get("is_sideways") else "OK",
-                c["orange"] if r.get("is_sideways") else c["green"],
-                11,
-                False,
-            ),
+            (text, color, *_ROW_STYLE[i])
+            for i, (text, color) in enumerate(self._row_specs(r, rank, c, threshold))
         ]
 
         wash_for = {}
@@ -612,54 +627,10 @@ class ResultsViewMixin:
 
         total = _score_of(r)
         is_above = total >= threshold
-        trend_dir = r.get("trend_dir") or ""
         rating = r.get("combined_rating", "POOR")
-        entry = bool(r.get("entry_signal"))
         accent = self._rating_accent(rating)
 
-        new_vals = [
-            str(rank),
-            ticker,
-            f"{total:.0f}",
-            rating,
-            "YES" if entry else "--",
-            f"₹{r.get('close', 0) or 0:.0f}",
-            self._ma_text(r),
-            f"{r.get('trend', 0) or 0:.0f}",
-            f"{r.get('momentum', 0) or 0:.0f}",
-            f"{r.get('rsi', 0) or 0:.0f}",
-            f"{r.get('macd', 0) or 0:.0f}",
-            f"{r.get('volume', 0) or 0:.0f}",
-            f"{r.get('rel_str', 0) or 0:.0f}",
-            f"{r.get('fundamentals', 0) or 0:.0f}",
-            f"{r.get('pc1m', 0) or 0:+.1f}%",
-            (("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?")),
-            f"{r.get('adx_val', 0) or 0:.0f}",
-            "Chop" if r.get("is_sideways") else "OK",
-        ]
-
-        new_colors = [
-            c["text_dim"],
-            c["green"] if is_above else c["text"],
-            score_color(total, c),
-            rating_color(rating, c),
-            c["green"] if entry else c["text_dim"],
-            c["text"],
-            self._ma_color(r),
-            c["green"],
-            c["cyan"],
-            c["blue"],
-            c.get("macd", c["blue"]),
-            c["orange"],
-            c["lime"],
-            c.get("fund", c["yellow"]),
-            c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"],
-            c["green"] if trend_dir == "Bull" else c["red"],
-            c["text"],
-            c["orange"] if r.get("is_sideways") else c["green"],
-        ]
-
-        for txt, val, col in zip(cells, new_vals, new_colors):
+        for txt, (val, col) in zip(cells, self._row_specs(r, rank, c, threshold)):
             txt.value = val
             txt.color = col
 

@@ -14,21 +14,9 @@ from flet.canvas import Canvas, Path
 from flet.controls.alignment import Alignment
 
 from ..shared.constants import score_of as _score_of
-from .ui_kit import _border_all, _padding_only
+from .ui_kit import _border_all, _padding_only, score_color
 
 logger = logging.getLogger(__name__)
-
-
-def _score_bucket_color(score: float, c: dict) -> str:
-    """Map a score (0-100) to a theme colour via gradient."""
-    if score >= 70:
-        return c["green"]
-    if score >= 50:
-        return c["lime"]
-    if score >= 30:
-        return c["orange"]
-    return c["red"]
-
 
 # ── Score Distribution Histogram ────────────────────────────────────
 
@@ -75,7 +63,7 @@ def build_score_histogram(
         y0 = pad_top + chart_h - bar_h
         y1 = pad_top + chart_h
         score_mid = i * 10 + 5
-        color = _score_bucket_color(score_mid, c)
+        color = score_color(score_mid, c)
 
         if bar_h > 0:
             r = min(3, bar_h / 2)

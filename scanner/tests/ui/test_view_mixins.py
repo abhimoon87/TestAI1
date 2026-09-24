@@ -2,10 +2,7 @@
 
 The mixins (``LayoutViewMixin`` / ``ResultsViewMixin`` / ``SettingsViewMixin``)
 build plain Flet controls, which need no running app or display to construct.
-Following the pattern from ``test_app_cache_ui.py``, we create an
-un-initialized ``ScannerApp`` via ``__new__``, attach only the state each
-method reads (theme colors, settings, a stub page), and inspect the returned
-control trees — so the full dashboard/settings build runs without a window.
+Harness lives in ``tests/ui/conftest.py`` (``make_app`` / ``FakePage``).
 """
 
 import flet as ft
@@ -15,132 +12,10 @@ import scanner.backend.settings_store as store_mod
 import scanner.ui.app as app_mod
 from scanner.shared.constants import score_of as _score_of
 from scanner.shared.themes import THEMES
-from scanner.ui.app import ScannerApp
 from scanner.ui.views_results import ResultsViewMixin
 
-
-class _FakePage:
-    """Stub flet.Page recording control adds/updates and dialog show/pop."""
-
-    def __init__(self):
-        self.controls = []
-        self.window = type("W", (), {})()
-        self.update_calls = 0
-        self.shown = []
-        self.popped = 0
-        self.services = []
-
-    def add(self, control):
-        self.controls.append(control)
-
-    def update(self):
-        self.update_calls += 1
-
-    def show_dialog(self, control):
-        self.shown.append(control)
-
-    def pop_dialog(self):
-        self.popped += 1
-
-    def run_task(self, handler):
-        """Run async coroutines synchronously in the test harness.
-
-        Flet's ``page.run_task(handler)`` calls ``handler()`` to obtain a
-        coroutine, then schedules it.  We replicate that here.
-        """
-        import asyncio
-
-        coro = handler()
-        if asyncio.iscoroutine(coro):
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop and loop.is_running():
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    pool.submit(asyncio.run, coro).result(timeout=2)
-            else:
-                asyncio.run(coro)
-
-
-def _make_app():
-    """Un-initialized ScannerApp with the state view builders read."""
-    import threading
-
-    app = ScannerApp.__new__(ScannerApp)
-    app.page = _FakePage()
-    app.current_theme = "dark"
-    app.theme_colors = THEMES["dark"]
-    app.settings = dict(app_mod.DEFAULT_SETTINGS)
-    app.active_view = "dashboard"
-    app.scanning = False
-    app._scan_lock = threading.Lock()
-    app._results_lock = threading.RLock()
-    app._scan_epoch = 0
-    app.logged = []
-    app._log = app.logged.append
-
-    # Result / view state normally set in ScannerApp.__init__
-    app.results = []
-    app.all_results = []
-    app.filtered_results = []
-    app._row_pool = {}
-    app._row_cells = {}
-    app.filter_text = ""
-    app.sort_col = None
-    app.sort_reverse = False
-    app.page_size = 100
-    app.current_page = 0
-    app._scan_cancelled = False
-    app._last_warnings = []
-    app._last_stream_render = 0.0
-
-    # Dropdown / pagination stubs (Flet controls need no window)
-    app.rating_filter_dd = type("DD", (), {"value": "All"})()
-    app.page_size_dd = type("DD", (), {"value": "100"})()
-    app.page_size_options = ["50", "100", "200", "500"]
-
-    # Lightweight controls read by _render_current_page / _scan_complete
-    app.table_column = ft.Column(spacing=0)
-    app.empty_label = ft.Container(visible=False)
-    app.pagination_bar = ft.Container(visible=False)
-    app.page_label = ft.Text("Page 1 / 1")
-    app.result_count_label = ft.Text("no scan yet")
-    app.summary_cards = {
-        k: ft.Text("—")
-        for k in (
-            "total",
-            "passed",
-            "entry",
-            "avg",
-            "high",
-            "bull",
-            "bear",
-            "dead_skip",
-        )
-    }
-    app.hero_sub = ft.Text("")
-    app.topicks_column = ft.Column(spacing=0)
-    app.chart_card = ft.Container(visible=True)
-    app.chart_bars = ft.Row(spacing=2)
-    app.chart_sub = ft.Text("")
-    app.progress_label = ft.Text("Ready")
-    app.status_label = ft.Text("Status: Ready")
-    app.progress_bar = ft.ProgressBar(value=0)
-    app.action_btn = type("Btn", (), {"disabled": False, "bgcolor": None})()
-    app.action_btn_label = ft.Text("RUN")
-    app.html_btn = type("Btn", (), {"disabled": True})()
-    app.csv_btn = type("Btn", (), {"disabled": True})()
-    app.clear_btn = type("Btn", (), {"disabled": True})()
-
-    # Run deferred UI work inline (no Flet event loop in unit tests)
-    app._safe_update = lambda fn: fn()
-    # Don't spin real background work from _scan_complete in tests
-    app._warm_market = lambda: None
-    app._news_prefetcher = type("P", (), {"start": lambda self, *a, **k: None})()
-    return app
+from .conftest import FakePage as _FakePage  # noqa: F401  (re-export)
+from .conftest import make_app as _make_app  # noqa: F401
 
 
 def _cell(row, idx):
