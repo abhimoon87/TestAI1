@@ -113,7 +113,7 @@ def test_show_view_rebuilds_table_after_settings():
     app.all_results = list(rows)
     app.filtered_results = list(rows)
     app._render_current_page()
-    assert len(app.table_column.controls) == 6  # header + 5
+    assert len(app.table_column.controls) == 5  # rows; header is pinned
 
     app._show_settings()
     app._show_view("dashboard")

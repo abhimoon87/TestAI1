@@ -107,6 +107,7 @@ def make_app():
 
     # Lightweight controls read by _render_current_page / _scan_complete
     app.table_column = ft.Column(spacing=0)
+    app.header_holder = ft.Column(spacing=0)
     app.empty_label = ft.Container(visible=False)
     app.pagination_bar = ft.Container(visible=False)
     app.pagination_row = ft.Row(visible=False)
@@ -115,19 +116,15 @@ def make_app():
     app.summary_cards = {
         k: ft.Text("—")
         for k in (
-            "total",
-            "passed",
-            "entry",
             "avg",
             "high",
             "bull",
             "bear",
-            "dead_skip",
         )
     }
     app.hero_sub = ft.Text("")
     app.topicks_column = ft.Column(spacing=0)
-    app.chart_card = ft.Container(visible=True)
+    app.chart_holder = ft.Container(visible=False)
     app.chart_bars = ft.Row(spacing=2)
     app.chart_sub = ft.Text("")
     app.progress_label = ft.Text("Ready")

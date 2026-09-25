@@ -108,8 +108,9 @@ class TestFullRebuildRendersRows:
         app._render_current_page()
 
         ctrls = app.table_column.controls
-        # header + data rows (no empty-state, no placeholder)
-        assert len(ctrls) == 1 + 150, f"expected header + 150 rows, got {len(ctrls)}"
+        # data rows only (no empty-state, no placeholder); header is pinned
+        assert len(ctrls) == 150, f"expected 150 rows, got {len(ctrls)}"
+        assert len(app.header_holder.controls) == 1  # pinned column header
         # every data row registered in the pool
         assert len(app._row_pool) == 150
         assert len(app._row_cells) == 150
@@ -198,7 +199,7 @@ class TestFullRebuildRendersRows:
         # pool was cleared then repopulated by the full rebuild
         assert len(app._row_pool) == 8
         ctrls = app.table_column.controls
-        assert len(ctrls) == 1 + 8
+        assert len(ctrls) == 8
 
     def test_scan_complete_persists_results(self, monkeypatch):
         """_scan_complete writes all_results through save_results."""
@@ -219,6 +220,93 @@ class TestFullRebuildRendersRows:
 
         assert len(saved) == 1
         assert [r["ticker"] for r in saved[0]] == ["STK000", "STK001", "STK002"]
+
+
+class TestGridFilters:
+    """min-score is a live grid filter; chips reflect active filters."""
+
+    def test_min_score_filters_sub_threshold_rows(self):
+        app = _make_app()  # settings min_score=50, no slider → fallback
+        low = _result(0, score=30.0)
+        high = _result(1, score=70.0)
+        assert app._row_matches_filters(low) is False
+        assert app._row_matches_filters(high) is True
+
+    def test_filter_chips_render_search_and_threshold(self):
+        app = _make_app()
+        app.filter_chips_row = ft.Row([])
+        app.filter_text = "STK"
+        app.all_results = [_result(0, score=70.0)]
+        app.filtered_results = list(app.all_results)
+        app.active_view = "dashboard"
+        app.scanning = False
+        app.sort_col = None
+
+        app._render_current_page()
+
+        texts = [c.content.value for c in app.filter_chips_row.controls]
+        assert any("STK" in t for t in texts)
+        assert any("score ≥" in t for t in texts)
+
+    def test_threshold_zero_disables_score_filter(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 0})()
+        assert app._is_filter_active() is False or app.filter_text
+        assert app._row_matches_filters(_result(0, score=1.0)) is True
+
+
+class TestKeyboardNav:
+    """↑/↓ move grid selection; Esc leaves detail/settings."""
+
+    def test_kb_move_selects_first_and_second_row(self):
+        app = _make_app()
+        app.all_results = [_result(i) for i in range(150)]
+        app.filtered_results = list(app.all_results)
+        app.active_view = "dashboard"
+        app.scanning = False
+        app.sort_col = None
+        app.page_size = 100
+
+        app._render_current_page()
+        app._kb_move(1)
+        assert app._kb_ticker == "STK000"
+        app._kb_move(1)
+        assert app._kb_ticker == "STK001"
+        app._kb_move(-1)
+        assert app._kb_ticker == "STK000"
+
+    def test_kb_move_clamped_to_page(self):
+        app = _make_app()
+        app.all_results = [_result(i) for i in range(5)]
+        app.filtered_results = list(app.all_results)
+        app.active_view = "dashboard"
+        app.scanning = False
+        app.sort_col = None
+
+        app._render_current_page()
+        for _ in range(10):
+            app._kb_move(1)
+        assert app._kb_ticker == "STK004"
+
+    def test_kb_gated_when_input_focused(self):
+        app = _make_app()
+        app.all_results = [_result(i) for i in range(5)]
+        app.filtered_results = list(app.all_results)
+        app.active_view = "dashboard"
+        app.scanning = False
+        app._render_current_page()
+
+        app._input_focused = True
+        app._kb_move(1)
+        assert getattr(app, "_kb_ticker", None) is None
+
+    def test_escape_leaves_settings(self):
+        app = _make_app()
+        app.active_view = "settings"
+        app._rail_pills = {"dashboard": type("P", (), {"opacity": 0.0})()}
+        app._restore_main_area = lambda: None  # needs full build
+        app._kb_escape()
+        assert app.active_view == "dashboard"
 
 
 class TestFinalSync:

@@ -16,6 +16,8 @@ from typing import ClassVar
 import flet as ft
 
 from .ui_kit import (
+    RADIUS_MD,
+    RADIUS_XL,
     _card_shadow,
     _glass_bg,
     _glass_border,
@@ -156,7 +158,7 @@ class SettingsViewMixin:
                 color=c["text"],
                 border_color=c["border"],
                 border_width=1,
-                border_radius=10,
+                border_radius=RADIUS_MD,
                 content_padding=_padding_only(left=12, right=10, top=8, bottom=8),
             )
         ctrl._settings_key = key
@@ -198,7 +200,7 @@ class SettingsViewMixin:
                     ),
                     bgcolor=_glass_bg(),
                     border=_glass_border(),
-                    border_radius=16,
+                    border_radius=RADIUS_XL,
                     shadow=_card_shadow(),
                     padding=16,
                 )

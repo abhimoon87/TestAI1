@@ -18,6 +18,14 @@ ANIM_FAST = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
 ANIM_NORMAL = ft.Animation(300, ft.AnimationCurve.EASE_OUT)
 ANIM_BOUNCE = ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
 
+# ── Corner-radius scale (single source of truth) ────────────────────
+# Geometric radii (circles = width/2, pills = height/2, 2px micro-rails)
+# are NOT part of this scale — they follow the control's size.
+RADIUS_SM = 6  # chips, washes, rows, small cards
+RADIUS_MD = 10  # inputs, dropdowns, medium cards
+RADIUS_LG = 14  # cards, panels, buttons
+RADIUS_XL = 16  # hero, large shells
+
 
 def shimmer_cell(width: int = 100, height: int = 14) -> ft.Container:
     """A single shimmer skeleton block for loading placeholders."""
@@ -25,7 +33,7 @@ def shimmer_cell(width: int = 100, height: int = 14) -> ft.Container:
         width=width,
         height=height,
         bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.WHITE),
-        border_radius=4,
+        border_radius=RADIUS_SM,
     )
 
 
@@ -130,7 +138,7 @@ def themed_dropdown(
         color=c["text"],
         border_color=c["border"],
         border_width=1,
-        border_radius=10,
+        border_radius=RADIUS_MD,
         focused_border_color=c["purple"],
         on_select=handler,
     )

@@ -14,7 +14,7 @@ from flet.canvas import Canvas, Path
 from flet.controls.alignment import Alignment
 
 from ..shared.constants import score_of as _score_of
-from .ui_kit import _border_all, _padding_only, score_color
+from .ui_kit import RADIUS_LG, _border_all, _padding_only, score_color
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ def build_score_histogram(
     threshold: float = 50.0,
     width: int = 520,
     height: int = 140,
+    on_bucket=None,
 ) -> ft.Container:
     """Canvas histogram of score distribution (10 buckets: 0-10 … 90-100).
 
@@ -35,6 +36,8 @@ def build_score_histogram(
     - Vertical dashed threshold line at ``threshold``
     - Bucket count labels above each bar
     - X-axis labels (0, 10, 20, … 100)
+    - ``on_bucket(i)``: optional tap handler — wraps the chart in a
+      GestureDetector and reports the clicked bucket index (0-9)
     """
     buckets = [0] * 10
     for r in results:
@@ -46,7 +49,10 @@ def build_score_histogram(
     if max_count == 0:
         max_count = 1
 
-    pad_left, pad_right, pad_top, pad_bottom = 36, 12, 24, 22
+    pad_left, pad_right = 36, 12
+    # Slim strips keep just enough room for the count/axis labels.
+    pad_top = 24 if height >= 100 else 18
+    pad_bottom = 22 if height >= 100 else 15
     chart_w = width - pad_left - pad_right
     chart_h = height - pad_top - pad_bottom
     bar_w = chart_w / 10
@@ -147,10 +153,25 @@ def build_score_histogram(
         height=height,
     )
 
+    if on_bucket is not None:
+
+        def _tap(e):
+            pos = getattr(e, "local_position", None)
+            x = getattr(pos, "x", None) if pos is not None else None
+            if x is None or not (pad_left <= x <= pad_left + chart_w):
+                return
+            on_bucket(max(0, min(9, int((x - pad_left) / bar_w))))
+
+        content = ft.GestureDetector(
+            content=content,
+            on_tap_down=_tap,
+            tooltip="Click a bar to set min score",
+        )
+
     return ft.Container(
         content=content,
         bgcolor=c["card"],
-        border_radius=12,
+        border_radius=RADIUS_LG,
         border=_border_all(1, c["border"]),
         padding=_padding_only(left=4, right=4, top=4, bottom=4),
     )
@@ -183,7 +204,7 @@ def build_price_chart(
                 "Insufficient price data", size=12, color=c.get("text_dim", "#8c92b0")
             ),
             bgcolor=c.get("card", "#1a1b24"),
-            border_radius=12,
+            border_radius=RADIUS_LG,
             width=width,
             height=height,
             alignment=Alignment.CENTER,
@@ -332,7 +353,7 @@ def build_price_chart(
     result = ft.Container(
         content=content,
         bgcolor=c.get("card", "#1a1b24"),
-        border_radius=12,
+        border_radius=RADIUS_LG,
         border=_border_all(1, c.get("border", "#2a2b38")),
         padding=_padding_only(left=2, right=2, top=2, bottom=2),
     )
@@ -453,7 +474,7 @@ def build_score_breakdown(
     return ft.Container(
         content=content,
         bgcolor=c.get("card", "#1a1b24"),
-        border_radius=12,
+        border_radius=RADIUS_LG,
         border=_border_all(1, c.get("border", "#2a2b38")),
         padding=_padding_only(left=4, right=4, top=4, bottom=4),
     )

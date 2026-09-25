@@ -19,7 +19,7 @@ from datetime import datetime
 
 import flet as ft
 
-from ..shared.constants import LOG_MAX_LINES
+from ..shared.constants import LOG_MAX_LINES, score_of
 from ..shared.trace import setup_trace
 
 try:
@@ -288,6 +288,9 @@ class ScannerApp(
                 pill.opacity = 1.0
             else:
                 pill.opacity = 0.0
+        lbl = getattr(self, "topbar_title", None)
+        if lbl is not None:
+            lbl.value = "Scanner" if name == "dashboard" else name.title()
         if name == "dashboard":
             # Overlay off + independent hero/grid reload; dashboard never re-laid-out.
             self._restore_main_area()
@@ -298,6 +301,9 @@ class ScannerApp(
         self.active_view = "settings"
         for vname, pill in self._rail_pills.items():
             pill.opacity = 1.0 if vname == "settings" else 0.0
+        lbl = getattr(self, "topbar_title", None)
+        if lbl is not None:
+            lbl.value = "Settings"
         # Overlay on — dashboard stays visible and laid out underneath.
         self.settings_view.visible = True
         self._fade_view_in(self.settings_view)
@@ -363,8 +369,27 @@ class ScannerApp(
                 self._maybe_save_settings()
             elif not ctrl and k == "/":
                 self._focus_search()
+            elif not ctrl and k in ("ArrowDown", "Down"):
+                self._kb_move(1)
+            elif not ctrl and k in ("ArrowUp", "Up"):
+                self._kb_move(-1)
+            elif not ctrl and k == "Enter":
+                self._kb_open()
+            elif not ctrl and k == "Escape":
+                self._kb_escape()
         except Exception:
             logger.info("Keyboard shortcut failed", exc_info=True)
+
+    def _kb_escape(self):
+        """Esc: leave the detail panel, else leave settings."""
+        try:
+            if getattr(self, "_detail_ticker", None) is not None:
+                self._back_to_results()
+                self.page.update()
+            elif self.active_view == "settings":
+                self._show_view("dashboard")
+        except Exception:
+            logger.info("Escape handling failed", exc_info=True)
 
     def _focus_search(self):
         if self.active_view == "dashboard":
@@ -451,7 +476,7 @@ class ScannerApp(
 
     def _open_palette(self):
         """Command palette dialog (Ctrl+K): fuzzy filter, Enter runs."""
-        from .ui_kit import filter_actions
+        from .ui_kit import RADIUS_MD, filter_actions
 
         c = self.theme_colors
         query = ft.TextField(
@@ -462,7 +487,7 @@ class ScannerApp(
             color=c["text"],
             border_color=c["border"],
             border_width=1,
-            border_radius=10,
+            border_radius=RADIUS_MD,
         )
         results_col = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=300)
         state = {"actions": self._palette_actions(), "shown": []}
@@ -526,11 +551,25 @@ class ScannerApp(
     def _rating_filter(self) -> str:
         return str(self.rating_filter_dd.value or "ALL").upper()
 
+    def _score_threshold(self) -> float:
+        """Live grid threshold from the slider (settings as fallback)."""
+        try:
+            return float(self.threshold_slider.value)
+        except (AttributeError, TypeError, ValueError):
+            try:
+                return float(self.settings.get("min_score", 50))
+            except (TypeError, ValueError):
+                return 50.0
+
     def _is_filter_active(self) -> bool:
-        return bool(self.filter_text) or self._rating_filter() != "ALL"
+        return (
+            bool(self.filter_text)
+            or self._rating_filter() != "ALL"
+            or self._score_threshold() > 0
+        )
 
     def _visible_results(self) -> list:
-        """Results after search/rating filters.
+        """Results after search/rating/threshold filters.
 
         Returns a snapshot copy under ``_results_lock`` so concurrent
         streaming mutations cannot corrupt the caller's iteration.
@@ -548,6 +587,8 @@ class ScannerApp(
             combined = (r.get("combined_rating") or "POOR").upper()
             if combined != rating:
                 return False
+        if score_of(r) < self._score_threshold():
+            return False
         return True
 
     def _on_rating_change(self, _e):
@@ -663,6 +704,9 @@ class ScannerApp(
     def _on_threshold_change(self, _e):
         val = self.threshold_slider.value
         self.threshold_label.value = f"{int(val)}+"
+        # min-score is a live grid filter too — refilter visible rows
+        if self.all_results:
+            self._display_results(self.all_results)
         self.page.update()
 
     def _load_settings_to_ui(self):
@@ -1181,17 +1225,21 @@ class ScannerApp(
         tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
         results_snapshot = list(self.results)
         universe_name = self.universe_dd.value or "NIFTY 50"
-        safe_title = f"HMAxEMA Scanner — {universe_name} — {tf_label}"
+        safe_title = "HMAxEMA Scanner"
 
         def _bg():
             try:
                 os.makedirs(REPORTS_DIR, exist_ok=True)
-                self._log("Fetching news sentiment for exported stocks...")
+                if any("_news_items" not in r for r in results_snapshot):
+                    self._log("Fetching news sentiment for exported stocks...")
+                else:
+                    self._log("Exporting report (news already prefetched)...")
                 html = generate_html_report(
                     results_snapshot,
                     title=safe_title,
                     threshold=threshold,
                     fetch_news=True,
+                    meta=[f"🌐 {universe_name}", f"📊 {tf_label}"],
                 )
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"scanner_report_{timestamp}.html"
@@ -1215,6 +1263,8 @@ class ScannerApp(
         if not self.results:
             return
         import csv
+
+        from ..backend.report import prune_old
 
         with self._results_lock:
             results_snapshot = list(self.results)
@@ -1298,6 +1348,7 @@ class ScannerApp(
                                 else "No",
                             ]
                         )
+                prune_old(REPORTS_DIR, "scanner_results_*.csv", 4)
                 self._safe_update(lambda: self._log(f"CSV saved: {filename}"))
                 self._safe_update(
                     lambda: self._toast(f"CSV saved: {filename}", "success")
@@ -1325,7 +1376,7 @@ class ScannerApp(
             self._row_cells.clear()
         for attr in (
             "table_column",
-            "chart_card",
+            "chart_holder",
             "empty_label",
             "result_count_label",
             "progress_bar",
@@ -1338,7 +1389,7 @@ class ScannerApp(
             if getattr(self, attr, None) is None:
                 return
         self.table_column.controls.clear()
-        self.chart_card.visible = False
+        self.chart_holder.visible = False
         self.empty_label.visible = True
         self.table_column.controls.append(self.empty_label)
         self.result_count_label.value = "no scan yet"
@@ -1382,10 +1433,24 @@ class ScannerApp(
         self.page.update()
 
     def _make_log_line(self, text, c):
+        # "[HH:MM:SS] message" → dim timestamp + severity-tinted message
+        ts, msg = "", text
+        if text.startswith("[") and "] " in text[:12]:
+            ts, msg = text.split("] ", 1)
+            ts += "] "
+        upper = msg.upper()
+        if "ERROR" in upper or "FAIL" in upper:
+            color = c["red"]
+        elif "WARN" in upper:
+            color = c["orange"]
+        else:
+            color = c["text_dim"]
+        base = {"size": 10, "font_family": "Consolas"}
         return ft.Text(
-            text,
-            size=10,
-            color=c["text_dim"],
+            spans=[
+                ft.TextSpan(ts, ft.TextStyle(**base, color=c["text_faint"])),
+                ft.TextSpan(msg, ft.TextStyle(**base, color=color)),
+            ],
             selectable=True,
             font_family="Consolas",
         )

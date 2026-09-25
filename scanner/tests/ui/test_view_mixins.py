@@ -64,6 +64,7 @@ class TestBuildDashboard:
             "main_area_box",
             "dashboard_content",
             "summary_cards",
+            "insight_strip",
             "chart_bars",
             "pagination_bar",
         ):
@@ -81,22 +82,37 @@ class TestBuildDashboard:
         # Dashboard pill is visible; settings page builds from it
         assert app._rail_pills["dashboard"].opacity == 1.0
 
-    def test_build_summary_row_creates_eight_cards(self):
-        """Summary stat cards are keyed and labelled for later updates."""
+    def test_market_slot_sits_outside_gradient_pill(self):
+        """NIFTY box is a sibling of the purple gradient pill, not inside it."""
+
+        def _has(ctrl, target):
+            if ctrl is target:
+                return True
+            kids = list(getattr(ctrl, "controls", None) or [])
+            inner = getattr(ctrl, "content", None)
+            if inner is not None:
+                kids.append(inner)
+            return any(_has(k, target) for k in kids)
+
+        app = _make_app()
+        app._build_ui()
+
+        hero_row = app.hero.content
+        pill = next(
+            c for c in hero_row.controls if getattr(c, "gradient", None) is not None
+        )
+        assert app.market_slot in hero_row.controls
+        assert _has(pill, app.hero_text_col)
+        assert not _has(pill, app.market_slot)
+        assert getattr(app.hero, "gradient", None) is None
+
+    def test_build_insight_stats_creates_four_pills(self):
+        """Strip stats are keyed inline labels (no bulky cards)."""
         app = _make_app()
         app.summary_cards = {}
-        row = app._build_summary_row()
-        assert len(row.controls) == 8
-        assert set(app.summary_cards) == {
-            "total",
-            "passed",
-            "entry",
-            "avg",
-            "high",
-            "bull",
-            "bear",
-            "dead_skip",
-        }
+        row = app._build_insight_stats()
+        assert len(row.controls) == 4
+        assert set(app.summary_cards) == {"avg", "high", "bull", "bear"}
 
 
 class TestBuildSettingsView:
@@ -561,14 +577,10 @@ def test_summary_cards_update_values():
     app.summary_cards = {
         k: ft.Text("—")
         for k in (
-            "total",
-            "passed",
-            "entry",
             "avg",
             "high",
             "bull",
             "bear",
-            "dead_skip",
         )
     }
     app._update_summary(
@@ -578,12 +590,85 @@ def test_summary_cards_update_values():
             _row(ticker="C", total=30, trend_dir="Bear"),
         ]
     )
-    assert app.summary_cards["total"].value == "3"
-    assert app.summary_cards["passed"].value == "1"  # 70 >= threshold 50
-    assert app.summary_cards["entry"].value == "1"
+    assert app.summary_cards["avg"].value == "46.7"  # (70+40+30)/3
     assert app.summary_cards["bull"].value == "2"
     assert app.summary_cards["bear"].value == "1"
     assert app.summary_cards["high"].value == "70"
+
+
+class TestInsightStrip:
+    """Slim strip (stats + clickable histogram) replaces cards + chart card."""
+
+    def test_strip_in_main_scroll_with_chart_hidden(self):
+        app = _make_app()
+        app._build_ui()
+        assert app.insight_strip in app.main_scroll.controls
+        assert app.chart_holder.visible is False
+        assert app.chart_holder.content is app.chart_bars
+
+    def test_render_chart_shows_slim_histogram(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 50})()
+        app.threshold_label = ft.Text("50+")
+        app._render_chart([{"total": 70}, {"total": 40}])
+        assert app.chart_holder.visible is True
+        assert len(app.chart_bars.controls) == 1
+
+    def test_render_chart_hides_when_empty(self):
+        app = _make_app()
+        app.chart_holder.visible = True
+        app._render_chart([])
+        assert app.chart_holder.visible is False
+
+    def test_bucket_click_sets_threshold_and_refilters(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 50})()
+        app.threshold_label = ft.Text("50+")
+        app.all_results = [
+            {"ticker": "A", "total": 70},
+            {"ticker": "B", "total": 40},
+        ]
+        app.filtered_results = list(app.all_results)
+        app._set_threshold_from_bucket(6)
+        assert app.threshold_slider.value == 60
+        assert app.settings["min_score"] == 60.0
+        assert [r["ticker"] for r in app.filtered_results] == ["A"]
+
+    def test_bucket_zero_clears_threshold(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 50})()
+        app.threshold_label = ft.Text("50+")
+        app._set_threshold_from_bucket(0)
+        assert app.threshold_slider.value == 0
+        assert app._is_filter_active() is False
+
+    def test_histogram_reports_bucket_from_tap(self):
+        from scanner.ui.views_charts import build_score_histogram
+
+        got = []
+        chart = build_score_histogram(
+            [{"total": 55}],
+            THEMES["dark"],
+            width=520,
+            height=76,
+            on_bucket=got.append,
+        )
+        gd = chart.content
+        assert isinstance(gd, ft.GestureDetector)
+        bar_w = (520 - 36 - 12) / 10
+        tap = lambda x: type(  # noqa: E731
+            "E", (), {"local_position": type("P", (), {"x": x})()}
+        )()
+        gd.on_tap_down(tap(36 + 6.5 * bar_w))
+        assert got == [6]
+        gd.on_tap_down(tap(10))  # outside the plot — ignored
+        assert got == [6]
+
+    def test_histogram_without_callback_has_no_gesture_wrapper(self):
+        from scanner.ui.views_charts import build_score_histogram
+
+        chart = build_score_histogram([], THEMES["dark"], width=520, height=76)
+        assert not isinstance(chart.content, ft.GestureDetector)
 
 
 def test_score_of_tolerates_missing_total():

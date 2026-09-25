@@ -25,6 +25,9 @@ from ..shared.constants import score_of as _score_of
 from .ui_kit import (
     ANIM_FAST,
     ANIM_NORMAL,
+    RADIUS_LG,
+    RADIUS_MD,
+    RADIUS_SM,
     _border_all,
     _margin_only,
     _padding_only,
@@ -133,6 +136,17 @@ class ResultsViewMixin:
         self._render_current_page()
         self.page.update()
 
+    def _sorted_visible(self) -> list:
+        """Visible results in display order (filter + active sort applied)."""
+        shown = self._visible_results()
+        if self.sort_col is not None and shown:
+            try:
+                key_fn = self._get_sort_key(self.sort_col)
+                shown = sorted(shown, key=key_fn, reverse=self.sort_reverse)
+            except Exception as ex:
+                logger.info("Sort failed for col %s: %s", self.sort_col, ex)
+        return shown
+
     def _render_current_page(self):
         if self.active_view != "dashboard":
             logger.debug("_render_current_page: SKIP active_view=%s", self.active_view)
@@ -140,7 +154,7 @@ class ResultsViewMixin:
         c = self.theme_colors
         with self._results_lock:
             results = list(self.all_results)
-            shown = list(self._visible_results())
+        shown = self._sorted_visible()
         logger.info(
             "_render_current_page: results=%d shown=%d scanning=%s active_view=%s table_ctrls=%d",
             len(results),
@@ -149,13 +163,6 @@ class ResultsViewMixin:
             self.active_view,
             len(self.table_column.controls),
         )
-
-        if self.sort_col is not None and shown:
-            try:
-                key_fn = self._get_sort_key(self.sort_col)
-                shown = sorted(shown, key=key_fn, reverse=self.sort_reverse)
-            except Exception as ex:
-                logger.info("Sort failed for col %s: %s", self.sort_col, ex)
 
         # ── Streaming fast path: patch rows in-place, no full rebuild ──
         threshold = self.settings.get("min_score", 50)
@@ -197,6 +204,11 @@ class ResultsViewMixin:
                     if isinstance(content, ft.Column):
                         self.table_column.controls.pop(0)
 
+            # Pinned column header (outside the row scroll pane)
+            holder = getattr(self, "header_holder", None)
+            if holder is not None and not holder.controls:
+                holder.controls = [self._make_header_row(c)]
+
             # Update existing rows and append new ones
             for rank, r in enumerate(page_shown, start + 1):
                 ticker = r.get("ticker", "?")
@@ -229,6 +241,9 @@ class ResultsViewMixin:
             self.table_column.controls.clear()
 
             if not shown:
+                holder = getattr(self, "header_holder", None)
+                if holder is not None:
+                    holder.controls = []
                 if self.scanning and not results:
                     live = (getattr(self.progress_label, "value", "") or "").strip()
                     headline = (
@@ -261,7 +276,7 @@ class ResultsViewMixin:
                             color=c["text_dim"] if filtered_empty else c["red"],
                         ),
                         ft.Text(
-                            "Loosen the search/rating filter to see the hidden rows."
+                            "Loosen the search/rating/threshold filter to see the hidden rows."
                             if filtered_empty
                             else "Try a lower min-score threshold or a different universe.",
                             size=11,
@@ -288,8 +303,9 @@ class ResultsViewMixin:
                         )
                     )
             else:
-                header_row = self._make_header_row(c)
-                self.table_column.controls.append(header_row)
+                holder = getattr(self, "header_holder", None)
+                if holder is not None:
+                    holder.controls = [self._make_header_row(c)]
 
                 for rank, r in enumerate(page_shown, start + 1):
                     try:
@@ -326,6 +342,9 @@ class ResultsViewMixin:
             rating = self._rating_filter()
             if rating != "ALL":
                 filter_parts.append(f"rating {rating.title()}")
+            thr = self._score_threshold()
+            if thr > 0:
+                filter_parts.append(f"score ≥ {thr:.0f}")
             suffix = (
                 f"  |  filter: {', '.join(filter_parts)} ({len(shown)})"
                 if filter_parts
@@ -334,11 +353,13 @@ class ResultsViewMixin:
             self.result_count_label.value = f"{len(results)} scanned  |  {len([r for r in results if _score_of(r) >= threshold])} above {threshold:.0f}+{suffix}"
         else:
             self.result_count_label.value = "no scan yet"
+        self._update_filter_chips()
 
         self._update_summary(results)
         self._update_hero_status(results)
         self._render_topicks(shown[:5])
         self._render_chart(results)
+        self._apply_kb_selection()
         logger.info(
             "_render_current_page DONE: table_ctrls=%d, shown=%d, results=%d",
             len(self.table_column.controls),
@@ -353,29 +374,32 @@ class ResultsViewMixin:
             arrow = (
                 " ▲"
                 if is_sorted and not self.sort_reverse
-                else (" ▼" if is_sorted else "")
+                else (" ▼" if is_sorted else " ▲▼")
             )
-            color = c["cyan"] if not is_sorted else c["green"]
+            color = c["green"] if is_sorted else c["cyan"]
             headers.append(
                 ft.Container(
                     content=ft.Text(
                         f"{text}{arrow}",
                         size=10,
                         weight=ft.FontWeight.BOLD,
-                        color=color,
+                        color=ft.Colors.with_opacity(0.55, color)
+                        if not is_sorted
+                        else color,
                         text_align=ft.TextAlign.LEFT if idx in (0, 1) else None,
                         max_lines=1,
                         no_wrap=True,
                     ),
                     expand=2 if idx == 1 else True,
                     on_click=lambda e, i=idx: self._on_sort(i),
+                    tooltip=f"Sort by {text}",
                     ink=True,
                 )
             )
         return ft.Container(
             content=ft.Row(controls=headers, spacing=2),
             bgcolor=c["card2"],
-            border_radius=10,
+            border_radius=RADIUS_MD,
             border=_border_all(1, c["border"]),
             height=34,
             padding=_padding_only(left=6, right=6, top=4, bottom=4),
@@ -386,6 +410,128 @@ class ResultsViewMixin:
         return self.theme_colors.get(
             _RATING_ACCENT.get(rating, "red"), self.theme_colors["red"]
         )
+
+    # ── Active-filter chips (pinned section header) ───────────────────
+
+    def _make_filter_chip(self, text, on_clear=None, tip=""):
+        c = self.theme_colors
+        chip = ft.Container(
+            content=ft.Text(text, size=10, color=c["text_dim"]),
+            bgcolor=c["card2"],
+            border_radius=RADIUS_SM,
+            border=_border_all(1, c["border"]),
+            padding=_padding_only(left=6, right=6, top=2, bottom=2),
+            tooltip=tip or None,
+        )
+        if on_clear is not None:
+            chip.on_click = on_clear
+            chip.ink = True
+        return chip
+
+    def _update_filter_chips(self):
+        row = getattr(self, "filter_chips_row", None)
+        if row is None:
+            return
+        chips = []
+        if self.filter_text:
+            chips.append(
+                self._make_filter_chip(
+                    f"'{self.filter_text}'  ✕",
+                    lambda e: self._clear_search_filter(),
+                    "Clear ticker search",
+                )
+            )
+        rating = self._rating_filter()
+        if rating != "ALL":
+            chips.append(
+                self._make_filter_chip(
+                    f"rating {rating.title()}  ✕",
+                    lambda e: self._clear_rating_filter(),
+                    "Show all ratings",
+                )
+            )
+        thr = self._score_threshold()
+        if thr > 0:
+            chips.append(
+                self._make_filter_chip(
+                    f"score ≥ {thr:.0f}",
+                    None,
+                    f"Rows with score {thr:.0f} or higher — adjust with the "
+                    "MIN SCORE slider",
+                )
+            )
+        row.controls = chips
+
+    def _clear_search_filter(self):
+        if getattr(self, "search_entry", None) is not None:
+            self.search_entry.value = ""
+        self.filter_text = ""
+        if self.all_results:
+            self._display_results(self.all_results)
+
+    def _clear_rating_filter(self):
+        if getattr(self, "rating_filter_dd", None) is not None:
+            self.rating_filter_dd.value = "All"
+        if self.all_results:
+            self._display_results(self.all_results)
+
+    # ── Grid keyboard navigation (↑/↓ select, Enter → detail) ─────────
+
+    def _kb_active(self) -> bool:
+        """Grid nav keys apply only on the dashboard, no overlay/input."""
+        return (
+            self.active_view == "dashboard"
+            and getattr(self, "_palette_dlg", None) is None
+            and not getattr(self, "_input_focused", False)
+            and getattr(self, "_detail_ticker", None) is None
+        )
+
+    def _kb_move(self, delta: int):
+        if not self._kb_active():
+            return
+        shown = self._sorted_visible()
+        if not shown:
+            return
+        start = self.current_page * self.page_size
+        page = shown[start : start + self.page_size] or shown
+        cur = next(
+            (
+                i
+                for i, r in enumerate(page)
+                if r.get("ticker") == getattr(self, "_kb_ticker", None)
+            ),
+            -1,
+        )
+        if cur == -1:
+            idx = 0 if delta > 0 else len(page) - 1
+        else:
+            idx = max(0, min(cur + delta, len(page) - 1))
+        self._kb_ticker = page[idx].get("ticker")
+        self._apply_kb_selection()
+        self.page.update()
+
+    def _kb_open(self):
+        if not self._kb_active():
+            return
+        ticker = getattr(self, "_kb_ticker", None)
+        if ticker and ticker in (getattr(self, "_row_pool", None) or {}):
+            self._show_stock_detail(ticker)
+
+    def _apply_kb_selection(self):
+        """Re-apply the keyboard selection highlight to pooled rows."""
+        c = self.theme_colors
+        pool = getattr(self, "_row_pool", None) or {}
+        selected = getattr(self, "_kb_ticker", None)
+        for ticker, row in pool.items():
+            base = getattr(row, "_base_bg", None)
+            if base is None:
+                continue
+            if ticker == selected:
+                row.bgcolor = c["row_hover"]
+                row.border = _border_all(1, c["cyan"])
+            else:
+                row.bgcolor = base
+                row.border = None
 
     def _sentiment_badge(self, r: dict, c) -> ft.Container | None:
         """Compact news count pill (arrow + n) colored by sentiment score.
@@ -423,7 +569,7 @@ class ResultsViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=bg,
-            border_radius=5,
+            border_radius=RADIUS_SM,
             padding=_padding_only(left=4, right=4, top=1, bottom=1),
             tooltip=f"News sentiment: {tone} · {n} articles — click ticker to read",
         )
@@ -588,13 +734,14 @@ class ResultsViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=bg,
-            border_radius=8,
+            border_radius=RADIUS_SM,
             border=_border_all(1, c["border"]) if is_above else None,
             height=34,
             padding=_padding_only(left=6, right=6),
             margin=_margin_only(bottom=1),
         )
         row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
+        row._base_bg = bg
 
         # Register in pool
         if not hasattr(self, "_row_pool"):
@@ -660,7 +807,12 @@ class ResultsViewMixin:
             self._hover_last_ms = now_ms
             hover_bg = self.theme_colors["row_hover"]
             is_hover = e.data == "true"
-            container.bgcolor = hover_bg if is_hover else base_bg
+            if not is_hover and getattr(container, "_pool_ticker", None) == getattr(
+                self, "_kb_ticker", None
+            ):
+                container.bgcolor = hover_bg  # keep keyboard selection
+            else:
+                container.bgcolor = hover_bg if is_hover else base_bg
             container.scale = ft.Scale(1.005) if is_hover else ft.Scale(1.0)
             container.animate_scale = ANIM_FAST
             container.update()
@@ -736,8 +888,15 @@ class ResultsViewMixin:
 
     def _scroll_to_top(self):
         try:
-            ms = getattr(self, "main_scroll", None)
-            if ms is None:
+            targets = [
+                t
+                for t in (
+                    getattr(self, "table_column", None),
+                    getattr(self, "main_scroll", None),
+                )
+                if t is not None and hasattr(t, "scroll_to")
+            ]
+            if not targets:
                 return
             # scroll_to() is a coroutine in this Flet version — it only takes
             # effect when awaited on the page's running loop (same class of
@@ -746,15 +905,16 @@ class ResultsViewMixin:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
-            if loop is not None:
-                task = loop.create_task(ms.scroll_to(offset=0, duration=200))
-                task.add_done_callback(
-                    lambda t: t.exception() if not t.cancelled() else None
-                )
-            else:
-                # No running loop (unit tests): close immediately so the
-                # un-awaited coroutine never warns at GC time.
-                ms.scroll_to(offset=0, duration=200).close()
+            for target in targets:
+                if loop is not None:
+                    task = loop.create_task(target.scroll_to(offset=0, duration=200))
+                    task.add_done_callback(
+                        lambda t: t.exception() if not t.cancelled() else None
+                    )
+                else:
+                    # No running loop (unit tests): close immediately so the
+                    # un-awaited coroutine never warns at GC time.
+                    target.scroll_to(offset=0, duration=200).close()
         except Exception:
             logger.info("Scroll-to-top failed", exc_info=True)
 
@@ -887,7 +1047,7 @@ class ResultsViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=c["card2"],
-            border_radius=12,
+            border_radius=RADIUS_LG,
             padding=12,
             margin=_margin_only(bottom=4),
         )
@@ -950,7 +1110,7 @@ class ResultsViewMixin:
             ft.Container(
                 content=ft.Text(label, size=10, weight=ft.FontWeight.BOLD, color=color),
                 bgcolor=c["card"],
-                border_radius=6,
+                border_radius=RADIUS_SM,
                 padding=_padding_only(left=8, right=8, top=3, bottom=3),
             )
             for label, color in chips
@@ -1075,7 +1235,7 @@ class ResultsViewMixin:
                             spacing=4,
                         ),
                         bgcolor=c["card"],
-                        border_radius=10,
+                        border_radius=RADIUS_MD,
                         padding=10,
                         margin=_margin_only(bottom=4),
                     )
@@ -1128,7 +1288,7 @@ class ResultsViewMixin:
                                     color=sent_color,
                                 ),
                                 bgcolor=sent_bg,
-                                border_radius=6,
+                                border_radius=RADIUS_SM,
                                 padding=_padding_only(left=5, right=5, top=1, bottom=1),
                             ),
                             ft.Text(meta, size=9, color=c["text_dim"]),
@@ -1153,7 +1313,7 @@ class ResultsViewMixin:
                     ft.Container(
                         content=ft.Column(card_lines, spacing=3),
                         bgcolor=c["card"],
-                        border_radius=10,
+                        border_radius=RADIUS_MD,
                         padding=10,
                         margin=_margin_only(bottom=3),
                     )
@@ -1162,7 +1322,7 @@ class ResultsViewMixin:
         news_frame = ft.Container(
             content=ft.Column(controls=news_controls, spacing=5),
             bgcolor=c["card2"],
-            border_radius=12,
+            border_radius=RADIUS_LG,
             padding=10,
             margin=_margin_only(bottom=4),
         )
@@ -1183,6 +1343,17 @@ class ResultsViewMixin:
             spinner = ft.ProgressRing(
                 width=36, height=36, stroke_width=3, color=c["green"]
             )
+        shimmer = ft.Shimmer(
+            content=ft.Column(
+                skeleton_rows,
+                spacing=4,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            base_color=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
+            highlight_color=ft.Colors.with_opacity(0.14, ft.Colors.WHITE),
+            period=1500,
+            loop=0,
+        )
         return ft.Container(
             content=ft.Column(
                 [
@@ -1197,7 +1368,7 @@ class ResultsViewMixin:
                         color=c["text_dim"],
                     ),
                     ft.Container(height=12),
-                    *skeleton_rows,
+                    shimmer,
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=4,
@@ -1208,20 +1379,36 @@ class ResultsViewMixin:
 
     def _render_chart(self, results):
         c = self.theme_colors
+        self.chart_holder.visible = bool(results)
         if not results:
-            self.chart_card.visible = False
             return
         from .views_charts import build_score_histogram
+        from .views_layout import RAIL_W, RIGHT_W, SIDE_W
 
-        threshold = self.settings.get("min_score", 50)
-        histogram = build_score_histogram(
-            results, c, threshold=threshold, width=520, height=140
-        )
-        self.chart_bars.controls = [histogram]
-        top = sorted(results, key=_score_of, reverse=True)[:50]
-        peak = max(_score_of(r) for r in top) or 1
-        self.chart_sub.value = f"top {len(top)}  ·  peak {peak:.0f}"
-        self.chart_card.visible = True
+        threshold = self._score_threshold()
+        # Fill the remaining strip width: window minus fixed chrome, the
+        # stats pills (~340px) and paddings.
+        pw = int(getattr(self.page, "width", 0) or 1600)
+        avail = max(360, min(pw - RAIL_W - SIDE_W - RIGHT_W - 440, 1600))
+        self.chart_bars.controls = [
+            build_score_histogram(
+                results,
+                c,
+                threshold=threshold,
+                width=avail,
+                height=76,
+                on_bucket=self._set_threshold_from_bucket,
+            )
+        ]
+
+    def _set_threshold_from_bucket(self, bucket: int):
+        """Histogram click: the bucket floor (0,10,…,90) becomes min score."""
+        slider = getattr(self, "threshold_slider", None)
+        if slider is None:
+            return
+        slider.value = bucket * 10
+        self.settings["min_score"] = float(bucket * 10)
+        self._on_threshold_change(None)
 
     # ── Summary / Hero ──────────────────────────────────────────────────
 
@@ -1230,16 +1417,12 @@ class ResultsViewMixin:
             for lbl in self.summary_cards.values():
                 lbl.value = "—"
             return
-        threshold = self.settings.get("min_score", 50)
         total = len(results)
-        passed = 0
         score_sum = 0.0
         high = 0.0
-        bull = bear = entry = 0
+        bull = bear = 0
         for r in results:
             score = _score_of(r)
-            if score >= threshold:
-                passed += 1
             score_sum += score
             if score > high:
                 high = score
@@ -1248,25 +1431,11 @@ class ResultsViewMixin:
                 bull += 1
             elif td == "Bear":
                 bear += 1
-            if r.get("entry_signal"):
-                entry += 1
-        avg = score_sum / total
-        try:
-            from ..api import data_fetcher
 
-            dead_skips = data_fetcher.negative_cache_skip_count()
-        except Exception:
-            logger.info("Failed to load negative cache skip count", exc_info=True)
-            dead_skips = 0
-
-        self.summary_cards["total"].value = str(total)
-        self.summary_cards["passed"].value = str(passed)
-        self.summary_cards["entry"].value = str(entry)
-        self.summary_cards["avg"].value = f"{avg:.1f}"
+        self.summary_cards["avg"].value = f"{score_sum / total:.1f}"
         self.summary_cards["high"].value = f"{high:.0f}"
         self.summary_cards["bull"].value = str(bull)
         self.summary_cards["bear"].value = str(bear)
-        self.summary_cards["dead_skip"].value = str(dead_skips)
 
     def _update_hero_status(self, results):
         if self.scanning:
@@ -1311,6 +1480,15 @@ class ResultsViewMixin:
         # Replace table content with the detail panel
         self.table_column.controls.clear()
         self.table_column.controls.append(panel)
+        # Clear the row pool so _back_to_results takes the full-rebuild path
+        # (streaming would only patch pooled rows never re-added to the pane).
+        if hasattr(self, "_row_pool"):
+            self._row_pool.clear()
+        if hasattr(self, "_row_cells"):
+            self._row_cells.clear()
+        holder = getattr(self, "header_holder", None)
+        if holder is not None:
+            holder.controls = []
         self.pagination_bar.visible = False
         self.page.update()
 
@@ -1351,7 +1529,7 @@ class ResultsViewMixin:
                             color=score_color(total, c),
                         ),
                         bgcolor=ft.Colors.with_opacity(0.15, score_color(total, c)),
-                        border_radius=8,
+                        border_radius=RADIUS_SM,
                         padding=_padding_only(left=12, right=12, top=4, bottom=4),
                     ),
                     ft.Container(
@@ -1362,7 +1540,7 @@ class ResultsViewMixin:
                             color=rating_color(rating, c),
                         ),
                         bgcolor=ft.Colors.with_opacity(0.12, rating_color(rating, c)),
-                        border_radius=6,
+                        border_radius=RADIUS_SM,
                         padding=_padding_only(left=8, right=8, top=3, bottom=3),
                     ),
                     ft.Container(
@@ -1375,7 +1553,7 @@ class ResultsViewMixin:
                         bgcolor=ft.Colors.with_opacity(0.12, c["green"])
                         if entry
                         else None,
-                        border_radius=6,
+                        border_radius=RADIUS_SM,
                         padding=_padding_only(left=8, right=8, top=3, bottom=3),
                     ),
                 ],
@@ -1383,7 +1561,7 @@ class ResultsViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             bgcolor=c["card"],
-            border_radius=12,
+            border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
             padding=_padding_only(left=12, right=12, top=8, bottom=8),
             margin=_margin_only(bottom=8),
@@ -1456,7 +1634,7 @@ class ResultsViewMixin:
                         spacing=2,
                     ),
                     bgcolor=c["card"],
-                    border_radius=8,
+                    border_radius=RADIUS_SM,
                     border=_border_all(1, c["border"]),
                     padding=_padding_only(left=10, right=10, top=6, bottom=6),
                     width=80,
@@ -1477,7 +1655,7 @@ class ResultsViewMixin:
                 spacing=6,
             ),
             bgcolor=c["card"],
-            border_radius=12,
+            border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
             padding=12,
             margin=_margin_only(bottom=8),
@@ -1526,7 +1704,7 @@ class ResultsViewMixin:
                 spacing=5,
             ),
             bgcolor=c["card"],
-            border_radius=12,
+            border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
             padding=12,
             margin=_margin_only(bottom=8),

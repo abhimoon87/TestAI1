@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 from scanner.backend.report import (
     SENTIMENT_BAD,
     SENTIMENT_GOOD,
+    _css_block,
     _parse_date,
     _score_class,
     _sentiment,
@@ -23,6 +24,7 @@ from scanner.backend.report import (
     fetch_news_for_ticker,
     fetch_stock_news,
     generate_html_report,
+    prune_old,
     save_report,
 )
 
@@ -282,6 +284,120 @@ class TestGenerateHtmlReport:
             html = generate_html_report(results, fetch_news=True)
         assert "news-panel" in html
         assert "Stock rises" in html
+
+    def test_prefetched_news_reused_without_fetch(self):
+        """Rows carrying _news_items never hit the network on export."""
+        results = [
+            _make_score_result(
+                ticker="PRE1",
+                _news_items=[
+                    {
+                        "title": "Prefetched story",
+                        "summary": "",
+                        "date": "2026-09-25",
+                        "provider": "Yahoo",  # GUI/prefetch key, not publisher
+                        "sentiment": "Good",
+                    }
+                ],
+            )
+        ]
+        with patch(
+            "scanner.backend.report._fetch_news_parallel",
+            side_effect=AssertionError("should not fetch"),
+        ):
+            html = generate_html_report(results, fetch_news=True)
+        assert "Prefetched story" in html
+        assert "Yahoo" in html  # provider key renders in publisher slot
+
+    def test_fetches_only_tickers_without_prefetch(self):
+        results = [
+            _make_score_result(ticker="PRE", _news_items=[]),
+            _make_score_result(ticker="MISS"),
+        ]
+        with patch(
+            "scanner.backend.report._fetch_news_parallel",
+            return_value={},
+        ) as m:
+            generate_html_report(results, fetch_news=True)
+        assert m.call_args[0][0] == ["MISS"]
+
+
+class TestReportPolish:
+    def test_meta_chips_rendered(self):
+        html = generate_html_report(
+            [_make_score_result()], fetch_news=False, meta=["NSE ALL", "Daily"]
+        )
+        assert "NSE ALL" in html
+        assert "Daily" in html
+
+    def test_histogram_has_four_bucket_columns(self):
+        results = [
+            _make_score_result(ticker="A", total=80.0),
+            _make_score_result(ticker="B", total=40.0),
+        ]
+        html = generate_html_report(results, fetch_news=False)
+        assert "histogram" in html
+        assert html.count('class="hist-col"') == 4
+
+    def test_no_histogram_for_empty_results(self):
+        html = generate_html_report([], fetch_news=False)
+        assert 'class="histogram"' not in html
+
+    def test_direction_header_replaces_duplicate_trend(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert ">Direction<" in html
+        assert html.count(">Trend<") == 1  # score column only
+
+    def test_sticky_header_and_print_css(self):
+        css = _css_block()
+        assert "position: sticky" in css
+        assert "overflow-x: auto" not in css  # was killing page-level sticky
+        # print-only rules must live inside the @media print block, never leak
+        head, _, print_block = css.partition("@media print {")
+        assert print_block, "missing @media print block"
+        assert ".filters { display: none; }" not in head
+        assert "position: static" not in head
+        assert "#fff" in print_block
+        assert ":root {" in print_block  # light vars need their own scope
+
+    def test_news_panel_links_to_yahoo(self):
+        results = [
+            _make_score_result(
+                ticker="RELIANCE",
+                _news_items=[
+                    {"title": "T", "summary": "", "date": "2026-09-25", "provider": "P"}
+                ],
+            )
+        ]
+        html = generate_html_report(results, fetch_news=True)
+        assert "https://finance.yahoo.com/quote/RELIANCE/news/" in html
+
+
+class TestPruneOld:
+    def test_keeps_newest_only(self, tmp_path):
+        for i in range(6):
+            f = tmp_path / f"scanner_results_2024010{i}.csv"
+            f.write_text("x")
+            os.utime(f, (1000000 + i, 1000000 + i))
+        prune_old(str(tmp_path), "scanner_results_*.csv", 4)
+        assert len(list(tmp_path.glob("scanner_results_*.csv"))) == 4
+
+    def test_default_bare_name_participates_in_html_retention(self, tmp_path):
+        bare = tmp_path / "scanner_report.html"
+        bare.write_text("old")
+        os.utime(bare, (1000000, 1000000))
+        for i in range(4):
+            f = tmp_path / f"scanner_report_2024081{i}.html"
+            f.write_text("x")
+            os.utime(f, (1000100 + i, 1000100 + i))
+        save_report(
+            "<html>new</html>",
+            str(tmp_path / "scanner_report_20240820_120000.html"),
+            max_reports=4,
+        )
+        remaining = list(tmp_path.glob("scanner_report*.html"))
+        assert len(remaining) == 4
+        assert bare not in remaining  # oldest — now covered by the pattern
 
 
 # ══════════════════════════════════════════════════════════════════════════════

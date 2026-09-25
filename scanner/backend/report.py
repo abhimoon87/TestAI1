@@ -309,7 +309,7 @@ def fetch_news_batch(
 
 def _css_block() -> str:
     """CSS rules for the report <style> block (plain string, no f-string)."""
-    return """    :root {
+    css = """    :root {
         /* Aurora (GUI) dark-theme palette — keeps the exported report visually
            identical to the app: same surfaces, borders and accent colors. */
         --bg: #0f0f13; --surface: #16161b; --surface2: #1c1c22; --surface3: #24242c;
@@ -345,10 +345,10 @@ def _css_block() -> str:
     }
     .filters input:focus, .filters select:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--focus-ring); }
     .filters input { width: 280px; }
-    .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; overflow-x: auto; }
+    .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8em; min-width: 1250px; }
     th { background: var(--surface2); color: var(--text-dim); padding: 10px 8px; text-align: left; font-weight: 600; font-size: 0.75em; letter-spacing: 0.06em; text-transform: uppercase;
-          border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; position: sticky; top: 0; white-space: nowrap; transition: color 0.15s, background 0.15s; }
+          border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 2; white-space: nowrap; transition: color 0.15s, background 0.15s; }
     th:hover { color: var(--green); background: var(--surface3); }
     th.sorted-asc::after { content: " ▲"; color: var(--green); }
     th.sorted-desc::after { content: " ▼"; color: var(--green); }
@@ -459,8 +459,48 @@ def _css_block() -> str:
         margin-right: 4px;
     }
 
+    /* ─── Score histogram ─────────────────────────────── */
+    .histogram { display: flex; gap: 12px; align-items: stretch; height: 110px; background: var(--surface); border: 1px solid var(--border); padding: 10px 16px; border-radius: var(--radius); margin-bottom: 18px; }
+    .hist-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; width: 72px; }
+    .hist-n { font-family: 'JetBrains Mono', monospace; font-size: 0.75em; color: var(--text-dim); }
+    .hist-bar { width: 100%; min-height: 3px; border-radius: 4px 4px 0 0; }
+    .hist-bar.poor { background: var(--red); }
+    .hist-bar.moderate { background: var(--orange); }
+    .hist-bar.good { background: var(--lime); }
+    .hist-bar.excellent { background: var(--green); }
+    .hist-l { font-size: 0.62em; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+    .news-more { display: inline-block; color: var(--cyan); font-size: 0.8em; margin-top: 6px; text-decoration: none; }
+    .news-more:hover { text-decoration: underline; }
+
     /* ─── Sparkline column ─────────────────────────────────── */
     .spark-cell { padding: 4px 6px; }"""
+
+    light_vars = """:root {
+        --bg: #f4f6f9; --surface: #ffffff; --surface2: #f0f2f6; --surface3: #e7eaf0;
+        --border: #d7dbe3; --border-light: #c3c9d4; --text: #151823; --text-dim: #4a5063; --text-faint: #767d92;
+        --green: #0e9f6e; --lime: #4d7c0f; --orange: #d97706; --red: #dc2626;
+        --blue: #2563eb; --cyan: #0891b2; --yellow: #ca8a04;
+        --focus-ring: rgba(14,159,110,0.15); --row-hover: rgba(14,159,110,0.07);
+        --row-hl: rgba(14,159,110,0.12); --ticker-hover-bg: rgba(14,159,110,0.15);
+        --ticker-hover-c: #151823; --score-glow: none;
+        --track: rgba(0,0,0,0.08); --row-line: rgba(0,0,0,0.09);
+        --news-line: rgba(0,0,0,0.08);
+    }
+"""
+    return (
+        css
+        + """
+    @media print {
+"""
+        + light_vars
+        + """        body { background: #fff; padding: 0; }
+        .filters { display: none; }
+        th { position: static; }
+        .table-wrap { border: none; }
+        a { color: inherit; text-decoration: none; }
+    }
+    """
+    )
 
 
 def _js_block() -> str:
@@ -596,10 +636,40 @@ function filterTable() {
 }"""
 
 
+def _histogram_html(results: list) -> str:
+    """Aggregate score distribution as four CSS bars."""
+    buckets = [
+        ("0–29", 0, 30, "poor"),
+        ("30–49", 30, 50, "moderate"),
+        ("50–69", 50, 70, "good"),
+        ("70+", 70, 101, "excellent"),
+    ]
+    counts = [
+        sum(1 for r in results if lo <= (r.get("total", 0) or 0) < hi)
+        for _, lo, hi, _ in buckets
+    ]
+    top = max(counts, default=0) or 1
+    cols = ""
+    for (label, _, _, cls), n in zip(buckets, counts):
+        cols += (
+            f'<div class="hist-col"><span class="hist-n">{n}</span>'
+            f'<div class="hist-bar {cls}" style="height:{n / top * 100:.0f}%"></div>'
+            f'<span class="hist-l">{label}</span></div>'
+        )
+    return f'<div class="histogram">{cols}</div>'
+
+
 def _summary_header_html(
-    title: str, now: str, results: list, passed: list, failed: list, threshold: float
+    title: str,
+    now: str,
+    results: list,
+    passed: list,
+    failed: list,
+    threshold: float,
+    meta: list | None = None,
 ) -> str:
     """Header banner, meta line, summary stat cards, and filter bar HTML."""
+    meta_spans = "".join(f"<span>{_html.escape(str(m))}</span>" for m in (meta or []))
     return f"""<div style="display:flex; align-items:center; gap:14px; margin-bottom:10px;">
   <div style="width:38px; height:38px; background: linear-gradient(135deg, var(--green), var(--cyan)); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px;">◈</div>
   <div>
@@ -608,7 +678,9 @@ def _summary_header_html(
   </div>
   <div style="flex:1"></div>
 </div>
-<div class="meta"><span>⏱ {now}</span><span>🎯 Threshold {threshold}+</span><span>📦 {len(results)} total</span><span>⚡ Generated locally</span></div>
+<div class="meta"><span>⏱ {now}</span><span>🎯 Threshold {threshold}+</span><span>📦 {len(results)} total</span>{meta_spans}<span>⚡ Generated locally</span></div>
+
+{_histogram_html(results) if results else ""}
 
 <div class="summary">
     <div class="stat green">
@@ -688,7 +760,7 @@ def _table_head_html() -> str:
     <th onclick="sortTable(15)">RSI Val</th>
     <th onclick="sortTable(16)">ADX</th>
     <th onclick="sortTable(17)">1M Chg</th>
-    <th onclick="sortTable(18)">Trend</th>
+    <th onclick="sortTable(18)">Direction</th>
     <th onclick="sortTable(19)">Volatility</th>
     <th onclick="sortTable(20)">Sideways</th>
     <th>1M</th>
@@ -799,7 +871,9 @@ def _news_panel_html(
             sent_cls = _html.escape(sent.lower())
             safe_title = _html.escape(str(n.get("title", "")))
             safe_summary = _html.escape(str(n.get("summary", ""))[:200])
-            safe_publisher = _html.escape(str(n.get("publisher", "")))
+            safe_publisher = _html.escape(
+                str(n.get("publisher") or n.get("provider") or "")
+            )
             safe_date = _html.escape(str(n.get("date", "")))
             safe_sentiment = _html.escape(sent)
             news_rows_html += f"""
@@ -825,7 +899,11 @@ def _news_panel_html(
     if news_summary_html:
         panel_content += news_summary_html
     if news_rows_html:
-        panel_content += news_rows_html
+        panel_content += news_rows_html + (
+            f'<a class="news-more" href="https://finance.yahoo.com/quote/'
+            f'{_html.escape(ticker)}/news/" target="_blank" rel="noopener">'
+            f"More {_html.escape(ticker)} news →</a>"
+        )
 
     if panel_content:
         return f"""
@@ -945,6 +1023,7 @@ def generate_html_report(
     title: str = "HMAxEMA Stock Scanner",
     threshold: float = 50.0,
     fetch_news: bool = True,
+    meta: list | None = None,
 ) -> str:
     """
     Generate a complete HTML report from scan results.
@@ -954,6 +1033,7 @@ def generate_html_report(
         title: Report title
         threshold: Minimum score threshold
         fetch_news: Whether to fetch news sentiment for each stock
+        meta: Extra metadata chips (universe, timeframe, ...) for the header
 
     Returns:
         Complete HTML string
@@ -965,11 +1045,20 @@ def generate_html_report(
     passed = [r for r in results if (r.get("total", 0) or 0) >= threshold]
     failed = [r for r in results if (r.get("total", 0) or 0) < threshold]
 
-    # ── Pre-fetch news for all tickers in parallel ───────────────────────
-    news_map: dict[str, list] = {}
+    # ── News: reuse rows' prefetched _news_items; fetch only the rest ──
+    news_map: dict[str, list] = {
+        str(r.get("ticker", "?")): list(r["_news_items"] or [])
+        for r in results
+        if "_news_items" in r
+    }
     if fetch_news:
-        tickers = [str(r.get("ticker", "?")) for r in results]
-        news_map = _fetch_news_parallel(tickers)
+        missing = [
+            t
+            for t in dict.fromkeys(str(r.get("ticker", "?")) for r in results)
+            if t not in news_map
+        ]
+        if missing:
+            news_map.update(_fetch_news_parallel(missing))
 
     rows_html = ""
     for r in results:
@@ -989,7 +1078,7 @@ def generate_html_report(
 </head>
 <body>
 
-{_summary_header_html(title, now, results, passed, failed, threshold)}
+{_summary_header_html(title, now, results, passed, failed, threshold, meta)}
 
 {_table_head_html()}
 {rows_html}
@@ -1022,11 +1111,30 @@ def _score_class(score: float) -> str:
     return "poor"
 
 
+def prune_old(directory: str, pattern: str, keep: int) -> None:
+    """Delete all but the newest ``keep`` files matching ``pattern`` in dir."""
+    import glob as _glob
+    import os as _os
+
+    try:
+        files = sorted(
+            _glob.glob(_os.path.join(directory, pattern)),
+            key=_os.path.getmtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for old in files[keep:]:
+        try:
+            _os.remove(old)
+        except OSError:
+            pass
+
+
 def save_report(
     html: str, filename: str = "scanner_report.html", max_reports: int = 4
 ) -> str:
     """Save HTML report to file and keep only the last max_reports files."""
-    import glob as _glob
     import os as _os
 
     # Atomic save so a crash never leaves a truncated report behind
@@ -1040,16 +1148,7 @@ def save_report(
         f.write(html)
     _os.replace(tmp, filename)
 
-    # Clean up old reports — keep only the newest max_reports
-    try:
-        pattern = _os.path.join(report_dir, "scanner_report_*.html")
-        reports = sorted(_glob.glob(pattern), key=_os.path.getmtime, reverse=True)
-    except OSError:
-        return filename
-    for old in reports[max_reports:]:
-        try:
-            _os.remove(old)
-        except OSError:
-            pass
+    # Keep only the newest max_reports (pattern also covers the bare default name)
+    prune_old(report_dir, "scanner_report*.html", max_reports)
 
     return filename

@@ -19,9 +19,12 @@ from flet.controls.alignment import Alignment
 from ..shared.constants import score_of as _score_of
 from ..shared.universes import UNIVERSES
 from .ui_kit import (
-    ANIM_BOUNCE,
     ANIM_FAST,
     ANIM_NORMAL,
+    RADIUS_LG,
+    RADIUS_MD,
+    RADIUS_SM,
+    RADIUS_XL,
     _border_all,
     _card_shadow,
     _glass_bg,
@@ -184,7 +187,7 @@ class LayoutViewMixin:
             ),
             bgcolor=_glass_bg(),
             border=_glass_border(),
-            border_radius=12,
+            border_radius=RADIUS_LG,
             shadow=_card_shadow(),
             padding=_padding_only(left=10, right=4, top=7, bottom=7),
         )
@@ -256,7 +259,7 @@ class LayoutViewMixin:
             content=self.threshold_label,
             bgcolor=c["card2"],
             border=_border_all(1, c["border"]),
-            border_radius=8,
+            border_radius=RADIUS_SM,
             padding=_padding_only(left=10, right=10, top=2, bottom=2),
         )
 
@@ -269,7 +272,7 @@ class LayoutViewMixin:
             height=48,
             bgcolor=c["green"],
             color=c["on_accent"],
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=14)),
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=RADIUS_LG)),
             on_click=self._on_action_click,
         )
         self.progress_bar = ft.ProgressBar(
@@ -277,7 +280,7 @@ class LayoutViewMixin:
             color=c["progress_fg"],
             bgcolor=c["progress_bg"],
             value=0,
-            border_radius=4,
+            border_radius=RADIUS_SM,
         )
         self.progress_label = ft.Text("Ready", size=10, color=c["text_dim"])
 
@@ -411,7 +414,9 @@ class LayoutViewMixin:
 
     def _build_main_area(self) -> ft.Container:
         c = self.theme_colors
-
+        self.topbar_title = ft.Text(
+            "Scanner", size=13, weight=ft.FontWeight.BOLD, color=c["text"]
+        )
         self.search_entry = ft.TextField(
             hint_text="Filter by ticker…",
             width=260,
@@ -423,8 +428,19 @@ class LayoutViewMixin:
             border_width=1,
             border_radius=18,
             prefix_icon=ft.Icons.SEARCH,
+            suffix=ft.IconButton(
+                icon=ft.Icons.CLOSE,
+                icon_size=14,
+                icon_color=c["text_dim"],
+                tooltip="Clear filter",
+                width=28,
+                height=28,
+                on_click=lambda e: self._clear_search_filter(),
+            ),
             content_padding=_padding_only(left=10, top=4, bottom=4),
             on_change=self._on_search_change,
+            on_focus=lambda e: setattr(self, "_input_focused", True),
+            on_blur=lambda e: setattr(self, "_input_focused", False),
         )
 
         self.html_btn = ft.IconButton(
@@ -455,6 +471,15 @@ class LayoutViewMixin:
         self.topbar = ft.Container(
             content=ft.Row(
                 controls=[
+                    ft.IconButton(
+                        icon=ft.Icons.MENU_ROUNDED,
+                        icon_color=c["text_dim"],
+                        icon_size=18,
+                        tooltip="Toggle sidebar",
+                        on_click=self._toggle_sidebar,
+                    ),
+                    self.topbar_title,
+                    ft.Container(width=12),
                     self.search_entry,
                     ft.Container(expand=True),
                     self.html_btn,
@@ -503,7 +528,7 @@ class LayoutViewMixin:
                 horizontal_alignment=ft.CrossAxisAlignment.END,
             ),
             width=MARKET_BOX_W,
-            border_radius=12,
+            border_radius=RADIUS_LG,
             border=_border_all(1, c["border_light"]),
             bgcolor=c["card2"],
             padding=_padding_only(left=16, right=16, top=8, bottom=8),
@@ -531,70 +556,81 @@ class LayoutViewMixin:
             controls=[self.hero_text, ft.Container(height=16), self.hero_sub],
             spacing=0,
         )
-        # The hero Row always allocates the market_box slot (MARKET_BOX_W +
-        # 16 margin) so the layout geometry is stable even when the box is
-        # hidden — no expand/flex needed, no resize handler needed.
+        # The hero Row keeps the gradient pill (text + strip) and the
+        # market_slot as siblings — the NIFTY box sits outside the gradient,
+        # on the page background. Slot width is fixed so layout geometry is
+        # stable even when the box is hidden — no expand/flex needed.
         self.hero = ft.Container(
-            content=ft.Column(
+            content=ft.Row(
                 controls=[
-                    ft.Row(
-                        controls=[
-                            self.hero_text_col,
-                            ft.Container(width=16),
-                            self.market_slot,
-                        ],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ft.Container(
+                        content=ft.Column(
+                            controls=[
+                                self.hero_text_col,
+                                ft.Container(height=10),
+                                self.market_strip,
+                            ],
+                            spacing=0,
+                        ),
+                        gradient=ft.LinearGradient(
+                            begin=Alignment.CENTER_LEFT,
+                            end=Alignment.CENTER_RIGHT,
+                            colors=c["hero_grad"],
+                        ),
+                        border_radius=RADIUS_XL,
+                        shadow=_card_shadow(),
+                        padding=_padding_only(left=28, right=20, top=18, bottom=14),
+                        expand=True,
                     ),
-                    ft.Container(height=10),
-                    self.market_strip,
+                    ft.Container(width=16),
+                    self.market_slot,
                 ],
-                spacing=0,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            gradient=ft.LinearGradient(
-                begin=Alignment.CENTER_LEFT,
-                end=Alignment.CENTER_RIGHT,
-                colors=c["hero_grad"],
-            ),
-            border_radius=16,
-            shadow=_card_shadow(),
-            padding=_padding_only(left=28, right=20, top=18, bottom=14),
             margin=_margin_only(bottom=10),
         )
 
         self.summary_cards = {}
-        self.summary_row = self._build_summary_row()
+        self.insight_stats = self._build_insight_stats()
 
-        self.chart_title = ft.Text(
-            "Score curve", size=12, weight=ft.FontWeight.BOLD, color=c["text"]
-        )
-        self.chart_sub = ft.Text("", size=10, color=c["text_dim"])
+        self.chart_sub = ft.Text("tap a bar = min score", size=9, color=c["text_faint"])
         self.chart_bars = ft.Row(
-            spacing=2, vertical_alignment=ft.CrossAxisAlignment.END
+            spacing=2,
+            vertical_alignment=ft.CrossAxisAlignment.END,
+            alignment=ft.MainAxisAlignment.CENTER,
         )
-        self.chart_card = ft.Container(
-            content=ft.Column(
+        self.chart_holder = ft.Container(
+            content=self.chart_bars, height=76, visible=False
+        )
+        # Slim insight strip: unique scan stats (left) + clickable score
+        # histogram (right) — replaces the old 8-card row + full chart card
+        # (~300px) with ~90px, giving the grid five more visible rows.
+        self.insight_strip = ft.Container(
+            content=ft.Row(
                 [
-                    ft.Row(
-                        [
-                            self.chart_title,
-                            ft.Container(expand=True),
-                            self.chart_sub,
-                        ]
-                    ),
-                    ft.Container(content=self.chart_bars, height=155),
+                    self.insight_stats,
+                    ft.Container(expand=True),
+                    self.chart_sub,
+                    ft.Container(width=8),
+                    self.chart_holder,
                 ],
-                spacing=6,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=8,
             ),
             bgcolor=_glass_bg(),
             border=_glass_border(),
-            border_radius=14,
+            border_radius=RADIUS_LG,
             shadow=_card_shadow(),
-            padding=_padding_only(left=16, right=16, top=12, bottom=12),
-            margin=_margin_only(top=10),
-            visible=False,
+            padding=_padding_only(left=16, right=16, top=8, bottom=8),
         )
 
         self.result_count_label = ft.Text("no scan yet", size=11, color=c["text_dim"])
+        self.scan_inline_label = ft.Text(
+            "", size=11, weight=ft.FontWeight.BOLD, color=c["green"], visible=False
+        )
+        self.filter_chips_row = ft.Row(
+            [], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER
+        )
         self.section_header = ft.Container(
             content=ft.Row(
                 controls=[
@@ -604,14 +640,21 @@ class LayoutViewMixin:
                         weight=ft.FontWeight.BOLD,
                         color=c["text"],
                     ),
+                    ft.Container(width=10),
+                    self.filter_chips_row,
                     ft.Container(expand=True),
+                    self.scan_inline_label,
+                    ft.Container(width=10),
                     self.result_count_label,
                 ],
             ),
             padding=_padding_only(left=8, right=8, top=10, bottom=6),
         )
 
-        self.table_column = ft.Column(spacing=0, expand=True)
+        self.table_column = ft.Column(spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+        # Column header lives OUTSIDE the row scroll pane (Flet has no sticky
+        # headers) so labels stay pinned above the grid while rows scroll.
+        self.header_holder = ft.Column(spacing=0)
 
         self.page_prev_btn = ft.TextButton(
             content=ft.Text("◀ Prev", size=12), on_click=lambda e: self._change_page(-1)
@@ -631,7 +674,7 @@ class LayoutViewMixin:
             color=c["text"],
             border_color=c["border"],
             border_width=1,
-            border_radius=8,
+            border_radius=RADIUS_SM,
             focused_border_color=c["purple"],
             content_padding=_padding_only(left=12, right=8, top=8, bottom=8),
             on_select=self._on_page_size_change,
@@ -660,7 +703,7 @@ class LayoutViewMixin:
             content=self.pagination_row,
             bgcolor=_glass_bg(),
             border=_glass_border(),
-            border_radius=12,
+            border_radius=RADIUS_LG,
             shadow=_card_shadow(),
             padding=_padding_only(left=12, right=12, top=7, bottom=7),
             margin=_margin_only(left=6, right=6, top=10, bottom=14),
@@ -692,17 +735,20 @@ class LayoutViewMixin:
         )
         self.table_column.controls.append(self.empty_label)
 
+        # Split scroll regions: overview (hero/cards/chart) takes its natural
+        # height; the pinned section+column headers sit above the grid, which
+        # scrolls independently in the remaining space.
+        # ponytail: split panes instead of sticky — one scrollport per region
         self.main_scroll = ft.Column(
             controls=[
                 self.hero,
-                self.summary_row,
-                self.chart_card,
-                self.section_header,
-                self.table_column,
+                self.insight_strip,
             ],
             spacing=0,
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
+        )
+        self.results_head = ft.Column(
+            controls=[self.section_header, self.header_holder],
+            spacing=0,
         )
 
         self.dashboard_content = ft.Column(
@@ -710,8 +756,16 @@ class LayoutViewMixin:
                 self.topbar,
                 ft.Container(
                     content=self.main_scroll,
-                    expand=True,
                     padding=_padding_only(left=6, right=6, top=6),
+                ),
+                ft.Container(
+                    content=self.results_head,
+                    padding=_padding_only(left=6, right=6),
+                ),
+                ft.Container(
+                    content=self.table_column,
+                    expand=True,
+                    padding=_padding_only(left=6, right=6),
                 ),
                 self.pagination_bar,
             ],
@@ -770,64 +824,48 @@ class LayoutViewMixin:
             self._render_market(self._last_market)
         return self.main_area_box
 
-    def _build_summary_row(self) -> ft.Row:
+    def _build_insight_stats(self) -> ft.Row:
+        """Inline stat pills for the insight strip (unique metrics only).
+
+        TOTAL/PASSED/ENTRY live in the hero line + section header; DEAD-SKIP
+        is a scan diagnostic that the log already prints — neither earns
+        permanent strip space.
+        """
         c = self.theme_colors
-        # Stat-card icons are Material icons (not unicode glyphs) so they
-        # render identically on every platform/font stack.
         stats = [
-            ("TOTAL", "total", c["cyan"], ft.Icons.DONUT_SMALL),
-            ("PASSED", "passed", c["green"], ft.Icons.CHECK_CIRCLE_OUTLINE),
-            ("ENTRY", "entry", c["pink"], ft.Icons.STAR_OUTLINE),
-            ("AVG", "avg", c["lime"], ft.Icons.SPEED),
-            ("HIGH", "high", c["green"], ft.Icons.TRENDING_UP),
-            ("BULL", "bull", c["green"], ft.Icons.NORTH_EAST),
-            ("BEAR", "bear", c["red"], ft.Icons.SOUTH_EAST),
-            ("DEAD-SKIP", "dead_skip", c["orange"], ft.Icons.BLOCK),
+            ("AVG", "avg", c["lime"]),
+            ("HIGH", "high", c["green"]),
+            ("BULL", "bull", c["green"]),
+            ("BEAR", "bear", c["red"]),
         ]
-        cards = []
-        for label, key, color, icon in stats:
+        pills = []
+        for label, key, color in stats:
             val_label = ft.Text(
                 "—",
-                size=22,
+                size=14,
                 weight=ft.FontWeight.BOLD,
                 color=color,
-                animate_scale=ANIM_BOUNCE,
                 animate_opacity=ANIM_FAST,
             )
             self.summary_cards[key] = val_label
-            card = ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Container(height=3, bgcolor=color, border_radius=2),
-                        ft.Row(
-                            [
-                                ft.Icon(icon, size=10, color=color),
-                                ft.Text(
-                                    label,
-                                    size=8,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=c["text_faint"],
-                                ),
-                            ],
-                            spacing=4,
+            pills.append(
+                ft.Row(
+                    [
+                        ft.Text(
+                            label,
+                            size=8,
+                            weight=ft.FontWeight.BOLD,
+                            color=c["text_faint"],
                         ),
                         val_label,
                     ],
-                    spacing=3,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                width=130,
-                bgcolor=_glass_bg(),
-                border_radius=14,
-                border=_glass_border(),
-                shadow=_card_shadow(),
-                padding=_padding_only(top=10, bottom=12, left=8, right=8),
-                animate_scale=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
-                animate_opacity=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+                    spacing=5,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                )
             )
-            card.on_hover = lambda e, _card=card: self._on_card_hover(e, _card)
-            cards.append(card)
-        return ft.Row(controls=cards, spacing=8, scroll=ft.ScrollMode.AUTO)
+        return ft.Row(
+            pills, spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER
+        )
 
     def _on_card_hover(self, e, card):
         """Scale up + intensify shadow on hover for summary/top-pick cards."""
@@ -881,7 +919,7 @@ class LayoutViewMixin:
             expand=True,
             bgcolor=c["panel_bg"],
             border=_border_all(1, c["border"]),
-            border_radius=14,
+            border_radius=RADIUS_LG,
             padding=10,
         )
         self.log_clear_btn = ft.TextButton(
@@ -1028,7 +1066,7 @@ class LayoutViewMixin:
                             ),
                             width=28,
                             height=28,
-                            border_radius=14,
+                            border_radius=RADIUS_LG,
                             bgcolor=c["card2"],
                             alignment=Alignment.CENTER,
                         ),
@@ -1054,7 +1092,7 @@ class LayoutViewMixin:
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 bgcolor=_glass_bg(),
-                border_radius=12,
+                border_radius=RADIUS_LG,
                 border=_glass_border(),
                 shadow=_card_shadow(),
                 padding=_padding_only(left=10, right=12, top=7, bottom=7),
@@ -1164,7 +1202,7 @@ class LayoutViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.BASELINE,
             ),
             bgcolor=c["chip_neutral"],
-            border_radius=10,
+            border_radius=RADIUS_MD,
             border=_border_all(1, c["border_light"]),
             padding=_padding_only(left=14, right=14, top=7, bottom=7),
             tooltip=f"{q['label']} · day change",

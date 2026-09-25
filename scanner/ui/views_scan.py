@@ -51,6 +51,10 @@ class ScanOrchestrationMixin:
         self.progress_bar.value = 0
         self.progress_label.value = "Starting…"
         self.status_label.value = "Status: Starting…"
+        lbl = getattr(self, "scan_inline_label", None)
+        if lbl is not None:
+            lbl.value = "Starting…"
+            lbl.visible = True
         self.html_btn.disabled = True
         self.csv_btn.disabled = True
         self.clear_btn.disabled = True
@@ -222,6 +226,10 @@ class ScanOrchestrationMixin:
         )
         if not self._scan_cancelled:
             self.progress_bar.value = 1.0
+        lbl = getattr(self, "scan_inline_label", None)
+        if lbl is not None:
+            lbl.value = ""
+            lbl.visible = False
         self._refresh_neg_cache_ui()
         self._refresh_enrich_cache_ui()
         self._refresh_price_cache_ui()
@@ -282,3 +290,13 @@ class ScanOrchestrationMixin:
         if text:
             self.progress_label.value = text
             self.status_label.value = f"Status: {text}"
+        # Inline progress next to "Scan Results" (pinned header row)
+        lbl = getattr(self, "scan_inline_label", None)
+        if lbl is not None:
+            pct = (
+                f"{value:.0%}  "
+                if isinstance(value, (int, float)) and 0 <= value <= 1
+                else ""
+            )
+            lbl.value = f"{pct}{text}".strip()
+            lbl.visible = bool(lbl.value)
