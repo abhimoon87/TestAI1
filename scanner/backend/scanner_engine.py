@@ -128,7 +128,7 @@ def _score_ticker(
     """Score one ticker — shared by scan() and scan_stream().
 
     Runs the crossover filter, applies the trend-direction filter, attaches
-    fundamentals for small universes, computes the 10-factor score and applies
+    fundamentals for small universes, computes the category score and applies
     the rating gate. Returns ``(scores, direction)`` on success, or
     ``(None, reason)`` where reason is one of: empty / filtered / no_score /
     poor_rating / error.
@@ -210,7 +210,10 @@ _PROVIDER_FLAG_PREFIXES = (
     (("_sentiment", "_article"), "use_market_sentiment"),
     (("_social", "_mention"), "use_social_sentiment"),
     (("_delivery", "_fii", "_dii", "_institutional", "_52w"), "use_indian_market"),
-    (("_pe_relative", "_is_quality", "_valuation"), "use_indian_fundamentals"),
+    (
+        ("_pe_relative", "_is_quality", "_valuation", "_promoter"),
+        "use_indian_fundamentals",
+    ),
     (("_insider",), "use_insider_data"),
 )
 
@@ -422,6 +425,14 @@ def _enrich_rows_in_place(
                                 **settings,
                                 **(global_data or {}),
                                 "_skip_vp": True,
+                                # Provider "_"-keys (flows, delivery, …) so
+                                # score_bar's institutional bonus applies in
+                                # phase-2 like fundamentals do via df.attrs.
+                                **{
+                                    k: v
+                                    for k, v in enriched.items()
+                                    if k.startswith("_")
+                                },
                             },
                         ),
                         timeout=TICKER_TIMEOUT,
@@ -922,6 +933,11 @@ class ScannerEngine:
                                 )
                                 enriched["_52w_source"] = "nse"
                         elif category == "india_fund":
+                            trendlyne = result.get("trendlyne")
+                            if trendlyne and trendlyne.promoter_holding:
+                                enriched["_promoter_holding"] = round(
+                                    float(trendlyne.promoter_holding), 2
+                                )
                             screener = result.get("screener")
                             if screener:
                                 if screener.industry_pe and screener.stock_pe:

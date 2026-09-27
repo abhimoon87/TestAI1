@@ -1,8 +1,10 @@
 """
 Settings persistence for the HMAxEMA Scanner GUI.
 
-Handles loading/saving user settings to settings.json and defines the
-defaults that mirror the Pine Script indicator inputs.
+Settings and scan history live in the shared sqlite store (see
+shared/db.py). The original settings.json / last_results.json files are
+kept: settings.json is imported once as a backup snapshot, and every
+save_results run still exports last_results.json for eyeballing/git.
 """
 
 from __future__ import annotations
@@ -11,8 +13,10 @@ import json
 import logging
 import os
 import tempfile
+from datetime import datetime
 from typing import TypedDict
 
+from ..shared import db
 from ..shared.constants import RESULT_COLS
 
 logger = logging.getLogger(__name__)
@@ -279,36 +283,52 @@ def _sanitize_settings(saved: dict) -> dict:
 
 
 def load_settings() -> ScannerSettings:
-    """Load settings from JSON file, falling back to defaults."""
+    """Load settings from the db, importing settings.json once if db is empty."""
     settings: ScannerSettings = DEFAULT_SETTINGS.copy()
-    if os.path.exists(SETTINGS_FILE):
+    saved = None
+    try:
+        row = (
+            db.get_conn().execute("SELECT value FROM settings WHERE id = 1").fetchone()
+        )
+        if row:
+            saved = json.loads(row["value"])
+    except Exception as e:
+        logger.warning("Failed to load settings: %s", e)
+    if saved is None and os.path.exists(SETTINGS_FILE):
+        # one-time legacy import; the file stays untouched as a backup snapshot
         try:
             with open(SETTINGS_FILE) as f:
-                saved = json.load(f)
-            if isinstance(saved, dict):
-                settings.update(_sanitize_settings(saved))
-            else:
-                logger.warning("Settings file is not a JSON object; using defaults")
+                data = json.load(f)
         except Exception as e:
             logger.warning("Failed to load settings: %s", e)
+            data = None
+        if isinstance(data, dict):
+            saved = data
+            try:
+                _write_settings(data)
+            except Exception:
+                # keep the loaded settings; the next load retries the import
+                logger.debug("Settings legacy import write failed", exc_info=True)
+    if isinstance(saved, dict):
+        settings.update(_sanitize_settings(saved))
+    elif saved is not None:
+        logger.warning("Settings are not a JSON object; using defaults")
     return settings
 
 
+def _write_settings(settings) -> None:
+    """Upsert the single settings row."""
+    db.get_conn().execute(
+        "INSERT INTO settings (id, value) VALUES (1, ?)"
+        " ON CONFLICT (id) DO UPDATE SET value = excluded.value",
+        (json.dumps(settings),),
+    )
+
+
 def save_settings(settings: ScannerSettings):
-    """Save settings to JSON file atomically."""
+    """Save settings to the db (single row)."""
     try:
-        dir_name = os.path.dirname(SETTINGS_FILE) or "."
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(settings, f, indent=2)
-            os.replace(tmp_path, SETTINGS_FILE)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                logger.debug("Failed to clean up temp settings file", exc_info=True)
-            raise
+        _write_settings(settings)
     except Exception as e:
         logger.warning("Failed to save settings: %s", e)
         raise
@@ -321,9 +341,32 @@ def _json_default(o):
     return str(o)
 
 
+# ponytail: 100-scan history cap — older scans are pruned on save; raise if
+# you ever need deeper history (the rows are tiny, so this is just tidiness).
+SCAN_HISTORY_LIMIT = 100
+
+
 def save_results(rows: list[dict]):
-    """Persist the last scan's result rows atomically."""
+    """Append this scan to history and export last_results.json (compat)."""
     try:
+        created = datetime.now().isoformat(timespec="seconds")
+        conn = db.get_conn()
+        with db.transaction(conn):
+            cur = conn.execute("INSERT INTO scans (created_at) VALUES (?)", (created,))
+            scan_id = cur.lastrowid
+            conn.executemany(
+                "INSERT INTO scan_rows (scan_id, rank, row) VALUES (?, ?, ?)",
+                [
+                    (scan_id, rank, json.dumps(r, default=_json_default))
+                    for rank, r in enumerate(rows, start=1)
+                ],
+            )
+            conn.execute(
+                "DELETE FROM scans WHERE id NOT IN"
+                " (SELECT id FROM scans ORDER BY id DESC LIMIT ?)",
+                (SCAN_HISTORY_LIMIT,),
+            )
+        # compat export: humans + git still read the flat JSON file
         dir_name = os.path.dirname(RESULTS_FILE) or "."
         fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
         try:
@@ -336,22 +379,40 @@ def save_results(rows: list[dict]):
             except OSError:
                 logger.debug("Failed to clean up temp results file", exc_info=True)
             raise
+        # piggyback the expired-kv sweep on scan completion
+        try:
+            db.kv_prune()
+        except Exception:
+            logger.debug("kv prune failed", exc_info=True)
     except Exception as e:
         logger.warning("Failed to save results: %s", e)
         raise
 
 
 def load_results() -> list[dict]:
-    """Load the last scan's result rows; missing/corrupt → []."""
-    if not os.path.exists(RESULTS_FILE):
-        return []
+    """Latest scan's result rows; no history → import last_results.json once."""
     try:
-        with open(RESULTS_FILE, encoding="utf-8") as f:
-            saved = json.load(f)
-        if isinstance(saved, list):
-            return [r for r in saved if isinstance(r, dict)]
-        logger.warning("Results file is not a JSON list; ignoring")
-        return []
+        conn = db.get_conn()
+        last = conn.execute("SELECT id FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        if last:
+            rows = conn.execute(
+                "SELECT row FROM scan_rows WHERE scan_id = ? ORDER BY rank",
+                (last["id"],),
+            ).fetchall()
+            return [
+                r for r in (json.loads(x["row"]) for x in rows) if isinstance(r, dict)
+            ]
     except Exception as e:
         logger.warning("Failed to load results: %s", e)
         return []
+    if os.path.exists(RESULTS_FILE):
+        try:
+            with open(RESULTS_FILE, encoding="utf-8") as f:
+                saved = json.load(f)
+            if isinstance(saved, list) and saved:
+                valid = [r for r in saved if isinstance(r, dict)]
+                save_results(valid)
+                return valid
+        except Exception as e:
+            logger.warning("Failed to load results: %s", e)
+    return []

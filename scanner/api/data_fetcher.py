@@ -21,6 +21,7 @@ from concurrent.futures.thread import _threads_queues, _worker
 
 import pandas as pd
 
+from ..shared import db
 from ..shared._index_utils import _normalize_daily_index  # noqa: F401
 from ..shared.trace import trace
 
@@ -269,49 +270,56 @@ FALLBACK_FILTER_MIN_MISSING = (
 # A symbol that fails the whole NSE fallback chain once is very likely dead
 # (delisted / suspended / permanently renamed) — re-attempting it on every
 # scan costs up to the full provider timeout per attempt. Remember failures
-# on disk (.cache/dead_symbols.json) and skip re-attempts for a day.
+# in the kv store (.cache/dead_symbols.json is imported once) and skip
+# re-attempts for a day.
 NEGATIVE_CACHE_TTL_HOURS = 24
 _NEGATIVE_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".cache", "dead_symbols.json"
 )
+# ponytail: marks live in the db for 7 days regardless of the read-side TTL
+# override; kv_prune() sweeps them. Read-side filter below stays authoritative.
+_NEGATIVE_DB_RETENTION_SECONDS = 7 * 86400
 _negative_cache: dict[str, float] | None = None  # ticker -> epoch (lazy-loaded)
 _negative_lock = threading.Lock()
 
 
+def _import_negative_legacy() -> None:
+    """Fold the pre-sqlite dead_symbols.json into the kv store (once)."""
+    raw = db.kv_import_src("negative", _NEGATIVE_CACHE_PATH)
+    if not raw:
+        return
+    for k, ts in raw.items():
+        if isinstance(ts, (int, float)):
+            db.kv_put(
+                "negative",
+                k,
+                str(ts),
+                expires=ts + _NEGATIVE_DB_RETENTION_SECONDS,
+            )
+
+
 def _negative_cache_load() -> dict[str, float]:
-    """Load unexpired entries from disk once per process."""
+    """Load unexpired marks from the kv store once per process."""
     global _negative_cache
     with _negative_lock:
         if _negative_cache is None:
             cache: dict[str, float] = {}
             try:
-                with open(_NEGATIVE_CACHE_PATH, encoding="utf-8") as f:
-                    raw = json.load(f)
+                _import_negative_legacy()
                 now = time.time()
-                # Read the override directly — negative_cache_ttl_hours() takes
-                # the same (non-reentrant) lock and would deadlock here.
-                cache = {
-                    k: ts
-                    for k, ts in raw.items()
-                    if isinstance(ts, (int, float))
-                    and now - ts < _negative_cache_ttl_hours * 3600
-                }
-            except (OSError, ValueError, KeyError) as e:
+                for k, raw in db.kv_items("negative").items():
+                    try:
+                        ts = float(raw)
+                    except ValueError:
+                        continue
+                    # Direct read: negative_cache_ttl_hours() takes the same
+                    # (non-reentrant) lock and would deadlock here.
+                    if now - ts < _negative_cache_ttl_hours * 3600:
+                        cache[k] = ts
+            except Exception as e:
                 logger.debug("Negative cache load failed: %s", e)
             _negative_cache = cache
         return _negative_cache
-
-
-def _negative_cache_save() -> None:
-    """Persist the in-memory cache (caller must hold the lock)."""
-    try:
-        os.makedirs(os.path.dirname(_NEGATIVE_CACHE_PATH), exist_ok=True)
-        tmp = _NEGATIVE_CACHE_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_negative_cache, f)
-        os.replace(tmp, _NEGATIVE_CACHE_PATH)
-    except Exception:
-        logger.info("Negative-cache write failed", exc_info=True)
 
 
 def _negative_cache_contains(ticker: str) -> bool:
@@ -337,15 +345,23 @@ def _negative_cache_update(
     cache = _negative_cache_load()
     now = time.time()
     with _negative_lock:
-        changed = False
         for t in marks or []:
             cache[t] = now
-            changed = True
         for t in clears or []:
-            if cache.pop(t, None) is not None:
-                changed = True
-        if changed:
-            _negative_cache_save()
+            cache.pop(t, None)
+        try:
+            # kv upserts/deletes are idempotent — no change detection needed
+            for t in marks or []:
+                db.kv_put(
+                    "negative",
+                    t,
+                    str(now),
+                    expires=now + _NEGATIVE_DB_RETENTION_SECONDS,
+                )
+            for t in clears or []:
+                db.kv_delete("negative", t)
+        except Exception:
+            logger.debug("Negative-cache kv write failed", exc_info=True)
 
 
 # ── Runtime TTL override + per-scan skip counter ────────────────────────────
@@ -405,6 +421,9 @@ _ENRICHMENT_TTL_OVERRIDE: float | None = None
 _ENRICHMENT_CACHE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".cache", "enrichment_cache.json"
 )
+# ponytail: entries live in the db for 7 days regardless of the read-side TTL
+# override; kv_prune() sweeps them. The ts filter below stays authoritative.
+_ENRICHMENT_DB_RETENTION_SECONDS = 7 * 86400
 _enrichment_cache: dict | None = None  # ticker -> {ts, providers, fundamentals}
 _enrichment_lock = threading.Lock()
 _enrichment_hits = 0
@@ -425,18 +444,36 @@ def enrichment_cache_ttl_hours() -> float:
         return _ENRICHMENT_TTL_OVERRIDE or ENRICHMENT_CACHE_TTL_HOURS
 
 
+def _import_enrichment_legacy() -> None:
+    """Fold the pre-sqlite enrichment_cache.json into the kv store (once)."""
+    raw = db.kv_import_src("enrichment", _ENRICHMENT_CACHE_PATH)
+    if not raw:
+        return
+    for k, entry in raw.items():
+        if isinstance(entry, dict) and isinstance(entry.get("ts"), (int, float)):
+            db.kv_put_json(
+                "enrichment",
+                k,
+                entry,
+                expires=entry["ts"] + _ENRICHMENT_DB_RETENTION_SECONDS,
+            )
+
+
 def _enrichment_cache_load() -> dict:
-    """Load unexpired entries from disk once per process."""
+    """Load unexpired entries from the kv store once per process."""
     global _enrichment_cache
     ttl_h = enrichment_cache_ttl_hours()
     with _enrichment_lock:
         if _enrichment_cache is None:
             cache: dict = {}
             try:
-                with open(_ENRICHMENT_CACHE_PATH, encoding="utf-8") as f:
-                    raw = json.load(f)
+                _import_enrichment_legacy()
                 now = time.time()
-                for k, entry in raw.items():
+                for k, raw in db.kv_items("enrichment").items():
+                    try:
+                        entry = json.loads(raw)
+                    except ValueError:
+                        continue
                     if (
                         isinstance(entry, dict)
                         and isinstance(entry.get("ts"), (int, float))
@@ -445,22 +482,10 @@ def _enrichment_cache_load() -> dict:
                         cache[k] = entry
             except Exception:
                 logger.info(
-                    "Enrichment cache load failed (missing/corrupt file)", exc_info=True
+                    "Enrichment cache load failed (kv unavailable)", exc_info=True
                 )
             _enrichment_cache = cache
         return _enrichment_cache
-
-
-def _enrichment_cache_save() -> None:
-    """Persist the in-memory cache (caller must hold the lock)."""
-    try:
-        os.makedirs(os.path.dirname(_ENRICHMENT_CACHE_PATH), exist_ok=True)
-        tmp = _ENRICHMENT_CACHE_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_enrichment_cache, f)
-        os.replace(tmp, _ENRICHMENT_CACHE_PATH)
-    except Exception:
-        logger.info("Enrichment-cache write failed", exc_info=True)
 
 
 def _enrichment_cache_get(ticker: str) -> dict | None:
@@ -483,29 +508,41 @@ def _enrichment_cache_get(ticker: str) -> dict | None:
 def _enrichment_cache_put(
     ticker: str, providers: dict, fundamentals: dict | None
 ) -> None:
-    """Store provider keys + fundamentals for a ticker (atomic write).
+    """Store provider keys + fundamentals for a ticker.
 
     Entries without any provider data are not cached — a transient provider
     outage must not freeze scores into the cache.
     """
     if not providers:
         return
+    entry = {
+        "ts": time.time(),
+        "providers": providers,
+        "fundamentals": fundamentals,
+    }
     cache = _enrichment_cache_load()
     with _enrichment_lock:
-        cache[ticker] = {
-            "ts": time.time(),
-            "providers": providers,
-            "fundamentals": fundamentals,
-        }
-        _enrichment_cache_save()
+        cache[ticker] = entry
+        try:
+            db.kv_put_json(
+                "enrichment",
+                ticker,
+                entry,
+                expires=entry["ts"] + _ENRICHMENT_DB_RETENTION_SECONDS,
+            )
+        except Exception:
+            logger.debug("Enrichment-cache kv write failed", exc_info=True)
 
 
 def enrichment_cache_clear() -> None:
-    """Wipe the enrichment cache (memory + disk)."""
+    """Wipe the enrichment cache (memory + db)."""
     global _enrichment_cache
     with _enrichment_lock:
         _enrichment_cache = {}
-        _enrichment_cache_save()
+        try:
+            db.kv_clear("enrichment")
+        except Exception:
+            logger.debug("Enrichment-cache kv clear failed", exc_info=True)
 
 
 def enrichment_cache_size() -> int:

@@ -71,6 +71,9 @@ class ScannerApp(
         self.filtered_results = []
         self._row_pool = {}
         self._row_cells = {}
+        # Detail-panel background load: per-ticker attempt/done slots
+        self._inst_attempted = set()
+        self._inst_done = set()
         # Must stay re-entrant: _render_current_page holds this lock while
         # _visible_results (and _display_results before it) re-acquires it.
         # Downgrading to threading.Lock deadlocks the results grid.
@@ -561,11 +564,24 @@ class ScannerApp(
             except (TypeError, ValueError):
                 return 50.0
 
+    def _inst_filter_on(self) -> bool:
+        cb = getattr(self, "inst_filter_cb", None)
+        return bool(cb is not None and cb.value)
+
+    @staticmethod
+    def _has_fii_dii(r: dict) -> bool:
+        """Per-stock FII/DII markers: NSE activity booleans or screener shareholding."""
+        if r.get("_fii_is_buying") is not None or r.get("_dii_is_buying") is not None:
+            return True
+        series = (r.get("_shareholding") or {}).get("series") or {}
+        return "foreign_institutions" in series or "domestic_institutions" in series
+
     def _is_filter_active(self) -> bool:
         return (
             bool(self.filter_text)
             or self._rating_filter() != "ALL"
             or self._score_threshold() > 0
+            or self._inst_filter_on()
         )
 
     def _visible_results(self) -> list:
@@ -588,6 +604,8 @@ class ScannerApp(
             if combined != rating:
                 return False
         if score_of(r) < self._score_threshold():
+            return False
+        if self._inst_filter_on() and not self._has_fii_dii(r):
             return False
         return True
 

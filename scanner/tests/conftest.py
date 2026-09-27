@@ -11,6 +11,20 @@ import pytest
 _PARQUET_LOCK = threading.Lock()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_db(tmp_path):
+    """Run every test against a fresh sqlite db (never the real scanner.db).
+
+    Must be declared first: other fixtures/tests read+write settings, scan
+    history and every kv/price cache through this store.
+    """
+    from scanner.shared import db
+
+    db.set_db_path(str(tmp_path / "scanner_test.db"))
+    yield
+    db.set_db_path(None)
+
+
 def safe_to_parquet(df, path, **kwargs):
     """Write a DataFrame to parquet, tolerating pyarrow 25 extension-type race."""
     with _PARQUET_LOCK:

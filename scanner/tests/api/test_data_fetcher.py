@@ -909,21 +909,22 @@ class TestNegativeCache:
         assert not data_fetcher._negative_cache_contains("NEWIPO")
 
     def test_mark_survives_new_process_load_from_disk(self):
-        """Marks persist to disk and are read back on a fresh (re)load."""
+        """Marks persist to the kv store and are read back on a fresh (re)load."""
+        from scanner.shared import db
+
         data_fetcher._negative_cache_update(marks=["GONER"])
-        # Simulate a new process: drop the in-memory state, force a disk load
+        # Simulate a new process: drop the in-memory state, force a store load
         data_fetcher._negative_cache = None
 
         assert data_fetcher._negative_cache_contains("GONER")
 
-        # An expired entry on disk is dropped on load
-        import json
-
-        with open(data_fetcher._NEGATIVE_CACHE_PATH, encoding="utf-8") as f:
-            raw = json.load(f)
-        raw["ANCIENT"] = time.time() - 48 * 3600
-        with open(data_fetcher._NEGATIVE_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(raw, f)
+        # An expired entry on store is dropped on load
+        db.kv_put(
+            "negative",
+            "ANCIENT",
+            str(time.time() - 48 * 3600),
+            expires=time.time() + 7 * 86400,
+        )
         data_fetcher._negative_cache = None
 
         assert data_fetcher._negative_cache_contains("GONER")
@@ -991,7 +992,9 @@ class TestEnrichmentCache:
         assert "STALE" not in data_fetcher._enrichment_cache
 
     def test_entry_survives_new_process_load_from_disk(self):
-        """Entries persist to disk and reload on a fresh process."""
+        """Entries persist to the kv store and reload on a fresh process."""
+        from scanner.shared import db
+
         data_fetcher._enrichment_cache_put("RELIANCE", {"_fii_is_buying": True}, None)
         data_fetcher._enrichment_cache = None  # simulate a new process
 
@@ -999,18 +1002,17 @@ class TestEnrichmentCache:
         assert entry is not None
         assert entry["providers"] == {"_fii_is_buying": True}
 
-        # An expired entry on disk is dropped on load
-        import json
-
-        with open(data_fetcher._ENRICHMENT_CACHE_PATH, encoding="utf-8") as f:
-            raw = json.load(f)
-        raw["ANCIENT"] = {
-            "ts": time.time() - 48 * 3600,
-            "providers": {},
-            "fundamentals": None,
-        }
-        with open(data_fetcher._ENRICHMENT_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(raw, f)
+        # An expired entry on store is dropped on load
+        db.kv_put_json(
+            "enrichment",
+            "ANCIENT",
+            {
+                "ts": time.time() - 48 * 3600,
+                "providers": {},
+                "fundamentals": None,
+            },
+            expires=time.time() + 7 * 86400,
+        )
         data_fetcher._enrichment_cache = None
 
         assert data_fetcher._enrichment_cache_get("RELIANCE") is not None
@@ -1236,8 +1238,10 @@ class TestScanStartStalePrune:
         assert "RELIANCE" in result
         assert not _os.path.exists(stale_pkl)  # stale pair pruned...
         assert not _os.path.exists(stale_pkl[:-9] + ".meta")
-        fresh = [f for f in _os.listdir(cache_dir) if f.endswith(".parquet")]
-        assert len(fresh) == 1  # ...today's new entry kept
+        from scanner.shared import db
+
+        n = db.get_conn().execute("SELECT COUNT(*) AS n FROM price_cache").fetchone()
+        assert n["n"] == 1  # ...today's new entry kept (in the db)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -48,3 +48,7 @@ pytest_out.txt
 .coverage
 coverage.xml
 htmlcov/
+
+# sqlite runtime store (imported from settings.json / last_results.json on first run)
+scanner/scanner.db*
+scanner/last_results.json

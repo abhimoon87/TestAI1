@@ -255,6 +255,50 @@ class TestGridFilters:
         assert app._row_matches_filters(_result(0, score=1.0)) is True
 
 
+class TestFiiDiiCheckboxFilter:
+    """Show stocks with FII/DII data — per-row marker filter."""
+
+    @staticmethod
+    def _with_nse(i=0):
+        r = _result(i, score=70.0)
+        r["_fii_is_buying"] = False  # present-but-selling still counts
+        return r
+
+    @staticmethod
+    def _with_shp(i=1):
+        r = _result(i, score=70.0)
+        r["_shareholding"] = {"series": {"domestic_institutions": {}}}
+        return r
+
+    def test_checkbox_filters_rows_without_markers(self):
+        app = _make_app()
+        app.inst_filter_cb = ft.Checkbox(label="cb", value=True)
+        plain = _result(2, score=70.0)
+        assert app._row_matches_filters(self._with_nse()) is True
+        assert app._row_matches_filters(self._with_shp()) is True
+        assert app._row_matches_filters(plain) is False
+
+    def test_checkbox_counts_as_active_filter(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 0})()
+        assert app._is_filter_active() is False
+        app.inst_filter_cb = ft.Checkbox(label="cb", value=True)
+        assert app._is_filter_active() is True
+
+    def test_toggle_refilters_and_updates_summary(self):
+        app = _make_app()
+        app.inst_filter_cb = ft.Checkbox(label="cb", value=True)
+        app.all_results = [self._with_nse(0), _result(1, score=70.0)]
+        app.active_view = "dashboard"
+        app.scanning = False
+        app.sort_col = None
+
+        app._on_inst_filter_change(None)
+
+        assert [r["ticker"] for r in app.filtered_results] == ["STK000"]
+        assert "FII/DII data" in app.result_count_label.value
+
+
 class TestKeyboardNav:
     """↑/↓ move grid selection; Esc leaves detail/settings."""
 

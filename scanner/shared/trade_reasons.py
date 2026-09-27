@@ -120,27 +120,8 @@ def build_trade_reasons(row: dict, max_reasons: int = 8) -> list[str]:
         reasons.append(f"Outperforming index ({rs:.0f}/10 relative strength)")
 
     # ── Institutional / enrichment ──────────────────────────────────────
-    if row.get("_fii_is_buying"):
-        fii_net = row.get("_fii_net")
-        try:
-            fii_n = abs(float(fii_net)) if fii_net is not None else None
-        except (TypeError, ValueError):
-            fii_n = None
-        if fii_n is not None:
-            reasons.append(f"FII buying ₹{fii_n:,.0f} Cr net")
-        else:
-            reasons.append("FII net buying signal")
-    if row.get("_dii_is_buying"):
-        dii_net = row.get("_dii_net")
-        try:
-            dii_n = abs(float(dii_net)) if dii_net is not None else None
-        except (TypeError, ValueError):
-            dii_n = None
-        if dii_n is not None:
-            reasons.append(f"DII buying ₹{dii_n:,.0f} Cr net")
-        else:
-            reasons.append("DII net buying signal")
-
+    # Market-wide FII/DII NSE flows were stamped on every row — same
+    # numbers each stock — so they no longer become per-stock reasons.
     delivery = row.get("_delivery_pct")
     if delivery is not None and delivery >= 55:
         reasons.append(f"High delivery volume ({delivery:.0f}%)")

@@ -44,7 +44,9 @@ class TestTTLCacheBasics:
         assert cache.get("nope") is None
 
     def test_expiry_returns_none_and_evicts(self, clock):
-        c = TTLCache(ttl=50, namespace="x")
+        # namespace="" → memory-only, so expiry is observable without the
+        # sqlite backstop serving the value from the persistent layer
+        c = TTLCache(ttl=50, namespace="")
         c.set("k", 42)
         clock.now += 49
         assert c.get("k") == 42  # still fresh
@@ -65,7 +67,7 @@ class TestTTLCacheBasics:
         assert cache.get("a") is None
 
     def test_clear_expired_counts_only_stale(self, clock):
-        c = TTLCache(ttl=50, namespace="x")
+        c = TTLCache(ttl=50, namespace="")
         c.set("stale", 1)
         clock.now += 50  # "stale" expired, exactly at the boundary
         c.set("fresh", 2)
@@ -121,3 +123,34 @@ class TestTTLCacheThreadSafety:
         assert not errors
         assert cache.get("k") is not None
         assert cache.size == 1
+
+
+class TestTTLCachePersistence:
+    """Named caches survive instance death via the shared sqlite kv store."""
+
+    def test_value_survives_a_fresh_instance(self):
+        a = TTLCache(ttl=3600, namespace="persist")
+        a.set("k", {"a": 1})
+        b = TTLCache(ttl=3600, namespace="persist")  # "restart": empty memory
+        assert b.get("k") == {"a": 1}
+
+    def test_clear_wipes_both_layers(self):
+        a = TTLCache(ttl=3600, namespace="persist_clear")
+        a.set("k", {"a": 1})
+        b = TTLCache(ttl=3600, namespace="persist_clear")
+        b.clear()
+        c = TTLCache(ttl=3600, namespace="persist_clear")
+        assert c.get("k") is None
+
+    def test_unnamed_cache_is_memory_only(self):
+        a = TTLCache(ttl=3600)
+        a.set("k", 1)
+        b = TTLCache(ttl=3600)
+        assert b.get("k") is None
+
+    def test_non_serializable_value_stays_memory_only(self):
+        a = TTLCache(ttl=3600, namespace="opaque")
+        a.set("k", object())
+        b = TTLCache(ttl=3600, namespace="opaque")
+        assert b.get("k") is None
+        assert a.get("k") is not None

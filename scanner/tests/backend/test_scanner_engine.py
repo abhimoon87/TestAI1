@@ -2,6 +2,7 @@
 
 import threading
 import time
+from typing import ClassVar
 from unittest.mock import patch
 
 import pandas as pd
@@ -113,6 +114,35 @@ class TestEnrichRowsInPlaceCache:
         }  # cached fundamentals attached
         assert row["total"] == 88.0  # re-scored on top of cached data
         assert row["combined_rating"] == "EXCELLENT"
+
+    def test_provider_keys_reach_re_score_settings(self):
+        """Phase-2 re-score must see provider "_"-keys (institutional bonus)."""
+        data_fetcher._enrichment_cache_put(
+            "TCS", {"_fii_is_buying": True, "_dii_is_buying": False}, None
+        )
+        df = _tiny_df()
+        rows = [{"ticker": "TCS", "total": 50.0}]
+        seen: dict = {}
+
+        def fake_compute(df_arg, timeframe=None, index_df=None, settings=None):
+            seen.update(settings or {})
+            return {"total": 88.0, "combined_rating": "EXCELLENT"}
+
+        with patch(
+            "scanner.backend.scanner_engine.compute_scores",
+            side_effect=fake_compute,
+        ):
+            _enrich_rows_in_place(
+                rows,
+                {"TCS": df},
+                settings={},
+                global_data=None,
+                timeframe="D",
+                index_df=None,
+                enrich=lambda *a, **k: AssertionError("cache hit, no enrich"),
+            )
+        assert seen["_fii_is_buying"] is True
+        assert seen["_dii_is_buying"] is False
 
     def test_cache_miss_runs_providers_and_populates_cache(self):
         """A fresh ticker fetches from providers, then caches the result."""
@@ -491,3 +521,66 @@ class TestStaleMembers:
     def test_message_reflects_custom_threshold(self):
         msg = _stale_members_message([("GSPL", "2026-05-11")], max_age_days=90)
         assert "last bar > 90d old" in msg
+
+
+class TestPromoterProviderExtraction:
+    """india_fund branch surfaces trendlyne promoter holding as a provider key."""
+
+    _SETTINGS: ClassVar[dict] = {
+        "use_market_sentiment": False,
+        "use_social_sentiment": False,
+        "use_indian_market": False,
+        "use_indian_fundamentals": True,
+        "use_insider_data": False,
+    }
+
+    @staticmethod
+    def _fund_result(promoter):
+        from scanner.api.indian_fundamentals import TrendlyneFundamentals
+
+        fund = (
+            TrendlyneFundamentals(ticker="X", promoter_holding=promoter)
+            if promoter is not None
+            else None
+        )
+        return {
+            "trendlyne": fund,
+            "screener": None,
+            "yahoo_valuation": None,
+            "source": "trendlyne" if fund else "none",
+        }
+
+    def test_promoter_holding_extracted_and_rounded(self):
+        with (
+            patch(
+                "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
+                return_value=self._fund_result(51.798),
+            ),
+            patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None),
+        ):
+            out = ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS), {})
+        assert out["_promoter_holding"] == 51.8
+
+    def test_no_promoter_key_without_data(self):
+        with (
+            patch(
+                "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
+                return_value=self._fund_result(None),
+            ),
+            patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None),
+        ):
+            out = ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS), {})
+        assert "_promoter_holding" not in out
+
+    def test_flag_prefix_gates_promoter_key(self):
+        from scanner.backend.scanner_engine import _PROVIDER_FLAG_PREFIXES
+
+        match = next(
+            (
+                flag
+                for prefixes, flag in _PROVIDER_FLAG_PREFIXES
+                if any(p.startswith("_promoter") for p in prefixes)
+            ),
+            None,
+        )
+        assert match == "use_indian_fundamentals"

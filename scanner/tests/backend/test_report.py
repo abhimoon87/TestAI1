@@ -346,7 +346,8 @@ class TestReportPolish:
     def test_direction_header_replaces_duplicate_trend(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
         assert ">Direction<" in html
-        assert html.count(">Trend<") == 1  # score column only
+        # Score column only — the detail breakdown has its own Trend label.
+        assert html.split("</thead>")[0].count(">Trend<") == 1
 
     def test_sticky_header_and_print_css(self):
         css = _css_block()
@@ -657,3 +658,67 @@ class TestFetchNewsBatch:
 
     def test_empty_input_returns_empty_map(self):
         assert fetch_news_batch([]) == {}
+
+
+class TestDetailPanelParity:
+    """Expanded stock detail mirrors the app's detail panel."""
+
+    def _rich_row(self, **overrides):
+        base = {
+            "px_tail": [100.0, 102.5, 101.0, 105.0, 110.0],
+            "atr_pct": 4.5,
+            "_shareholding": {
+                "quarter": "Jun 2026",
+                "series": {
+                    "foreign_institutions": {
+                        "latest": 17.2,
+                        "total": -5.41,
+                        "recent": -1.48,
+                    },
+                    "domestic_institutions": {
+                        "latest": 21.1,
+                        "total": 5.11,
+                        "recent": 0.64,
+                    },
+                    "promoters": {"latest": 50.5, "total": 0.21, "recent": 0.48},
+                },
+            },
+        }
+        base.update(overrides)
+        return _make_score_result(**base)
+
+    def test_app_sections_render(self):
+        html = generate_html_report([self._rich_row()], fetch_news=False)
+        for s in (
+            "Price (last 20 closes)",
+            "Key Signals",
+            "Score Breakdown",
+            "Institutional Positioning",
+            "Screener shareholding · Jun 2026",
+            "Stoch",  # breakdown category the table row lacks
+            "Volatility",
+            "Fundamental",
+            "17.2%",  # FII shareholding tile
+            "50.5%",  # promoter tile
+            "4.50%",  # ATR% signal chip
+        ):
+            assert s in html
+        # Market-wide sources stay out of the per-stock panel.
+        assert "FPI" not in html
+        assert "Smart Money" not in html
+
+    def test_promoter_fallback_without_shareholding(self):
+        html = generate_html_report(
+            [_make_score_result(_promoter_holding=51.8)], fetch_news=False
+        )
+        assert "Institutional Positioning" in html
+        assert "51.8%" in html
+
+    def test_institutional_omitted_when_not_enriched(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert "Institutional Positioning" not in html
+
+    def test_chart_needs_px_tail(self):
+        html = generate_html_report([_make_score_result(atr_pct=4.5)], fetch_news=False)
+        assert "Price (last 20 closes)" not in html
+        assert "Key Signals" in html

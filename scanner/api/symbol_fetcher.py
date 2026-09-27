@@ -13,6 +13,8 @@ from pathlib import Path
 
 import nselib.capital_market as cm
 
+from ..shared import db
+
 logger = logging.getLogger(__name__)
 
 # Cache TTL in seconds (4 hours)
@@ -22,61 +24,76 @@ CACHE_TTL_SECONDS = 4 * 3600
 _cache: dict[str, list] = {}
 _cache_timestamps: dict[str, float] = {}
 _cache_lock = threading.Lock()
+_disk_loaded = False
 
-# Disk cache for persistence across restarts
+# Legacy disk cache (pre-sqlite) — imported into the kv store once
 _DISK_CACHE_FILE = Path(__file__).parent / ".cache" / "symbols.json"
 
 
+def _import_disk_legacy() -> None:
+    """Fold the pre-sqlite symbols.json into the kv store (once)."""
+    data = db.kv_import_src("symbols", _DISK_CACHE_FILE)
+    if not data:
+        return
+    for k, v in data.items():
+        if isinstance(v, dict) and isinstance(v.get("_ts"), (int, float)):
+            db.kv_put_json("symbols", k, v, expires=v["_ts"] + CACHE_TTL_SECONDS)
+
+
 def _load_disk_cache():
-    try:
-        if _DISK_CACHE_FILE.exists():
-            data = json.loads(_DISK_CACHE_FILE.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                return
+    """Hydrate the in-memory cache from the kv store (once per process)."""
+    global _disk_loaded
+    with _cache_lock:
+        if _disk_loaded:
+            return
+        try:
+            _import_disk_legacy()
             now = time.time()
             loaded = 0
-            with _cache_lock:
-                for k, v in data.items():
-                    if not isinstance(v, dict):
-                        continue
-                    ts = v.get("_ts", 0)
-                    items = v.get("data")
-                    if (
-                        isinstance(ts, (int, float))
-                        and now - ts < CACHE_TTL_SECONDS
-                        and isinstance(items, list)
-                        and all(isinstance(s, str) for s in items)
-                    ):
-                        _cache[k] = items
-                        _cache_timestamps[k] = ts
-                        loaded += 1
+            for k, raw in db.kv_items("symbols").items():
+                try:
+                    v = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(v, dict):
+                    continue
+                ts = v.get("_ts", 0)
+                items = v.get("data")
+                if (
+                    isinstance(ts, (int, float))
+                    and now - ts < CACHE_TTL_SECONDS
+                    and isinstance(items, list)
+                    and all(isinstance(s, str) for s in items)
+                ):
+                    _cache[k] = items
+                    _cache_timestamps[k] = ts
+                    loaded += 1
             if loaded:
                 logger.debug("Disk symbol cache loaded: %d keys", loaded)
-    except Exception as e:
-        logger.info("Disk cache load failed: %s", e)
+        except Exception as e:
+            logger.info("Disk cache load failed: %s", e)
+        finally:
+            _disk_loaded = True
 
 
 def _save_disk_cache():
     try:
-        _DISK_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
         with _cache_lock:
             payload = {
                 k: {"data": v, "_ts": _cache_timestamps.get(k, 0)}
                 for k, v in _cache.items()
             }
-        tmp = _DISK_CACHE_FILE.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
-        tmp.replace(_DISK_CACHE_FILE)
+        for k, entry in payload.items():
+            db.kv_put_json(
+                "symbols", k, entry, expires=entry["_ts"] + CACHE_TTL_SECONDS
+            )
     except Exception as e:
         logger.info("Disk cache save failed: %s", e)
 
 
-# Load on import
-_load_disk_cache()
-
-
 def _is_cache_valid(key: str) -> bool:
     """Check if cached data is still valid."""
+    _load_disk_cache()
     with _cache_lock:
         ts = _cache_timestamps.get(key)
     if ts is None:
@@ -252,84 +269,36 @@ def _compute_unique_nse() -> list[str]:
     return sorted(unique)
 
 
+# key → universes attribute names; multi-name keys are merged, deduped, sorted
+_FALLBACK_UNIVERSES = {
+    "mainboard": ("CASH_MARKET",),
+    "fno": ("FNO_STOCKS",),
+    "nifty50": ("NIFTY_50",),
+    "niftynext50": ("NIFTY_NEXT_50",),
+    "midcap150": ("NIFTY_MIDCAP_100",),
+    "smallcap250": ("NIFTY_SMALLCAP_100",),
+    "unique": ("CASH_MARKET",),
+    "bse_all": ("BSE_SENSEX", "BSE_MIDCAP", "BSE_SMALLCAP", "CASH_MARKET"),
+    "all_market": ("NIFTY_BROAD",),
+    "unique_nse": ("NIFTY_BROAD",),
+    "all_nse": ("NIFTY_BROAD",),
+}
+
+
 def _get_static_fallback(key: str) -> list:
-    """Get static fallback from universes module."""
-    if key == "mainboard":
-        try:
-            from .universes import CASH_MARKET
-
-            return CASH_MARKET
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "fno":
-        try:
-            from .universes import FNO_STOCKS
-
-            return FNO_STOCKS
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "nifty50":
-        try:
-            from .universes import NIFTY_50
-
-            return NIFTY_50
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "niftynext50":
-        try:
-            from .universes import NIFTY_NEXT_50
-
-            return NIFTY_NEXT_50
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "midcap150":
-        try:
-            from .universes import NIFTY_MIDCAP_100
-
-            return NIFTY_MIDCAP_100
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "smallcap250":
-        try:
-            from .universes import NIFTY_SMALLCAP_100
-
-            return NIFTY_SMALLCAP_100
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "sme":
+    """Get static fallback from universes module ("sme" and unknown → [])."""
+    names = _FALLBACK_UNIVERSES.get(key)
+    if not names:
         return []
-    elif key == "unique":
-        try:
-            from .universes import CASH_MARKET
+    try:
+        from ..shared import universes
 
-            return CASH_MARKET
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key == "bse_all":
-        try:
-            from .universes import BSE_MIDCAP, BSE_SENSEX, BSE_SMALLCAP, CASH_MARKET
-
-            # Approximate BSE ALL as static BSE + NSE cash (covers dual-listed)
-            return sorted(set(BSE_SENSEX + BSE_MIDCAP + BSE_SMALLCAP + CASH_MARKET))
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    elif key in ("all_market", "unique_nse", "all_nse"):
-        try:
-            from .universes import NIFTY_BROAD
-
-            return NIFTY_BROAD
-        except Exception:
-            logger.info("Static fallback import failed for key=%s", key, exc_info=True)
-            return []
-    return []
+        out = [s for name in names for s in getattr(universes, name)]
+        # bse_all merges BSE + NSE lists — dedupe and sort like the old branch
+        return sorted(set(out)) if len(names) > 1 else out
+    except Exception:
+        logger.info("Static fallback import failed for key=%s", key, exc_info=True)
+        return []
 
 
 # ── BSE Support — Full Market (~5,900 unique) ───────────────────────────────
@@ -535,7 +504,12 @@ def fetch_all_market_symbols() -> list[str]:
         # If combined is still small (<500), add static BSE + NSE BROAD as floor
         if len(combined) < 500:
             try:
-                from .universes import BSE_MIDCAP, BSE_SENSEX, BSE_SMALLCAP, NIFTY_BROAD
+                from ..shared.universes import (
+                    BSE_MIDCAP,
+                    BSE_SENSEX,
+                    BSE_SMALLCAP,
+                    NIFTY_BROAD,
+                )
 
                 combined.update(
                     s.upper()

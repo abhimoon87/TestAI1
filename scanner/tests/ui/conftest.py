@@ -91,6 +91,8 @@ def make_app():
     app.filtered_results = []
     app._row_pool = {}
     app._row_cells = {}
+    app._inst_attempted = set()
+    app._inst_done = set()
     app.filter_text = ""
     app.sort_col = None
     app.sort_reverse = False

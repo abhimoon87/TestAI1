@@ -1,5 +1,5 @@
 """
-Shared in-memory TTL cache — replaces 9x copy-pasted _cache_get/_cache_set.
+Shared TTL cache — memory first, sqlite kv store as the restart backstop.
 
 Usage:
     from .cache import TTLCache
@@ -13,6 +13,9 @@ Features:
 - Generic[T] for dict vs list (symbol_fetcher)
 - time.monotonic() (NTP-safe) + threading.Lock + delete-on-expiry
 - Centralized hashlib.md5(usedforsecurity=False)
+- Named caches persist to the shared sqlite db (kv table), so values
+  survive restarts; clear() wipes both layers. Caches constructed without
+  a namespace are memory-only.
 """
 
 __all__ = ["TTLCache"]
@@ -22,6 +25,8 @@ import hashlib
 import threading
 import time
 from typing import Generic, TypeVar
+
+from .db import kv_clear, kv_get_json, kv_put_json
 
 T = TypeVar("T")
 
@@ -42,25 +47,49 @@ class TTLCache(Generic[T]):
     def get(self, key: str) -> T | None:
         with self._lock:
             item = self._store.get(key)
-            if item is None:
-                return None
-            value, ts = item
-            if time.monotonic() - ts < self.ttl:
-                return copy.deepcopy(value)
-            # Expired — evict
-            try:
-                del self._store[key]
-            except KeyError:
-                pass
+            if item is not None:
+                value, ts = item
+                if time.monotonic() - ts < self.ttl:
+                    return copy.deepcopy(value)
+                # Expired — evict, then try the persistent backstop
+                try:
+                    del self._store[key]
+                except KeyError:
+                    pass
+        return self._db_get(key)
+
+    def _db_get(self, key: str) -> T | None:
+        # ponytail: unnamed caches are memory-only (no namespace, no isolation)
+        if not self.namespace:
             return None
+        try:
+            value = kv_get_json(self.namespace, key)
+        except Exception:
+            return None
+        if value is None:
+            return None
+        with self._lock:
+            self._store[key] = (copy.deepcopy(value), time.monotonic())
+        return copy.deepcopy(value)
 
     def set(self, key: str, value: T) -> None:
         with self._lock:
             self._store[key] = (copy.deepcopy(value), time.monotonic())
+        if self.namespace:
+            # ponytail: non-JSON-serializable values stay memory-only
+            try:
+                kv_put_json(self.namespace, key, value, expires=time.time() + self.ttl)
+            except Exception:
+                pass
 
     def clear(self) -> None:
         with self._lock:
             self._store.clear()
+        if self.namespace:
+            try:
+                kv_clear(self.namespace)
+            except Exception:
+                pass
 
     def clear_expired(self) -> int:
         now = time.monotonic()

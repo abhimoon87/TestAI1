@@ -92,17 +92,14 @@ class TestCacheRoundTrip:
             df = _make_ohlcv(50)
             _set_cached("TEST", "1y", "test_cache", df)
 
-            # Manually set timestamp to 5 hours ago
+            # Backdate the db row's expiry to 5 hours ago
+            from scanner.shared import db
+
             key = _cache_key("TEST", "1y", "test_cache")
-            meta_file = tmp_path / f"{key}.meta"
-            with open(meta_file, "w") as f:
-                json.dump(
-                    {
-                        "timestamp": (datetime.now() - timedelta(hours=5)).isoformat(),
-                        "rows": 50,
-                    },
-                    f,
-                )
+            db.get_conn().execute(
+                "UPDATE price_cache SET expires = ? WHERE cache_key = ?",
+                (time.time() - 5 * 3600, key),
+            )
 
             result = _get_cached("TEST", "1y", "test_cache")
 
@@ -390,19 +387,6 @@ class TestDataProvider:
 
         assert result is None
 
-    def test_clear_cache(self, tmp_path):
-        """clear_cache should remove the cache directory."""
-        with patch("scanner.api.data_providers.CACHE_DIR", str(tmp_path)):
-            # Create some cache files
-            (tmp_path / "test.parquet").touch()
-            (tmp_path / "test.meta").touch()
-
-            provider = DataProvider(use_cache=True)
-            provider.clear_cache()
-
-            assert not (tmp_path / "test.parquet").exists()
-            assert tmp_path.exists()  # dir should be recreated
-
     def test_fetch_stock_provider_timeout_falls_through(self):
         """A provider exceeding provider_timeout is skipped for the next one."""
         provider = DataProvider(use_cache=False)
@@ -555,20 +539,19 @@ class TestCacheHealth:
 
     def test_counts_fresh_and_stale(self, tmp_path, monkeypatch):
         self._reset(tmp_path, monkeypatch)
-        import os
+        from scanner.shared import db
 
-        from scanner.tests.conftest import safe_to_parquet
-
-        fresh = datetime.now().isoformat()
-        stale = (datetime.now() - timedelta(days=1)).isoformat()
-        for name, when in [("a", fresh), ("b", fresh), ("c", stale)]:
-            safe_to_parquet(
-                pd.DataFrame({"close": [1.0]}),
-                os.path.join(str(tmp_path), name + ".parquet"),
-                index=False,
+        now = time.time()
+        for name, expires in [
+            ("a", now + 3600),
+            ("b", now + 3600),
+            ("c", now - 3600),
+        ]:
+            db.get_conn().execute(
+                "INSERT INTO price_cache (cache_key, payload, expires)"
+                " VALUES (?, ?, ?)",
+                (name, b"ignored", expires),
             )
-            with open(os.path.join(str(tmp_path), name + ".meta"), "w") as f:
-                json.dump({"timestamp": when, "rows": 1}, f)
 
         h = cache_health()
         assert h["price_entries"] == 3

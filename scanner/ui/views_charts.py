@@ -14,6 +14,7 @@ from flet.canvas import Canvas, Path
 from flet.controls.alignment import Alignment
 
 from ..shared.constants import score_of as _score_of
+from ..shared.detail_specs import SCORE_CATS
 from .ui_kit import RADIUS_LG, _border_all, _padding_only, score_color
 
 logger = logging.getLogger(__name__)
@@ -385,19 +386,6 @@ def build_score_breakdown(
 
     Each bar is proportionally sized to the category's max score.
     """
-    categories = [
-        ("Trend", row.get("trend", 0) or 0, 15, c.get("green", "#34d399")),
-        ("Momentum", row.get("momentum", 0) or 0, 15, c.get("cyan", "#22d3ee")),
-        ("RSI", row.get("rsi", 0) or 0, 8, c.get("blue", "#60a5fa")),
-        ("MACD", row.get("macd", 0) or 0, 7, c.get("macd", "#aa88ff")),
-        ("Stoch", row.get("stoch", 0) or 0, 5, c.get("pink", "#a78bfa")),
-        ("OBV", row.get("obv", 0) or 0, 5, c.get("lime", "#a3e635")),
-        ("Volume", row.get("volume", 0) or 0, 10, c.get("orange", "#fb923c")),
-        ("RelStr", row.get("rel_str", 0) or 0, 10, c.get("lime", "#a3e635")),
-        ("Volatility", row.get("volatility", 0) or 0, 5, c.get("yellow", "#facc15")),
-        ("Fundamental", row.get("fundamentals", 0) or 0, 20, c.get("fund", "#ffe600")),
-    ]
-
     bar_h = 14
     gap = 4
     pad_left = 72
@@ -407,7 +395,9 @@ def build_score_breakdown(
     shapes: list = []
     labels: list[ft.Text] = []
 
-    for i, (name, score, max_score, color) in enumerate(categories):
+    for i, (name, key, max_score, role, _css) in enumerate(SCORE_CATS):
+        score = row.get(key, 0) or 0
+        color = c[role]
         y = i * (bar_h + gap)
         ratio = min(score / max_score, 1.0) if max_score > 0 else 0
         bw = ratio * bar_area_w

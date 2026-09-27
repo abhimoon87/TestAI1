@@ -3,13 +3,19 @@ Trendlyne & Screener.in Data Providers
 Free Indian market data providers — fundamentals, peer comparison, technicals.
 """
 
+import datetime
 import hashlib
+import json
 import logging
+import os
 import re
+import threading
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import requests
 
+from ..shared import db
 from ..shared.cache import TTLCache
 
 logger = logging.getLogger(__name__)
@@ -97,6 +103,158 @@ def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
 
     except Exception as e:
         logger.info("Yahoo Fundamentals fetch failed for %s: %s", ticker, e)
+        return None
+
+
+# ── Promoter holding history ──────────────────────────────────────────────
+# ponytail: no free quarterly shareholding series exists — remember our own
+# snapshots. Day one has no baseline (renders "No change"); once a second
+# snapshot lands, total/recent deltas drive the arrows. Promoter moves are
+# rare (quarterly), so "No change" is the normal, correct state.
+
+_PROMOTER_HISTORY_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".cache", "promoter_history.json"
+)
+_PROMOTER_KEEP = 12
+_promoter_lock = threading.Lock()
+
+
+def _load_promoter_history() -> dict:
+    """History blob from the kv store; empty → one-time legacy file read."""
+    data = db.kv_get_json("promoter_history", "all")
+    if isinstance(data, dict):
+        return data
+    try:
+        with open(_PROMOTER_HISTORY_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_promoter_snapshot(ticker: str, pct: float) -> list[list]:
+    """
+    Append today's promoter holding % for ``ticker`` (once per day).
+
+    Returns the snapshot series ``[[iso_date, pct], ...]`` oldest first,
+    pruned to the last 12 entries. Invalid/zero pct returns [] unchanged.
+    """
+    if not pct or pct <= 0:
+        return []
+    today = datetime.date.today().isoformat()
+    with _promoter_lock:
+        data = _load_promoter_history()
+        series = [
+            e
+            for e in data.get(ticker, [])
+            if isinstance(e, list) and len(e) == 2 and isinstance(e[1], (int, float))
+        ]
+        if series and series[-1][0] == today:
+            return series
+        series.append([today, round(float(pct), 3)])
+        series = series[-_PROMOTER_KEEP:]
+        data[ticker] = series
+        try:
+            db.kv_put_json("promoter_history", "all", data)
+        except Exception:
+            logger.debug("Promoter-history write failed", exc_info=True)
+        return series
+
+
+def promoter_position_change(series: list[list]) -> tuple[float | None, float | None]:
+    """
+    (total_pp, recent_pp) change in promoter holding across snapshots,
+    in percentage points. None until a second snapshot exists.
+    """
+    if len(series) < 2:
+        return None, None
+    total = round(float(series[-1][1]) - float(series[0][1]), 3)
+    recent = round(float(series[-1][1]) - float(series[-2][1]), 3)
+    return total, recent
+
+
+# ── Per-stock shareholding pattern (Screener.in quarterly) ────────────────
+# Screener mirrors the SEBI-mandated quarterly filings: 12 quarters oldest →
+# newest in one GET, so total/recent deltas work from day one — no snapshot
+# history needed. Cached a week (quarters move slowly); the snapshot path
+# above stays as the fallback when Screener has no page for a ticker.
+
+_SHP_CACHE: TTLCache[dict] = TTLCache(ttl=7 * 86400, namespace="shareholding")
+_SHP_KEYS = ("promoters", "foreign_institutions", "domestic_institutions")
+
+
+def parse_shareholding_html(html: str) -> dict | None:
+    """
+    Quarterly shareholding series from a Screener company page.
+
+    Returns {"quarter": "Jun 2026", "series": {key: {latest, total, recent}}}
+    where total/recent are percentage-point moves over the 12-quarter series
+    and the latest quarter, or None when the table is missing.
+    """
+    if 'id="quarterly-shp"' not in html:
+        return None
+    # Split on the content <div>, not the bare id — the tab buttons carry
+    # data-tab-id="quarterly-shp" earlier in the page and would truncate us.
+    region = html.split('<div id="quarterly-shp">', 1)[1].split(
+        '<div id="yearly-shp">', 1
+    )[0]
+    head = re.search(r"<thead>(.*?)</thead>", region, re.DOTALL)
+    if not head:
+        return None
+    quarters = [
+        re.sub(r"<[^>]+>", "", m).strip()
+        for m in re.findall(r"<th[^>]*>(.*?)</th>", head.group(1), re.DOTALL)
+    ]
+    out: dict = {"quarter": quarters[-1] if quarters else None, "series": {}}
+    for key in _SHP_KEYS:
+        m = re.search(
+            rf"showShareholders\(\s*'{key}'\s*,\s*'quarterly'.*?</tr>",
+            region,
+            re.DOTALL,
+        )
+        if not m:
+            continue
+        vals = [
+            float(v) for v in re.findall(r"<td[^>]*>\s*([\d.]+)%\s*</td>", m.group(0))
+        ]
+        if not vals:
+            continue
+        out["series"][key] = {
+            "latest": vals[-1],
+            "total": round(vals[-1] - vals[0], 2) if len(vals) > 1 else None,
+            "recent": round(vals[-1] - vals[-2], 2) if len(vals) > 1 else None,
+        }
+    return out if out["series"] else None
+
+
+def fetch_shareholding_pattern(ticker: str, cache_only: bool = False) -> dict | None:
+    """Latest quarterly shareholding % for ``ticker`` (Screener, no key)."""
+    cache_k = hashlib.md5(f"shp:{ticker}".encode(), usedforsecurity=False).hexdigest()
+    cached = _SHP_CACHE.get(cache_k)
+    if cached:
+        return cached
+    if cache_only:
+        return None
+    try:
+        slug = quote(ticker, safe="")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        for path in ("consolidated/", ""):
+            resp = requests.get(
+                f"https://www.screener.in/company/{slug}/{path}",
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                continue
+            parsed = parse_shareholding_html(resp.text)
+            if parsed:
+                _SHP_CACHE.set(cache_k, parsed)
+                return parsed
+        return None
+    except Exception as e:
+        logger.info("Shareholding fetch failed for %s: %s", ticker, e)
         return None
 
 

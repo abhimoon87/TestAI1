@@ -5,12 +5,18 @@ All data is fetched without API keys using nselib or direct NSE API calls.
 """
 
 import hashlib
+import json
 import logging
+import re
 from dataclasses import dataclass
+
+import pandas as pd
 
 from ..shared.cache import TTLCache
 
 logger = logging.getLogger(__name__)
+
+_NSE_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 # ── Cache ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +37,78 @@ class DeliveryData:
     delivery_change_pct: float  # Change vs previous day
     is_high_delivery: bool  # > 60% delivery
     cached: bool = False
+
+
+def _num(v) -> float | None:
+    try:
+        return float(str(v).replace(",", "").replace("%", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _delivery_from_df(df, ticker: str) -> DeliveryData | None:
+    """Derive delivery % from an nselib price-volume-delivery frame.
+
+    Prefers NSE's own ``%DlyQttoTradedQty`` column; falls back to
+    DeliverableQty / TotalTradedQuantity ratio. Rows are picked newest-first
+    by the Date column (nselib may concatenate oldest chunk first).
+    """
+    if df is None or df.empty:
+        return None
+
+    pct_col = del_col = vol_col = None
+    for c in df.columns:
+        cl = str(c).lower()
+        if pct_col is None and "dlyqtto" in cl:
+            pct_col = c
+        elif (
+            vol_col is None
+            and ("quantity" in cl or "volume" in cl or "traded" in cl)
+            and "deliver" not in cl
+            and "dly" not in cl
+        ):
+            vol_col = c
+        elif del_col is None and "deliverable" in cl:
+            del_col = c
+
+    work = df
+    if "Date" in df.columns:
+        parsed = pd.to_datetime(df["Date"], format="%d-%b-%Y", errors="coerce")
+        if parsed.notna().any():
+            work = df.assign(_dt=parsed).sort_values(
+                "_dt", ascending=False, kind="stable"
+            )
+
+    def pct_of(r) -> float | None:
+        if r is None:
+            return None
+        if pct_col is not None:
+            p = _num(r.get(pct_col))
+            if p is not None and 0 < p <= 100:
+                return p
+        dv = _num(r.get(del_col)) if del_col else None
+        tv = _num(r.get(vol_col)) if vol_col else None
+        if dv is None or not tv:
+            return None
+        p = dv / tv * 100
+        return p if 0 < p <= 100 else None
+
+    row = work.iloc[0]
+    pct = pct_of(row)
+    if pct is None:
+        return None
+    prev_pct = pct_of(work.iloc[1] if len(work) > 1 else None)
+    dv = _num(row.get(del_col)) if del_col else None
+    tv = _num(row.get(vol_col)) if vol_col else None
+    return DeliveryData(
+        ticker=ticker,
+        delivery_pct=round(pct, 2),
+        delivery_volume=int(dv or 0),
+        total_volume=int(tv or 0),
+        delivery_change_pct=round(pct - prev_pct, 2) if prev_pct is not None else 0.0,
+        is_high_delivery=pct > 60.0,
+        cached=False,
+    )
 
 
 def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
@@ -54,7 +132,6 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
         return DeliveryData(**cached, cached=True)
 
     try:
-        # Fetch price volume and deliverable position data
         from datetime import date, timedelta
 
         from nselib import capital_market
@@ -67,62 +144,15 @@ def fetch_delivery_data(ticker: str, days: int = 5) -> DeliveryData | None:
             from_date=start.strftime("%d-%m-%Y"),
             to_date=end.strftime("%d-%m-%Y"),
         )
-
-        if df is None or df.empty:
+        result = _delivery_from_df(df, ticker)
+        if result is None:
+            logger.info("No usable delivery data for %s", ticker)
             return None
-
-        # Find deliverable columns
-        delivery_col = None
-        volume_col = None
-        for col in df.columns:
-            cl = col.lower().strip()
-            if "deliverable" in cl or "delivery" in cl:
-                delivery_col = col
-            elif "quantity" in cl or "volume" in cl or "traded" in cl:
-                volume_col = col
-
-        if not delivery_col or not volume_col:
-            return None
-
-        # Get latest data
-        df = df.sort_index(ascending=False)  # Most recent first
-        latest = df.iloc[0]
-
-        delivery_vol = int(latest.get(delivery_col, 0) or 0)
-        total_vol = int(latest.get(volume_col, 0) or 0)
-
-        if total_vol == 0:
-            return None
-
-        delivery_pct = (delivery_vol / total_vol) * 100
-
-        # Calculate change vs previous day
-        if len(df) >= 2:
-            prev = df.iloc[1]
-            prev_delivery = int(prev.get(delivery_col, 0) or 0)
-            prev_total = int(prev.get(volume_col, 0) or 0)
-            if prev_total > 0:
-                prev_pct = (prev_delivery / prev_total) * 100
-                delivery_change = delivery_pct - prev_pct
-            else:
-                delivery_change = 0.0
-        else:
-            delivery_change = 0.0
-
-        result = DeliveryData(
-            ticker=ticker,
-            delivery_pct=round(delivery_pct, 2),
-            delivery_volume=delivery_vol,
-            total_volume=total_vol,
-            delivery_change_pct=round(delivery_change, 2),
-            is_high_delivery=delivery_pct > 60.0,
-            cached=False,
-        )
 
         _INDIA_CACHE.set(
             cache_k,
             {
-                "ticker": ticker,
+                "ticker": result.ticker,
                 "delivery_pct": result.delivery_pct,
                 "delivery_volume": result.delivery_volume,
                 "total_volume": result.total_volume,
@@ -173,31 +203,46 @@ def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
         return FIIDIIActivity(**cached, cached=True)
 
     try:
-        from nselib import derivatives_market
+        # nselib 2.5.x dropped the old derivatives_market.fii_dii_data() —
+        # go straight to the NSE endpoint (returns the latest day only).
+        import requests
 
-        # Fetch FII/DII data
-        df = derivatives_market.fii_dii_data()
-
-        if df is None or df.empty:
+        resp = requests.get(
+            "https://www.nseindia.com/api/fiidiiTradeReact",
+            headers=_NSE_HEADERS,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list):
+            return None
+        by_cat = {
+            str(r.get("category", "")).upper().strip(): r
+            for r in data
+            if isinstance(r, dict)
+        }
+        # NSE labels the row "FII/FPI" these days; older payloads used "FII".
+        fii_rec = next(
+            (r for k, r in by_cat.items() if k.startswith("FII") or k == "FPI"),
+            None,
+        )
+        dii_rec = by_cat.get("DII")
+        if not fii_rec or not dii_rec:
             return None
 
-        # Sort by date descending
-        if "Date" in df.columns:
-            df = df.sort_values("Date", ascending=False)
+        def _val(rec: dict, key: str) -> float:
+            try:
+                return float(rec.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0.0
 
-        latest = df.iloc[0]
-
-        # Extract FII data
-        fii_buy = float(latest.get("FII Buy", latest.get("FII_Buy", 0)) or 0)
-        fii_sell = float(latest.get("FII Sell", latest.get("FII_Sell", 0)) or 0)
-        fii_net = fii_buy - fii_sell
-
-        # Extract DII data
-        dii_buy = float(latest.get("DII Buy", latest.get("DII_Buy", 0)) or 0)
-        dii_sell = float(latest.get("DII Sell", latest.get("DII_Sell", 0)) or 0)
-        dii_net = dii_buy - dii_sell
-
-        date_str = str(latest.get("Date", ""))
+        fii_buy = _val(fii_rec, "buyValue")
+        fii_sell = _val(fii_rec, "sellValue")
+        dii_buy = _val(dii_rec, "buyValue")
+        dii_sell = _val(dii_rec, "sellValue")
+        fii_net = round(fii_buy - fii_sell, 2)
+        dii_net = round(dii_buy - dii_sell, 2)
+        date_str = str(fii_rec.get("date", ""))
 
         result = FIIDIIActivity(
             date=date_str,
@@ -376,3 +421,104 @@ def fetch_indian_market_data(ticker: str) -> dict:
         "week52": week52,
         "source": "+".join(sources) if sources else "none",
     }
+
+
+# ponytail: near-zero nets make % explode — floor the denominator
+_PCT_CHANGE_FLOOR = 10_000
+
+
+def _pct_change(now: float, then: float, floor: float = _PCT_CHANGE_FLOOR) -> float:
+    """Signed % change of a net position; |baseline| floored against noise."""
+    base = abs(then) if abs(then) >= floor else floor
+    return round((now - then) / base * 100, 2)
+
+
+# ── Cash-flow history (moneycontrol) ─────────────────
+# NSE's fiidiiTradeReact endpoint only returns today. Moneycontrol's
+# __NEXT_DATA__ payload carries the same fiiCM/diiCM cash numbers for the
+# last 60 sessions in one GET (no form).
+
+_FLOW_CACHE: TTLCache[list] = TTLCache(ttl=12 * 3600, namespace="mc_fiidii")
+_FLOW_URL = "https://www.moneycontrol.com/markets/fii-dii-data/"
+
+
+def fetch_fii_dii_history(limit: int = 60, cache_only: bool = False) -> list | None:
+    """
+    Daily FII/DII cash-market net flows (₹ Cr), newest first.
+
+    Returns [{"date": "2026-09-25", "fii": -3693.93, "dii": 2838.17}, ...]
+    or None when the page/parse fails. ``cache_only=True`` skips the network.
+    """
+    cache_k = hashlib.md5(b"fii_dii:history", usedforsecurity=False).hexdigest()
+    cached = _FLOW_CACHE.get(cache_k)
+    if cached:
+        return cached
+    if cache_only:
+        return None
+
+    try:
+        import requests
+
+        resp = requests.get(
+            _FLOW_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=15
+        )
+        resp.raise_for_status()
+        m = re.search(
+            r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL
+        )
+        if not m:
+            return None
+        rows = (
+            json.loads(m.group(1))
+            .get("props", {})
+            .get("pageProps", {})
+            .get("FiiDiiData", {})
+            .get("fiiDiiData")
+        )
+        if not isinstance(rows, list):
+            return None
+
+        out = [
+            {
+                "date": str(r.get("date", "")),
+                "fii": _num(r.get("fiiCM")) or 0.0,
+                "dii": _num(r.get("diiCM")) or 0.0,
+            }
+            for r in rows
+            if isinstance(r, dict)
+        ]
+        if len(out) < 2:
+            return None
+        out = out[:limit]
+        _FLOW_CACHE.set(cache_k, out)
+        return out
+    except Exception as e:
+        logger.info("Moneycontrol FII/DII history fetch failed: %s", e)
+        return None
+
+
+def flow_window_pcts(
+    history: list, key: str, total_n: int = 20, recent_n: int = 5, floor: float = 100.0
+) -> tuple[float | None, float | None]:
+    """(total, recent) % change of window *sums* over newest-first history.
+
+    total = last total_n vs prior total_n sessions, recent likewise.
+    Returns (None, None) until enough history exists; floor keeps the
+    denominator sane when a window sum hovers near zero. The total window
+    shrinks to half the history when fewer than 2×total_n rows are served
+    (moneycontrol hands out ~30 sessions).
+    """
+    if not history:
+        return None, None
+    # min() guarantees 2*total_n <= len(history) — the window always exists.
+    total_n = min(total_n, len(history) // 2)
+    now = sum(r[key] for r in history[:total_n])
+    then = sum(r[key] for r in history[total_n : 2 * total_n])
+    total = _pct_change(now, then, floor=floor)
+    if len(history) < 2 * recent_n:
+        recent = None
+    else:
+        now = sum(r[key] for r in history[:recent_n])
+        then = sum(r[key] for r in history[recent_n : 2 * recent_n])
+        recent = _pct_change(now, then, floor=floor)
+    return total, recent

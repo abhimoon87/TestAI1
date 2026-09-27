@@ -509,3 +509,60 @@ class TestGetCombinedRating:
         assert _get_combined_rating(60, False, False, False) == "GOOD"
         assert _get_combined_rating(45, False, False, False) == "MODERATE"
         assert _get_combined_rating(30, False, False, False) == "POOR"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _score_institutional — bounded flow bonus from enrichment keys
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestScoreInstitutional:
+    def test_without_enrichment_is_zero(self):
+        assert scoring._score_institutional(None) == 0.0
+        assert scoring._score_institutional({}) == 0.0
+
+    def test_full_bonus_caps_at_three(self):
+        s = {
+            "_fii_is_buying": True,
+            "_dii_is_buying": True,
+            "_delivery_pct": 60.0,
+            "_sentiment_score": 0.5,
+            "_insider_score": 0.4,
+        }
+        assert scoring._score_institutional(s) == 3.0
+
+    def test_both_flows_selling_penalized(self):
+        assert (
+            scoring._score_institutional(
+                {"_fii_is_buying": False, "_dii_is_buying": False}
+            )
+            == -1.0
+        )
+
+    def test_single_positive_flow_partial(self):
+        assert scoring._score_institutional({"_fii_is_buying": True}) == 1.0
+        assert scoring._score_institutional({"_dii_is_buying": True}) == 0.5
+
+    def test_garbage_values_do_not_raise(self):
+        s = {"_delivery_pct": "abc", "_sentiment_score": None, "_insider_score": "x"}
+        assert scoring._score_institutional(s) == 0.0
+
+    def test_plain_settings_scores_zero_bonus(self, synthetic_ohlcv):
+        plain = compute_scores(synthetic_ohlcv, timeframe="D")
+        assert plain["institutional"] == 0.0
+
+    def test_enrichment_moves_total_by_the_bonus(self, synthetic_ohlcv):
+        plain = compute_scores(synthetic_ohlcv, timeframe="D")
+        enriched = compute_scores(
+            synthetic_ohlcv,
+            timeframe="D",
+            settings={
+                "_fii_is_buying": True,
+                "_dii_is_buying": True,
+                "_delivery_pct": 60,
+                "_sentiment_score": 0.5,
+            },
+        )
+        assert enriched["institutional"] == 2.5  # 1 + .5 + .5 + .5
+        expected = round(min(100.0, plain["total"] + 2.5), 1)
+        assert enriched["total"] == expected

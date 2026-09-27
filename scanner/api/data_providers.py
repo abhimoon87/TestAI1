@@ -18,6 +18,7 @@ All providers normalize data to a common DataFrame format:
 
 import glob
 import hashlib
+import io
 import json
 import logging
 import os
@@ -27,6 +28,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+
+from ..shared import db
 
 logger = logging.getLogger(__name__)
 
@@ -82,16 +85,14 @@ PRUNE_INTERVAL_SECONDS = 3600  # at most one stale-cache sweep per process per h
 
 
 def prune_stale_cache(force: bool = False) -> int:
-    """Delete cache entries from earlier days -- unreachable dead weight.
+    """Delete expired cache rows (and dormant pre-migration files).
 
-    The cache key embeds ``date.today()`` (see ``_cache_key``), so an entry
-    written on any previous day can never be read again -- but one file per
-    (ticker, period, provider, day) stays on disk forever unless pruned.
+    The db half sweeps ``price_cache`` rows past their expiry; the file half
+    removes stale parquet/meta pairs left by the pre-sqlite cache dir.
     Sweeping is rate-limited per process (``PRUNE_INTERVAL_SECONDS``) so scan
-    starts stay cheap; only non-today files are ever deleted, so a sweep can
-    not race a concurrent writer or reader (both use today's key).
+    starts stay cheap.
 
-    Returns the number of stale (pkl, meta) pairs removed.
+    Returns the number of expired rows + stale (pkl, meta) pairs removed.
     """
     global _last_prune_ts
     now = time.time()
@@ -100,8 +101,17 @@ def prune_stale_cache(force: bool = False) -> int:
             return 0
         _last_prune_ts = now
 
-    today = date.today().isoformat()
     removed = 0
+    try:
+        removed += (
+            db.get_conn()
+            .execute("DELETE FROM price_cache WHERE expires <= ?", (now,))
+            .rowcount
+        )
+    except Exception as e:
+        logger.info("Stale price-cache prune failed: %s", e)
+
+    today = date.today().isoformat()
     try:
         for meta in glob.glob(os.path.join(CACHE_DIR, "*.meta")):
             try:
@@ -142,28 +152,28 @@ def prune_stale_cache(force: bool = False) -> int:
 
 
 def cache_health() -> dict:
-    """Price-cache census: fresh vs stale pkl+meta pairs on disk.
+    """Price-cache census: live vs expired rows in the db.
 
     Returns ``{price_entries, stale_entries, last_prune}`` where
-    ``price_entries`` is the TOTAL pair count on disk (today's reachable
-    entries plus every other day's unreachable leftovers) and
-    ``stale_entries`` is the unreachable subset.  ``last_prune`` is an ISO
-    timestamp of the last ``prune_stale_cache`` sweep in this process (""
-    when never pruned).
+    ``price_entries`` is the TOTAL row count and ``stale_entries`` is the
+    expired-but-not-yet-pruned subset.  ``last_prune`` is an ISO timestamp
+    of the last ``prune_stale_cache`` sweep in this process ("" when never
+    pruned).
     """
     fresh = stale = 0
-    today = date.today().isoformat()
     try:
-        for meta in glob.glob(os.path.join(CACHE_DIR, "*.meta")):
-            try:
-                with open(meta) as f:
-                    ts = json.load(f).get("timestamp", "")
-            except Exception:
-                continue
-            if ts[:10] == today:
-                fresh += 1
-            else:
-                stale += 1
+        row = (
+            db.get_conn()
+            .execute(
+                "SELECT COUNT(*) AS n,"
+                " COALESCE(SUM(CASE WHEN expires <= ? THEN 1 ELSE 0 END), 0) AS s"
+                " FROM price_cache",
+                (time.time(),),
+            )
+            .fetchone()
+        )
+        fresh = int(row["n"]) - int(row["s"])
+        stale = int(row["s"])
     except Exception as e:
         logger.info("cache_health census failed: %s", e)
     with _PRUNE_LOCK:
@@ -178,10 +188,6 @@ def cache_health() -> dict:
         "stale_entries": stale,
         "last_prune": last_prune,
     }
-
-
-def _ensure_cache_dir():
-    os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 def _cache_key(ticker: str, period: str, provider: str) -> str:
@@ -207,8 +213,8 @@ def _legacy_cache_key(ticker: str, period: str, provider: str) -> str:
 
 def _read_cache_pair(
     cache_file: str, meta_file: str, ticker: str
-) -> pd.DataFrame | None:
-    """Return the frame if the pkl+meta pair exists and is fresh."""
+) -> tuple[pd.DataFrame, datetime] | None:
+    """(frame, cached timestamp) when the pkl+meta pair exists and is fresh."""
     if not os.path.exists(cache_file) or not os.path.exists(meta_file):
         return None
     try:
@@ -220,10 +226,65 @@ def _read_cache_pair(
         if age_hours > CACHE_TTL_HOURS:
             return None
 
-        return _normalize_cache_frame(pd.read_parquet(cache_file))
+        return _normalize_cache_frame(pd.read_parquet(cache_file)), cached_time
     except Exception as e:
         logger.info("Cache read failed for %s: %s", ticker, e)
         return None
+
+
+def _read_price_row(key: str, ticker: str) -> pd.DataFrame | None:
+    """Return the frame from the db if the BLOB row is still fresh."""
+    row = (
+        db.get_conn()
+        .execute("SELECT payload, expires FROM price_cache WHERE cache_key = ?", (key,))
+        .fetchone()
+    )
+    if row is None or time.time() >= row["expires"]:
+        return None
+    try:
+        return _normalize_cache_frame(pd.read_parquet(io.BytesIO(row["payload"])))
+    except Exception as e:
+        logger.info("Cache read failed for %s: %s", ticker, e)
+        return None
+
+
+def _import_price_pair(key: str, ticker: str) -> pd.DataFrame | None:
+    """Fold a pre-migration parquet+meta file pair into the db (once).
+
+    Returns the frame when the pair exists and is fresh (so caches written
+    before the sqlite migration keep serving until they age out).
+    """
+    cache_file = os.path.join(CACHE_DIR, f"{key}.parquet")
+    meta_file = os.path.join(CACHE_DIR, f"{key}.meta")
+    hit = _read_cache_pair(cache_file, meta_file, ticker)
+    if hit is None:
+        return None
+    df, cached_time = hit
+    expires = cached_time.timestamp() + CACHE_TTL_HOURS * 3600
+    try:
+        _store_price_row(key, df, expires)
+    except Exception:
+        logger.debug("Cache import failed for %s", ticker, exc_info=True)
+    return df
+
+
+def _store_price_row(key: str, df: pd.DataFrame, expires: float) -> None:
+    """Serialize the frame as parquet bytes and upsert the db row."""
+    buf = io.BytesIO()
+    try:
+        df.to_parquet(buf, index=True)
+    except Exception:
+        import pyarrow as _pa
+        import pyarrow.parquet as _pq
+
+        table = _pa.Table.from_pandas(df.reset_index(drop=False), preserve_index=True)
+        _pq.write_table(table, buf)
+    db.get_conn().execute(
+        "INSERT INTO price_cache (cache_key, payload, expires) VALUES (?, ?, ?)"
+        " ON CONFLICT (cache_key)"
+        " DO UPDATE SET payload = excluded.payload, expires = excluded.expires",
+        (key, buf.getvalue(), expires),
+    )
 
 
 def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
@@ -233,58 +294,28 @@ def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
     legacy day-keyed entry so caches written by older versions keep working
     until they age out and are pruned.
     """
-    _ensure_cache_dir()
     key = _cache_key(ticker, period, provider)
-    hit = _read_cache_pair(
-        os.path.join(CACHE_DIR, f"{key}.parquet"),
-        os.path.join(CACHE_DIR, f"{key}.meta"),
-        ticker,
-    )
-    if hit is not None:
-        return hit
     legacy = _legacy_cache_key(ticker, period, provider)
-    if legacy != key:
-        return _read_cache_pair(
-            os.path.join(CACHE_DIR, f"{legacy}.parquet"),
-            os.path.join(CACHE_DIR, f"{legacy}.meta"),
-            ticker,
-        )
+    for k in (key, legacy):
+        hit = _read_price_row(k, ticker)
+        if hit is not None:
+            return hit
+    # db miss → import a legacy file pair (pre-sqlite cache) once
+    for k in (key, legacy):
+        hit = _import_price_pair(k, ticker)
+        if hit is not None:
+            return hit
     return None
 
 
 def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
-    """Store data in cache (atomic: tmp files + os.replace)."""
-    _ensure_cache_dir()
+    """Store data in the price cache (db BLOB with a CACHE_TTL_HOURS expiry)."""
     key = _cache_key(ticker, period, provider)
-    cache_file = os.path.join(CACHE_DIR, f"{key}.parquet")
-    meta_file = os.path.join(CACHE_DIR, f"{key}.meta")
-
     with _CACHE_WRITE_LOCK:
         try:
             df = _normalize_cache_frame(df)
-            tmp_pkl = cache_file + ".tmp"
-            tmp_meta = meta_file + ".tmp"
-            try:
-                df.to_parquet(tmp_pkl, index=True)
-            except Exception:
-                import pyarrow as _pa
-                import pyarrow.parquet as _pq
-
-                table = _pa.Table.from_pandas(
-                    df.reset_index(drop=False), preserve_index=True
-                )
-                _pq.write_table(table, tmp_pkl)
-            with open(tmp_meta, "w") as f:
-                json.dump({"timestamp": datetime.now().isoformat(), "rows": len(df)}, f)
-            os.replace(tmp_pkl, cache_file)
-            os.replace(tmp_meta, meta_file)
+            _store_price_row(key, df, time.time() + CACHE_TTL_HOURS * 3600)
         except Exception as e:
-            for tmp in (cache_file + ".tmp", meta_file + ".tmp"):
-                try:
-                    if os.path.exists(tmp):
-                        os.remove(tmp)
-                except OSError:
-                    logger.debug("Temp file cleanup failed: %s", tmp, exc_info=True)
             logger.debug("Cache write failed for %s: %s", ticker, e)
 
 
@@ -941,11 +972,3 @@ class DataProvider:
                 continue
 
         return None
-
-    def clear_cache(self):
-        """Clear all cached data."""
-        import shutil
-
-        if os.path.exists(CACHE_DIR):
-            shutil.rmtree(CACHE_DIR)
-            _ensure_cache_dir()

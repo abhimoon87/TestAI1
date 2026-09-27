@@ -1570,3 +1570,53 @@ class TestRestoreMainArea:
         # Dashboard content stays the live Column inside the fill wrapper.
         assert app.dashboard_view.content is app.dashboard_content
         assert app.dashboard_content.expand is True
+
+
+class TestRowClickRouting:
+    """Whole row opens detail; only the sentiment badge keeps news."""
+
+    def test_body_click_detail_badge_click_news(self):
+        app = _make_app()
+        c = app.theme_colors
+        row = app._create_row_controls(
+            _row(ticker="TCS", _article_count=3, _sentiment_score=0.5),
+            1,
+            c,
+            c["card"],
+            50,
+        )
+        details, news = [], []
+        app._show_stock_detail = lambda t: details.append(t)
+        app._toggle_stock_news = lambda t: news.append(t)
+
+        # Ticker cell carries no handler; the click bubbles to the row.
+        assert row.content.controls[1].on_click is None
+        row.on_click(None)
+        assert details == ["TCS"]
+
+        # Badge pill (inside the ticker cell) is the only news target.
+        badge = row.content.controls[1].content.controls[1]
+        badge.on_click(None)
+        assert news == ["TCS"]
+
+        assert row.tooltip == "Click for detail view"
+        # Sparkline cell keeps its detail shortcut too.
+        row.content.controls[-1].on_click(None)
+        assert details == ["TCS", "TCS"]
+
+
+class TestInstFilterCheckboxLayout:
+    """The FII/DII checkbox sits beside Scan Results in the section header."""
+
+    def test_checkbox_beside_scan_results(self):
+        app = _make_app()
+        app._build_ui()
+        cb = app.inst_filter_cb
+        assert cb.label == "Show stocks with FII/DII data"
+        controls = app.section_header.content.controls
+        idx_cb = controls.index(cb)
+        titles = [
+            c for c in controls if isinstance(c, ft.Text) and c.value == "Scan Results"
+        ]
+        assert titles and controls.index(titles[0]) < idx_cb
+        assert cb.on_change is not None

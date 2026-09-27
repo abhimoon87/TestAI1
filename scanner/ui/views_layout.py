@@ -628,6 +628,13 @@ class LayoutViewMixin:
         self.scan_inline_label = ft.Text(
             "", size=11, weight=ft.FontWeight.BOLD, color=c["green"], visible=False
         )
+        self.inst_filter_cb = ft.Checkbox(
+            label="Show stocks with FII/DII data",
+            value=False,
+            label_style=ft.TextStyle(size=11, color=c["text_dim"]),
+            tooltip="Only rows carrying per-stock FII/DII data (NSE activity or screener shareholding)",
+            on_change=self._on_inst_filter_change,
+        )
         self.filter_chips_row = ft.Row(
             [], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER
         )
@@ -640,6 +647,8 @@ class LayoutViewMixin:
                         weight=ft.FontWeight.BOLD,
                         color=c["text"],
                     ),
+                    ft.Container(width=10),
+                    self.inst_filter_cb,
                     ft.Container(width=10),
                     self.filter_chips_row,
                     ft.Container(expand=True),

@@ -844,6 +844,41 @@ def _score_fundamentals_dict(fund: dict | None) -> tuple[float, dict]:
     return min(fund_score, 20.0), fund_detail
 
 
+def _score_institutional(settings: dict | None) -> float:
+    """Flow bonus/penalty (−1..+3 pts) from enrichment keys on ``settings``.
+
+    The live scorer passes the enriched settings dict (``_fii_is_buying``,
+    ``_delivery_pct``, …) while the backtest passes plain defaults → 0.0, so
+    scorer parity is preserved. Bounded outside the 100-pt category budget
+    so no category has to be re-weighted.
+    """
+    if not settings:
+        return 0.0
+
+    def _gte(key: str, thresh: float) -> bool:
+        try:
+            return float(settings.get(key) or 0) >= thresh
+        except (TypeError, ValueError):
+            return False
+
+    s = 0.0
+    fii = settings.get("_fii_is_buying")
+    dii = settings.get("_dii_is_buying")
+    if fii:
+        s += 1.0
+    if dii:
+        s += 0.5
+    if fii is False and dii is False:
+        s -= 1.0
+    if _gte("_delivery_pct", 55):
+        s += 0.5
+    if _gte("_sentiment_score", 0.3):
+        s += 0.5
+    if _gte("_insider_score", 0.3):
+        s += 0.5
+    return max(-1.0, min(s, 3.0))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SHARED SCORING ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
@@ -858,12 +893,12 @@ def score_bar(
     fund: dict | None = None,
     settings: dict | None = None,
 ) -> dict:
-    """Compute all 10 category scores for a single bar.
+    """Compute the category scores for a single bar.
 
     This is the **single source of truth** for per-bar scoring logic.
     Both the live scorer (``compute_scores``) and the backtest scorer
-    (``compute_score_at_bar``) delegate here so the 10 ``_score_*``
-    functions are called exactly once per invocation.
+    (``compute_score_at_bar``) delegate here so each ``_score_*``
+    function is called exactly once per invocation.
 
     Args:
         curr: Flat dict of indicator values at this bar (the same format
@@ -881,7 +916,8 @@ def score_bar(
         fund: Fundamentals dict (backtest) or None (live extracts from df).
 
     Returns:
-        Dict with ``total`` and all 10 category scores rounded to 1 decimal.
+        Dict with ``total``, the 10 category scores and the
+        ``institutional`` bonus, rounded to 1 decimal.
     """
     close_to_bar = close.iloc[: bar_idx + 1]
 
@@ -901,6 +937,7 @@ def score_bar(
     )
     volat_score, atr_pct, volat_stat = _score_volatility(curr)
     fund_score, fund_detail = _score_fundamentals_dict(fund)
+    inst_score = _score_institutional(settings)
 
     total = (
         trend_score
@@ -913,6 +950,7 @@ def score_bar(
         + rs_score
         + volat_score
         + fund_score
+        + inst_score
     )
 
     # ── Counter-signal penalty (high-probability mode) ───────────────────
@@ -973,6 +1011,7 @@ def score_bar(
         "rel_str": round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
+        "institutional": round(inst_score, 1),
         "atr_pct": round(atr_pct, 2),
         "volat_stat": volat_stat,
         "fund_detail": fund_detail,
@@ -1153,6 +1192,7 @@ def compute_scores(
         "rel_str": round(rs_score, 1),
         "volatility": round(volat_score, 1),
         "fundamentals": round(fund_score, 1),
+        "institutional": round(scores["institutional"], 1),
         # Key signals
         "ma_bullish": curr["ma_bullish"],
         "close_above_both_ma": curr["close_above_both_ma"],

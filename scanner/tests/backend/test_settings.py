@@ -56,8 +56,8 @@ def test_ttl_loaded_from_corrupt_file_falls_back_to_default(tmp_path, monkeypatc
     assert s["negative_cache_ttl_hours"] == 24
 
 
-def test_ttl_survives_raw_file_write(tmp_path, monkeypatch):
-    """The TTL is persisted verbatim in the JSON on disk."""
+def test_ttl_persists_verbatim_in_db(tmp_path, monkeypatch):
+    """The TTL is persisted verbatim in the settings row."""
     settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
 
@@ -65,8 +65,10 @@ def test_ttl_survives_raw_file_write(tmp_path, monkeypatch):
     s["negative_cache_ttl_hours"] = 3
     store_mod.save_settings(s)
 
-    with open(settings_file, encoding="utf-8") as f:
-        raw = json.load(f)
+    from scanner.shared import db
+
+    row = db.get_conn().execute("SELECT value FROM settings WHERE id = 1").fetchone()
+    raw = json.loads(row["value"])
     assert raw["negative_cache_ttl_hours"] == 3
 
 
@@ -153,3 +155,50 @@ def test_results_numpy_scalars_serialized(tmp_path, monkeypatch):
     assert loaded[0]["ma_bullish"] is True
     assert loaded[0]["close"] == 123.45
     assert loaded[0]["total"] == 70.0
+
+
+# ── Scan history (every save_results run is kept) ─────────────────────────────
+
+
+def test_scan_history_keeps_previous_scans(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "out.json"))
+    rows1 = [{"ticker": "OLD", "total": 55.0}]
+    rows2 = [{"ticker": "NEW", "total": 61.0}, {"ticker": "NEW2", "total": 60.0}]
+    store_mod.save_results(rows1)
+    store_mod.save_results(rows2)
+
+    assert store_mod.load_results() == rows2  # latest scan wins
+
+    from scanner.shared import db
+
+    scans = db.get_conn().execute("SELECT id FROM scans ORDER BY id").fetchall()
+    assert len(scans) == 2
+    old = [
+        json.loads(r["row"])["ticker"]
+        for r in db.get_conn().execute(
+            "SELECT row FROM scan_rows WHERE scan_id = ? ORDER BY rank",
+            (scans[0]["id"],),
+        )
+    ]
+    assert old == ["OLD"]  # older scan still queryable
+
+
+def test_save_results_empty_clears_history_view(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "out.json"))
+    store_mod.save_results([{"ticker": "X"}])
+    store_mod.save_results([])
+    assert store_mod.load_results() == []  # cleared, not resurrected
+
+
+def test_history_capped_at_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "out.json"))
+    for i in range(store_mod.SCAN_HISTORY_LIMIT + 5):
+        store_mod.save_results([{"ticker": f"T{i}"}])
+
+    from scanner.shared import db
+
+    n = db.get_conn().execute("SELECT COUNT(*) FROM scans").fetchone()[0]
+    assert n == store_mod.SCAN_HISTORY_LIMIT
+    assert (
+        store_mod.load_results()[0]["ticker"] == f"T{store_mod.SCAN_HISTORY_LIMIT + 4}"
+    )

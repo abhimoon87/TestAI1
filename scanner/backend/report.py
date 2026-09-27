@@ -9,6 +9,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
+from ..shared.detail_specs import SCORE_CATS, fmt_pct, signal_specs
+
 logger = logging.getLogger(__name__)
 
 
@@ -459,6 +461,28 @@ def _css_block() -> str:
         margin-right: 4px;
     }
 
+    /* ─── Stock detail (mirrors the app's detail panel) ─── */
+    .detail-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; margin-bottom: 6px; }
+    .detail-title { color: var(--cyan); font-weight: 700; font-size: 0.85em; margin: 10px 0 6px; }
+    .chart-box { position: relative; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+    .chart-hi, .chart-lo { position: absolute; right: 10px; font-size: 0.7em; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+    .chart-hi { top: 6px; }
+    .chart-lo { bottom: 6px; }
+    .signals { display: flex; flex-wrap: wrap; gap: 6px; }
+    .signal { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; min-width: 64px; }
+    .signal-label { display: block; font-size: 0.65em; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+    .signal-val { font-weight: 700; font-size: 0.95em; color: var(--text); }
+    .bd-row { display: grid; grid-template-columns: 86px minmax(0,1fr) 52px; gap: 8px; align-items: center; font-size: 0.78em; color: var(--text-dim); margin-bottom: 5px; }
+    .bd-track { height: 8px; background: var(--track); border-radius: 99px; overflow: hidden; }
+    .bd-fill { display: block; height: 100%; border-radius: 99px; }
+    .bd-val { text-align: right; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+    .inst-tiles { display: flex; flex-wrap: wrap; gap: 6px; }
+    .inst-tile { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+    .inst-label { display: block; font-size: 0.65em; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+    .inst-val { font-weight: 700; color: var(--text); }
+    .inst-sub { display: block; font-size: 0.7em; }
+    .inst-hint { font-size: 0.7em; color: var(--text-faint); margin-top: 4px; }
+
     /* ─── Score histogram ─────────────────────────────── */
     .histogram { display: flex; gap: 12px; align-items: stretch; height: 110px; background: var(--surface); border: 1px solid var(--border); padding: 10px 16px; border-radius: var(--radius); margin-bottom: 18px; }
     .hist-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; width: 72px; }
@@ -835,10 +859,127 @@ def _trade_reasons_html(r: dict) -> str:
             </div>"""
 
 
+# Report palette for shared signal-spec color roles ("" = inherit text).
+_ROLE_CSS = {
+    "green": "var(--green)",
+    "lime": "var(--lime)",
+    "red": "var(--red)",
+    "orange": "var(--orange)",
+    "text": "",
+}
+
+
+def _key_signals_html(r: dict) -> str:
+    """Signal chips — shared specs, report palette."""
+    out = ""
+    for label, value, role in signal_specs(r):
+        css = _ROLE_CSS[role]
+        style = f' style="color:{css}"' if css else ""
+        out += (
+            f'<div class="signal"><span class="signal-label">{label}</span>'
+            f'<span class="signal-val"{style}>{_html.escape(value)}</span></div>'
+        )
+    return out
+
+
+def _breakdown_html(r: dict) -> str:
+    """10 category bars — shared SCORE_CATS with the app's breakdown."""
+    rows = ""
+    for label, key, mx, _role, css in SCORE_CATS:
+        score = float(r.get(key) or 0)
+        pct = min(score / mx, 1.0) * 100 if mx else 0.0
+        rows += (
+            f'<div class="bd-row"><span>{label}</span>'
+            f'<span class="bd-track"><span class="bd-fill" '
+            f'style="width:{pct:.0f}%;background:{css}"></span></span>'
+            f'<span class="bd-val">{score:g}/{mx}</span></div>'
+        )
+    return f'<div class="bd-list">{rows}</div>'
+
+
+def _institutional_html(r: dict) -> str:
+    """Per-stock shareholding tiles (FII/DII/Promoters); '' when not enriched."""
+    shp = r.get("_shareholding") or {}
+    series = shp.get("series") or {}
+    tiles = ""
+    for label, key in (
+        ("FII", "foreign_institutions"),
+        ("DII", "domestic_institutions"),
+        ("Promoters", "promoters"),
+    ):
+        e = series.get(key)
+        if not e:
+            continue
+        total = e.get("total")
+        if total is None:
+            sub = (
+                '<span class="inst-sub" style="color:var(--text-dim)">no history</span>'
+            )
+        elif total == 0:
+            sub = (
+                '<span class="inst-sub" style="color:var(--text-dim)">No change</span>'
+            )
+        else:
+            color = "var(--green)" if total > 0 else "var(--red)"
+            arrow = "▲" if total > 0 else "▼"
+            text = f"{arrow} total {fmt_pct(total)}"
+            if e.get("recent") is not None:
+                text += f" · recent {fmt_pct(e['recent'])}"
+            sub = f'<span class="inst-sub" style="color:{color}">{text}</span>'
+        tiles += (
+            f'<div class="inst-tile"><span class="inst-label">{label}</span>'
+            f'<span class="inst-val">{float(e["latest"]):.1f}%</span>{sub}</div>'
+        )
+    if not tiles and r.get("_promoter_holding") is not None:
+        tiles = (
+            '<div class="inst-tile"><span class="inst-label">Promoters</span>'
+            f'<span class="inst-val">{float(r["_promoter_holding"]):.1f}%</span></div>'
+        )
+    if not tiles:
+        return ""
+    hint = "Screener shareholding"
+    if shp.get("quarter"):
+        hint += f" · {shp['quarter']}"
+    return (
+        f'<div class="inst-tiles">{tiles}</div>'
+        f'<div class="inst-hint">{_html.escape(hint)}</div>'
+    )
+
+
+def _detail_sections_html(r: dict) -> str:
+    """Chart, key signals, score breakdown, institutional — mirrors the app."""
+    px = [v for v in (r.get("px_tail") or []) if isinstance(v, (int, float))]
+    chart = ""
+    if len(px) >= 2:
+        chart = (
+            '<div class="detail-title">Price (last 20 closes)</div>'
+            f'<div class="chart-box">{_sparkline_svg(px, 560, 170)}'
+            f'<span class="chart-hi">{max(px):.1f}</span>'
+            f'<span class="chart-lo">{min(px):.1f}</span></div>'
+        )
+    signals = (
+        '<div class="detail-title">Key Signals</div>'
+        f'<div class="signals">{_key_signals_html(r)}</div>'
+    )
+    breakdown = f'<div class="detail-title">Score Breakdown</div>{_breakdown_html(r)}'
+    inst = _institutional_html(r)
+    inst_block = (
+        '<div class="detail-title">Institutional Positioning</div>' + inst
+        if inst
+        else ""
+    )
+    return (
+        '<div class="detail-grid">'
+        f'<div class="detail-col">{chart}{signals}</div>'
+        f'<div class="detail-col">{breakdown}{inst_block}</div>'
+        "</div>"
+    )
+
+
 def _news_panel_html(
-    ticker: str, news_items: list, fetch_news: bool, reasons_html: str
+    ticker: str, news_items: list, fetch_news: bool, preamble_html: str
 ) -> str:
-    """Expandable news/reasons row for a ticker (empty when nothing)."""
+    """Expandable detail row: app-style sections + reasons + news."""
     news_rows_html = ""
     if news_items:
         good_count = sum(
@@ -894,8 +1035,8 @@ def _news_panel_html(
         news_summary_html = ""
         news_rows_html = ""
 
-    # Always build the expandable panel with trade reasons + news
-    panel_content = reasons_html
+    # Always build the expandable panel: detail sections + reasons + news
+    panel_content = preamble_html
     if news_summary_html:
         panel_content += news_summary_html
     if news_rows_html:
@@ -946,8 +1087,11 @@ def _result_row_html(
     sideways_label = "⚠ Chop" if sideways else "✓ Trend"
 
     reasons_html = _trade_reasons_html(r)
+    detail_html = _detail_sections_html(r)
     news_items = news_map.get(ticker, []) if fetch_news else []
-    news_html = _news_panel_html(ticker, news_items, fetch_news, reasons_html)
+    news_html = _news_panel_html(
+        ticker, news_items, fetch_news, detail_html + reasons_html
+    )
 
     return f"""
         <tr class="{"highlight" if score >= threshold else ""}" 

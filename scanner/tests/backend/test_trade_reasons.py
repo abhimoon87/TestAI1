@@ -61,10 +61,15 @@ def test_overbought_risk_flag():
     assert any(r.startswith("Risk: RSI") for r in reasons)
 
 
-def test_fii_string_net_does_not_raise():
-    row = {"_fii_is_buying": True, "_fii_net": "lots"}
-    reasons = build_trade_reasons(row)
-    assert reasons == ["FII net buying signal"]
+def test_market_wide_fii_markers_add_no_reason():
+    """NSE FII/DII flows are market-wide — never a per-stock reason."""
+    row = {
+        "_fii_is_buying": True,
+        "_fii_net": 3693.93,
+        "_dii_is_buying": True,
+        "_dii_net": 2838.17,
+    }
+    assert not any("FII" in r or "DII" in r for r in build_trade_reasons(row))
 
 
 def test_math_inf_trend_formats():
