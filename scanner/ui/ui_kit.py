@@ -26,6 +26,54 @@ RADIUS_MD = 10  # inputs, dropdowns, medium cards
 RADIUS_LG = 14  # cards, panels, buttons
 RADIUS_XL = 16  # hero, large shells
 
+# ── Font-size roles (named scale; ad-hoc sizes predate this) ────────
+# Used by restyled surfaces — a full sweep of every ``size=`` literal
+# is deliberate debt, not a goal.
+FS_XS = 9  # eyebrow / micro labels
+FS_SM = 10  # captions, header cells
+FS_BASE = 11  # body, table cells
+FS_MD = 12  # secondary UI
+FS_LG = 13  # primary UI
+FS_XL = 16  # card titles
+FS_2XL = 18  # detail ticker
+FS_HERO = 21  # hero headline
+
+# ── Responsive width tiers ──────────────────────────────────────────
+# Window floor is 1280 (app.py): compact = 1280–1399, standard =
+# 1400–1599, wide >= 1600. Tier *changes* drive pane + column reflow.
+TIER_WIDE = "wide"
+TIER_STANDARD = "standard"
+TIER_COMPACT = "compact"
+_WIDTH_BREAKS = ((1600, TIER_WIDE), (1400, TIER_STANDARD))
+
+
+def width_tier(w) -> str:
+    """Map a window width (px) to its layout tier; unknown → wide."""
+    try:
+        w = float(w or 1600)
+    except (TypeError, ValueError):
+        w = 1600.0
+    for cut, tier in _WIDTH_BREAKS:
+        if w >= cut:
+            return tier
+    return TIER_COMPACT
+
+
+# Columns dropped as the window narrows, in hide order (tail of
+# RESULT_COLS only — the positional row specials at indexes 0/1/3/4/6
+# must never shift, so nothing before index 11 may appear here).
+COL_HIDE_ORDER = ("Chop", "Dir", "ADX", "F/20", "RS/10", "Vol/10")
+_HIDDEN_AT_TIER = {
+    TIER_WIDE: (),
+    TIER_STANDARD: COL_HIDE_ORDER[:3],
+    TIER_COMPACT: COL_HIDE_ORDER,
+}
+
+
+def hidden_cols(tier) -> frozenset[str]:
+    """Column names hidden at ``tier`` (unknown tier → nothing hidden)."""
+    return frozenset(_HIDDEN_AT_TIER.get(tier, ()))
+
 
 def shimmer_cell(width: int = 100, height: int = 14) -> ft.Container:
     """A single shimmer skeleton block for loading placeholders."""

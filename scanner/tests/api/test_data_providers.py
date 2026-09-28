@@ -530,6 +530,181 @@ class TestPruneStaleCache:
         assert prune_stale_cache() == 0
 
 
+class TestPriceCacheRowCap:
+    """The row cap bounds price_cache growth beyond the TTL sweep.
+
+    TTL alone only removes *expired* rows, so a full-market scan's ~2.4k
+    parquet rows (~47 KB each) kept every overlapping 4h generation alive and
+    the file only ever grew. The cap keeps the newest N by expiry.
+    """
+
+    @staticmethod
+    def _seed(count, base_expiry, prefix="k"):
+        from scanner.shared import db
+
+        conn = db.get_conn()
+        for i in range(count):
+            conn.execute(
+                "INSERT INTO price_cache (cache_key, payload, expires)"
+                " VALUES (?, ?, ?)",
+                (f"{prefix}{i:05d}", b"x", base_expiry + i),
+            )
+        return count
+
+    def test_cap_trims_to_max_rows_keeping_newest(self, monkeypatch):
+        from scanner.api import data_providers
+        from scanner.shared import db
+
+        monkeypatch.setattr(data_providers, "PRICE_CACHE_MAX_ROWS", 10)
+        monkeypatch.setattr(data_providers, "_last_prune_ts", 0.0)
+        now = time.time()
+        self._seed(25, now + 3600)  # all still live
+
+        assert prune_stale_cache(force=True) == 15
+
+        rows = (
+            db.get_conn()
+            .execute("SELECT cache_key FROM price_cache ORDER BY expires DESC")
+            .fetchall()
+        )
+        assert len(rows) == 10
+        # The survivors are the 10 newest by expiry.
+        assert [r["cache_key"] for r in rows] == [
+            f"k{i:05d}" for i in range(24, 14, -1)
+        ]
+
+    def test_cap_is_a_noop_below_the_limit(self, monkeypatch):
+        from scanner.api import data_providers
+        from scanner.shared import db
+
+        monkeypatch.setattr(data_providers, "PRICE_CACHE_MAX_ROWS", 10)
+        monkeypatch.setattr(data_providers, "_last_prune_ts", 0.0)
+        self._seed(4, time.time() + 3600)
+
+        assert prune_stale_cache(force=True) == 0
+        n = db.get_conn().execute("SELECT COUNT(*) FROM price_cache").fetchone()[0]
+        assert n == 4
+
+    def test_expiry_sweep_still_runs_alongside_the_cap(self, monkeypatch):
+        """Both halves of the sweep apply: expiry delete, then the cap."""
+        from scanner.api import data_providers
+        from scanner.shared import db
+
+        monkeypatch.setattr(data_providers, "PRICE_CACHE_MAX_ROWS", 4)
+        monkeypatch.setattr(data_providers, "_last_prune_ts", 0.0)
+        now = time.time()
+        # 3 already expired, 6 live -> expiry takes 3, cap trims 6 down to 4.
+        self._seed(3, now - 7200, prefix="old")
+        self._seed(6, now + 3600, prefix="new")
+
+        removed = prune_stale_cache(force=True)
+
+        assert removed == 5  # 3 expired + 2 over the cap of 4
+        remaining = (
+            db.get_conn().execute("SELECT COUNT(*) FROM price_cache").fetchone()[0]
+        )
+        assert remaining == 4
+        # No expired row survived the sweep.
+        stale = (
+            db.get_conn()
+            .execute("SELECT COUNT(*) FROM price_cache WHERE expires <= ?", (now,))
+            .fetchone()[0]
+        )
+        assert stale == 0
+
+    def test_default_cap_covers_a_full_market_generation(self):
+        """The shipped default must not truncate a single full-market scan."""
+        from scanner.api.data_providers import PRICE_CACHE_MAX_ROWS
+
+        # A full-market scan writes ~2,400 rows; the cap needs headroom so a
+        # second concurrent scan is not evicted, but must stay well under the
+        # ~2.4k rows per 4h generation times several overlapping windows.
+        assert PRICE_CACHE_MAX_ROWS >= 2500
+        assert PRICE_CACHE_MAX_ROWS <= 20000
+
+    @staticmethod
+    def _spy_vacuum(monkeypatch, db, fail=False):
+        """Record (or fail) VACUUM statements via the shared connection.
+
+        ``sqlite3.Connection.execute`` is a read-only C attribute, so the
+        connection is wrapped in a thin proxy that the module keeps using.
+        """
+        calls = []
+        conn = db.get_conn()
+        real_execute = conn.execute
+
+        def spy(sql, *a, **kw):
+            if sql.strip().upper().startswith("VACUUM"):
+                calls.append(sql)
+                if fail:
+                    raise db.sqlite3.OperationalError("database is locked")
+            return real_execute(sql, *a, **kw)
+
+        class _Proxy:
+            def execute(self, sql, *a, **kw):
+                return spy(sql, *a, **kw)
+
+            def __getattr__(self, name):
+                return getattr(conn, name)
+
+        monkeypatch.setattr(db, "get_conn", lambda *a, **kw: _Proxy())
+        return calls
+
+    def test_vacuum_is_skipped_below_the_slack_gate(self, monkeypatch):
+        """A prune that frees little must not rewrite the whole db file.
+
+        VACUUM is the only thing that returns space to the OS here, but it
+        rewrites every page — so it is gated on real slack.
+        """
+        from scanner.api import data_providers
+        from scanner.shared import db
+
+        monkeypatch.setattr(data_providers, "PRICE_CACHE_MAX_ROWS", 10)
+        monkeypatch.setattr(data_providers, "_last_prune_ts", 0.0)
+        # Gate far above any slack a small test db can accumulate.
+        monkeypatch.setattr(data_providers, "VACUUM_SLACK_MB", 1e9)
+        self._seed(20, time.time() + 3600)
+        calls = self._spy_vacuum(monkeypatch, db)
+
+        prune_stale_cache(force=True)
+
+        assert calls == [], "VACUUM must not run below the slack gate"
+
+    def test_vacuum_runs_when_slack_exceeds_the_gate(self, monkeypatch):
+        """Once enough pages are free, the prune reclaims them."""
+        from scanner.api import data_providers
+        from scanner.shared import db
+
+        monkeypatch.setattr(data_providers, "PRICE_CACHE_MAX_ROWS", 10)
+        monkeypatch.setattr(data_providers, "_last_prune_ts", 0.0)
+        # Zero gate so any real slack triggers the reclaim path.
+        monkeypatch.setattr(data_providers, "VACUUM_SLACK_MB", 0.0)
+        self._seed(400, time.time() + 3600)
+        calls = self._spy_vacuum(monkeypatch, db)
+
+        prune_stale_cache(force=True)
+
+        assert len(calls) == 1, "expected exactly one VACUUM after a big trim"
+        n = db.get_conn().execute("SELECT COUNT(*) FROM price_cache").fetchone()[0]
+        assert n == 10  # trim still applied
+
+    def test_vacuum_failure_does_not_break_the_prune(self, monkeypatch):
+        """A VACUUM error (locked db, disk full) must not lose the trim."""
+        from scanner.api import data_providers
+        from scanner.shared import db
+
+        monkeypatch.setattr(data_providers, "PRICE_CACHE_MAX_ROWS", 10)
+        monkeypatch.setattr(data_providers, "_last_prune_ts", 0.0)
+        monkeypatch.setattr(data_providers, "VACUUM_SLACK_MB", 0.0)
+        self._seed(20, time.time() + 3600)
+        self._spy_vacuum(monkeypatch, db, fail=True)
+
+        # The sweep still reports its removals rather than raising.
+        assert prune_stale_cache(force=True) == 10
+        n = db.get_conn().execute("SELECT COUNT(*) FROM price_cache").fetchone()[0]
+        assert n == 10
+
+
 class TestCacheHealth:
     """cache_health reports reachable-fresh vs unreachable-stale counts."""
 

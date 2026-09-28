@@ -194,9 +194,7 @@ def test_manual_prune_forces_sweep_logs_and_refreshes(monkeypatch):
     app._prune_price_cache()
 
     assert calls.get("force") is True
-    assert app.logged == [
-        "Pruned 12 stale price-cache entrie(s) (previous trading days)"
-    ]
+    assert app.logged == ["Pruned 12 price-cache entrie(s) (expired + over cap)"]
     assert app.price_cache_status_lbl.value == "Price cache: empty"  # refreshed after
 
 

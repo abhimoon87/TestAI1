@@ -10,16 +10,22 @@ Tests cover:
 """
 
 import os
+import re
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from scanner.backend.report import (
+    _REPORT_COLS,
     SENTIMENT_BAD,
     SENTIMENT_GOOD,
     _css_block,
+    _js_block,
     _parse_date,
     _score_class,
     _sentiment,
+    _table_head_html,
     fetch_news_batch,
     fetch_news_for_ticker,
     fetch_stock_news,
@@ -68,6 +74,14 @@ def _make_score_result(ticker="RELIANCE", total=65.0, **overrides):
     }
     base.update(overrides)
     return base
+
+
+@pytest.fixture(autouse=True)
+def _no_flow_cache(monkeypatch):
+    """Machine-local FII/DII flow cache must not leak into report assertions."""
+    monkeypatch.setattr(
+        "scanner.api.indian_market.fetch_fii_dii_history", lambda *a, **k: None
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -205,7 +219,7 @@ class TestGenerateHtmlReport:
     def test_contains_threshold(self):
         results = [_make_score_result()]
         html = generate_html_report(results, threshold=50.0, fetch_news=False)
-        assert "50.0" in html
+        assert "Threshold 50+" in html
 
     def test_sorted_by_score_descending(self):
         results = [
@@ -228,9 +242,11 @@ class TestGenerateHtmlReport:
         results = [_make_score_result()]
         html = generate_html_report(results, fetch_news=False)
         # When fetch_news=False, no news sentiment content should appear
-        # in the expandable panels (trade reasons panels are always shown)
-        assert ">Good<" not in html
-        assert ">Bad<" not in html
+        # in the expandable panels (trade reasons panels are always shown).
+        # Scoped to news markers — ">Good</button>" would false-positive on
+        # the filter chips, bare names on the CSS rules.
+        assert 'class="news-sentiment' not in html
+        assert 'class="news-item"' not in html
         assert "No recent news found" not in html
 
     def test_empty_results(self):
@@ -346,8 +362,10 @@ class TestReportPolish:
     def test_direction_header_replaces_duplicate_trend(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
         assert ">Direction<" in html
-        # Score column only — the detail breakdown has its own Trend label.
-        assert html.split("</thead>")[0].count(">Trend<") == 1
+        # Score column only — scope to the table head so the filter chip
+        # label ("Trend") doesn't count as a column.
+        thead = html.split("<thead>")[1].split("</thead>")[0]
+        assert thead.count(">Trend<") == 1
 
     def test_sticky_header_and_print_css(self):
         css = _css_block()
@@ -714,11 +732,234 @@ class TestDetailPanelParity:
         assert "Institutional Positioning" in html
         assert "51.8%" in html
 
-    def test_institutional_omitted_when_not_enriched(self):
+    def test_na_tiles_when_not_enriched(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
-        assert "Institutional Positioning" not in html
+        # The app card always renders; unsourced tiles settle to n/a.
+        assert "Institutional Positioning" in html
+        assert "n/a" in html
+        assert html.count('class="inst-tile"') == 3
+
+    def test_flow_fallback_renders_cr_tiles(self, monkeypatch):
+        rows = [{"date": "2026-09-25", "fii": -1000.0, "dii": 500.0}] * 20 + [
+            {"date": "2026-09-24", "fii": 100.0, "dii": -50.0}
+        ] * 20
+        monkeypatch.setattr(
+            "scanner.api.indian_market.fetch_fii_dii_history", lambda *a, **k: rows
+        )
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert "₹-1,000 Cr" in html  # FII newest-day flow value
+        assert "₹+500 Cr" in html  # DII newest-day flow value
+        assert "total" in html and "recent" in html  # flow_window_pcts sub-line
+        assert html.count('class="inst-tile"') == 3
+
+    def test_marker_fallback_renders_cr_tiles(self):
+        html = generate_html_report(
+            [_make_score_result(_fii_net=2838.0, _dii_net=-3694.0)], fetch_news=False
+        )
+        assert "₹+2,838 Cr" in html
+        assert "₹-3,694 Cr" in html
+        assert "no history" in html
+
+    def test_shareholding_series_beats_flow(self, monkeypatch):
+        monkeypatch.setattr(
+            "scanner.api.indian_market.fetch_fii_dii_history",
+            lambda *a, **k: [{"date": "d", "fii": -1.0, "dii": 2.0}] * 40,
+        )
+        html = generate_html_report([self._rich_row()], fetch_news=False)
+        assert "17.2%" in html  # series % wins over the flow fallback
+        assert "₹-1 Cr" not in html
+
+    def test_detail_cards_match_app_layout(self):
+        html = generate_html_report([self._rich_row()], fetch_news=False)
+        # chart, signals, breakdown, reasons, institutional
+        assert html.count('class="detail-card"') == 5
+        # Reasons sit in the right column; institutional is full-width below.
+        assert html.index("Why this trade?") < html.index("Institutional Positioning")
+        assert "reasons-panel" not in html  # flat panel wrapper removed
+        css = _css_block()
+        assert ".detail-card {" in css
+        assert ".detail-col { display: flex" in css
+        _, _, print_block = css.partition("@media print {")
+        assert ".detail-card" in print_block  # shadows reset on paper
+
+    def test_detail_chart_axis_labels_and_cyan_line(self):
+        html = generate_html_report([self._rich_row()], fetch_news=False)
+        assert html.count('<text class="axis-lbl"') == 5  # hi → lo y-axis ticks
+        assert 'stroke="#22d3ee"' in html  # app-cyan detail line
+        assert "#34d399" in html  # row sparklines keep direction colors
+        assert ".axis-lbl" in _css_block()
 
     def test_chart_needs_px_tail(self):
         html = generate_html_report([_make_score_result(atr_pct=4.5)], fetch_news=False)
         assert "Price (last 20 closes)" not in html
         assert "Key Signals" in html
+
+
+class TestResponsiveReport:
+    """Report mirrors the GUI responsive tiers (ui_kit.width_tier)."""
+
+    def test_tier_order_mirrors_gui_hide_order(self):
+        from scanner.ui.ui_kit import COL_HIDE_ORDER
+
+        # Report label ↔ GUI label for the six hidden columns.
+        app_to_report = {
+            "Chop": "Sideways",
+            "Dir": "Direction",
+            "ADX": "ADX",
+            "F/20": "Fund",
+            "RS/10": "RS",
+            "Vol/10": "Volume",
+        }
+        t1 = {lbl for lbl, tier in _REPORT_COLS if tier == 1}
+        t2 = {lbl for lbl, tier in _REPORT_COLS if tier == 2}
+        assert t1 == {"Sideways", "Direction", "ADX"}
+        assert t2 == {"Volume", "RS", "Fund"}
+        assert t1 | t2 == {app_to_report[l] for l in COL_HIDE_ORDER}
+
+    def test_header_tier_classes_keep_sort_indexes(self):
+        head = _table_head_html()
+        ths = re.findall(r"<th([^>]*)>([^<]+)</th>", head)
+        assert [label for _, label in ths] == [lbl for lbl, _ in _REPORT_COLS]
+        for i, ((attrs, label), (_, tier)) in enumerate(zip(ths, _REPORT_COLS)):
+            if label == "1M":
+                assert "sortTable" not in attrs  # spark column never sorts
+            else:
+                assert f"sortTable({i})" in attrs  # positional index intact
+            assert ('class="c-t1"' in attrs) == (tier == 1)
+            assert ('class="c-t2"' in attrs) == (tier == 2)
+
+    def test_row_cells_carry_tier_classes(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert html.count('<td class="num c-t1">') == 1  # ADX
+        assert html.count('<td class="c-t1">') == 2  # Direction + Sideways
+        assert html.count('<td class="num bar-cell c-t2">') == 3  # Volume/RS/Fund
+        # Kept columns never get a drop class.
+        assert 'class="num bar-cell">' in html
+
+    def test_media_queries_use_gui_breakpoints(self):
+        css = _css_block()
+        assert "@media (max-width: 1599px)" in css
+        assert "@media (max-width: 1399px)" in css
+        assert "th.c-t1, td.c-t1 { display: none; }" in css
+        assert "th.c-t2, td.c-t2 { display: none; }" in css
+        # Drop rules must live outside @media print, shadows reset inside it.
+        head, _, print_block = css.partition("@media print {")
+        assert "display: none" in head
+        assert "box-shadow: none" in print_block
+
+    def test_elevation_matches_app_polish(self):
+        css = _css_block()
+        assert css.count("box-shadow: 0") >= 5  # stat/table/news/detail surfaces
+        assert "linear-gradient(135deg, var(--surface)" in css  # detail host
+
+    def test_news_row_colspan_follows_visible_columns(self):
+        js = _js_block()
+        assert "function syncColspan()" in js
+        assert 'addEventListener("resize"' in js  # debounced relayout
+        assert "fitColumns(); syncColspan()" in js  # fit runs first
+
+    def test_content_fit_hides_until_table_fits(self):
+        js = _js_block()
+        assert "function fitColumns()" in js
+        assert "FIT_ORDER" in js
+        assert 'addEventListener("load", relayout)' in js  # after web fonts
+        css = _css_block()
+        assert ".fit-hidden { display: none; }" in css
+        head, _, print_block = css.partition("@media print {")
+        assert "fit-hidden" in head
+        assert "th.fit-hidden, td.fit-hidden { display: table-cell; }" in print_block
+
+    def test_threshold_displayed_cleanly(self):
+        html = generate_html_report(
+            [_make_score_result()], fetch_news=False, threshold=55.00000000000001
+        )
+        assert "55.00000000000001" not in html
+        assert "Threshold 55+" in html
+        assert "Passed · 55+" in html
+
+    def test_histogram_bars_fill_card(self):
+        css = _css_block()
+        assert "justify-content: space-evenly" in css  # no dead card space
+
+    def test_compact_stat_strip(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert html.count('class="stat-meta"') == 4  # inline number + labels
+        css = _css_block()
+        assert ".summary { display: contents; }" in css  # stats as grid cells
+        assert "repeat(4, minmax(0,1fr)) minmax(0,1.9fr)" in css  # 4 stats + hist
+        assert "grid-column: 1 / -1" in css  # hist spans full width when stacked
+        assert (
+            ".stat::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 3px;"
+            in css
+        )
+
+    def test_modern_grid_rows(self):
+        css = _css_block()
+        assert "tbody tr:not(.news-row) td { white-space: nowrap; }" in css
+        assert ".bothma-yes { display: inline-block;" in css  # YES chips
+        # Compact rows keep news panels wrappable.
+        assert "tbody tr:not(.news-row)" in css
+
+
+class TestReportElegance:
+    """Bold redesign: hero, overview band, filter chips, pills, motion."""
+
+    def test_hero_header_renders(self):
+        html = generate_html_report(
+            [_make_score_result()], fetch_news=False, meta=["NSE ALL", "Daily"]
+        )
+        assert 'class="hero"' in html
+        assert 'class="hero-brand"' in html
+        assert 'class="hero-stamp"' in html
+        assert "<span>NSE ALL</span>" in html
+        assert "<span>Daily</span>" in html
+        assert "Generated locally" in html
+
+    def test_filters_are_chips_not_selects(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert "<select" not in html
+        assert '<input type="text" id="search"' in html
+        for fid in ("minScore", "trendFilter", "signalFilter", "newsFilter"):
+            assert f'<input type="hidden" id="{fid}"' in html
+        js = _js_block()
+        assert "function setFilter" in js
+        assert 'classList.add("active")' in js
+
+    def test_default_score_chip_matches_threshold(self):
+        for threshold, value in ((70, "70"), (50, "50"), (45, "0")):
+            html = generate_html_report(
+                [_make_score_result()], fetch_news=False, threshold=threshold
+            )
+            assert f'<input type="hidden" id="minScore" value="{value}">' in html
+
+    def test_score_and_entry_pills(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert 'class="score-pill p-good"' in html  # total 65 → GOOD
+        assert "pill-yes" in html  # entry_signal True
+        assert "score-excellent" not in html  # glow classes gone
+
+    def test_overview_band_and_histogram_caption(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert 'class="overview"' in html
+        assert "Score distribution" in html
+        empty = generate_html_report([], fetch_news=False)
+        assert 'class="overview solo"' in empty
+        assert "Score distribution" not in empty
+
+    def test_print_resets_glass_and_motion(self):
+        css = _css_block()
+        head, _, print_block = css.partition("@media print {")
+        assert "backdrop-filter: blur" in head  # glass is screen-only
+        assert "prefers-reduced-motion" in head
+        assert "backdrop-filter: none" in print_block
+        assert "animation: none" in print_block
+
+    def test_detail_chart_gets_gridlines_and_dot(self):
+        html = generate_html_report(
+            [_make_score_result(px_tail=[100.0, 102.0, 101.5, 104.0])],
+            fetch_news=False,
+        )
+        assert html.count('class="grid"') == 5  # big chart: 5 axis-tick lines
+        assert html.count("<circle") == 1  # endpoint dot
+        bare = generate_html_report([_make_score_result()], fetch_news=False)
+        assert 'class="grid"' not in bare  # no px_tail → no detail chart

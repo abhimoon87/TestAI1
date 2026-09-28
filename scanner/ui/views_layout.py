@@ -21,6 +21,10 @@ from ..shared.universes import UNIVERSES
 from .ui_kit import (
     ANIM_FAST,
     ANIM_NORMAL,
+    FS_HERO,
+    FS_LG,
+    FS_XL,
+    FS_XS,
     RADIUS_LG,
     RADIUS_MD,
     RADIUS_SM,
@@ -33,6 +37,7 @@ from .ui_kit import (
     _neon_glow,
     _padding_only,
     score_color,
+    themed_dropdown,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,8 +158,6 @@ class LayoutViewMixin:
 
     def _styled_dropdown(self, options, value, on_select=None) -> ft.Dropdown:
         """Full-width modern dropdown matching the app theme."""
-        from .ui_kit import themed_dropdown
-
         dd = themed_dropdown(options, value, self.theme_colors, on_select=on_select)
         dd.expand = True
         dd.height = 46
@@ -198,7 +201,10 @@ class LayoutViewMixin:
         def section(t):
             return ft.Container(
                 content=ft.Text(
-                    t.upper(), size=9, weight=ft.FontWeight.BOLD, color=c["text_faint"]
+                    t.upper(),
+                    size=FS_XS,
+                    weight=ft.FontWeight.BOLD,
+                    color=c["text_faint"],
                 ),
                 padding=_padding_only(left=16, top=14, bottom=4),
             )
@@ -250,6 +256,7 @@ class LayoutViewMixin:
             expand=True,
             active_color=c["purple"],
             inactive_color=c["progress_bg"],
+            thumb_color=c["purple"],
             on_change=self._on_threshold_change,
         )
         self.threshold_label = ft.Text(
@@ -273,8 +280,21 @@ class LayoutViewMixin:
             bgcolor=c["green"],
             color=c["on_accent"],
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=RADIUS_LG)),
+            animate_scale=ANIM_FAST,
             on_click=self._on_action_click,
         )
+
+        def _run_hover(e):
+            # Decorative only — skip entirely under reduce_motion.
+            if self._motion_reduced():
+                return
+            try:
+                self.action_btn.scale = 1.03 if e.data == "true" else 1.0
+                self.action_btn.update()
+            except Exception:
+                logger.info("Run button hover failed", exc_info=True)
+
+        self.action_btn.on_hover = _run_hover
         self.progress_bar = ft.ProgressBar(
             height=6,
             color=c["progress_fg"],
@@ -415,7 +435,7 @@ class LayoutViewMixin:
     def _build_main_area(self) -> ft.Container:
         c = self.theme_colors
         self.topbar_title = ft.Text(
-            "Scanner", size=13, weight=ft.FontWeight.BOLD, color=c["text"]
+            "Scanner", size=FS_LG, weight=ft.FontWeight.BOLD, color=c["text"]
         )
         self.search_entry = ft.TextField(
             hint_text="Filter by ticker…",
@@ -496,7 +516,7 @@ class LayoutViewMixin:
 
         self.hero_text = ft.Text(
             "Find Your Next Swing Trade",
-            size=21,
+            size=FS_HERO,
             weight=ft.FontWeight.BOLD,
             color=c["hero_title"],
         )
@@ -632,6 +652,8 @@ class LayoutViewMixin:
             label="Show stocks with FII/DII data",
             value=False,
             label_style=ft.TextStyle(size=11, color=c["text_dim"]),
+            active_color=c["green"],
+            check_color=c["on_accent"],
             tooltip="Only rows carrying per-stock FII/DII data (NSE activity or screener shareholding)",
             on_change=self._on_inst_filter_change,
         )
@@ -643,7 +665,7 @@ class LayoutViewMixin:
                 controls=[
                     ft.Text(
                         "Scan Results",
-                        size=16,
+                        size=FS_XL,
                         weight=ft.FontWeight.BOLD,
                         color=c["text"],
                     ),
@@ -673,19 +695,13 @@ class LayoutViewMixin:
             content=ft.Text("Next ▶", size=12), on_click=lambda e: self._change_page(1)
         )
         self.page_size_options = ["50", "100", "200", "500"]
-        self.page_size_dd = ft.Dropdown(
-            options=[ft.dropdown.Option(v) for v in self.page_size_options],
-            value="100",
+        # Shared themed dropdown — same surface as every other select.
+        self.page_size_dd = themed_dropdown(
+            self.page_size_options,
+            "100",
+            c,
             width=110,
             height=40,
-            text_size=12,
-            bgcolor=c["card"],
-            color=c["text"],
-            border_color=c["border"],
-            border_width=1,
-            border_radius=RADIUS_SM,
-            focused_border_color=c["purple"],
-            content_padding=_padding_only(left=12, right=8, top=8, bottom=8),
             on_select=self._on_page_size_change,
         )
         self.load_all_btn = ft.TextButton(
@@ -857,12 +873,12 @@ class LayoutViewMixin:
                 animate_opacity=ANIM_FAST,
             )
             self.summary_cards[key] = val_label
-            pills.append(
-                ft.Row(
+            pill = ft.Container(
+                content=ft.Row(
                     [
                         ft.Text(
                             label,
-                            size=8,
+                            size=FS_XS,
                             weight=ft.FontWeight.BOLD,
                             color=c["text_faint"],
                         ),
@@ -870,8 +886,14 @@ class LayoutViewMixin:
                     ],
                     spacing=5,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                )
+                ),
+                bgcolor=_glass_bg(),
+                border=_glass_border(),
+                border_radius=RADIUS_SM,
+                padding=_padding_only(left=10, right=10, top=5, bottom=5),
             )
+            pill.on_hover = lambda e, p=pill: self._on_card_hover(e, p)
+            pills.append(pill)
         return ft.Row(
             pills, spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER
         )
@@ -879,6 +901,8 @@ class LayoutViewMixin:
     def _on_card_hover(self, e, card):
         """Scale up + intensify shadow on hover for summary/top-pick cards."""
         try:
+            if self._motion_reduced():
+                return
             if e.data == "true":
                 card.scale = ft.Scale(1.04)
                 card.opacity = 0.92

@@ -78,6 +78,10 @@ def make_app():
     app.settings = dict(app_mod.DEFAULT_SETTINGS)
     app.active_view = "dashboard"
     app.scanning = False
+    app.width_tier = "wide"
+    app._pending_tier = None
+    app._right_pinned = False
+    app._auto_side = False
     app._scan_lock = threading.Lock()
     app._results_lock = threading.RLock()
     app._state_lock = threading.Lock()

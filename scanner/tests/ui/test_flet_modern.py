@@ -135,9 +135,9 @@ def test_palette_opens_with_all_actions():
     import flet as ft
 
     assert isinstance(app.page.shown[0], ft.AlertDialog)
-    # List is capped at 8 of the 12 registered actions
+    # List is capped at 8 of the 13 registered actions
     assert len(app._palette_state["shown"]) == 8
-    assert len(app._palette_actions()) == 12
+    assert len(app._palette_actions()) == 13
 
 
 def test_palette_filters_on_typing():

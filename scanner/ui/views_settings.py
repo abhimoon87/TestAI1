@@ -17,6 +17,7 @@ import flet as ft
 
 from .ui_kit import (
     RADIUS_MD,
+    RADIUS_SM,
     RADIUS_XL,
     _card_shadow,
     _glass_bg,
@@ -136,7 +137,11 @@ class SettingsViewMixin:
         c = self.theme_colors
         if kind == "bool":
             ctrl = ft.Switch(
-                value=bool(self.settings.get(key, False)), active_color=c["green"]
+                value=bool(self.settings.get(key, False)),
+                active_color=c["green"],
+                active_track_color=ft.Colors.with_opacity(0.4, c["green"]),
+                inactive_track_color=c["progress_bg"],
+                inactive_thumb_color=c["text_faint"],
             )
         elif kind == "ma_type":
             opts = list(self._MA_TYPES)
@@ -239,9 +244,18 @@ class SettingsViewMixin:
             expand=True,
         )
         self.stale_audit_lbl = ft.Text("", size=10, color=c["text_dim"])
+        # One outline style for both maintenance buttons — token border,
+        # neutral label, soft hover wash.
+        audit_btn_style = ft.ButtonStyle(
+            side=ft.BorderSide(1, c["border_light"]),
+            color=c["text_dim"],
+            shape=ft.RoundedRectangleBorder(radius=RADIUS_SM),
+            overlay_color=ft.Colors.with_opacity(0.08, c["text"]),
+        )
         self.stale_fix_btn = ft.OutlinedButton(
             content=ft.Text("Apply fixes", size=12),
             on_click=self._apply_stale_fixes,
+            style=audit_btn_style,
             disabled=True,  # enabled after an audit finds something fixable
         )
         audit_row = ft.Row(
@@ -256,6 +270,7 @@ class SettingsViewMixin:
                 ft.OutlinedButton(
                     content=ft.Text("Check stale members", size=12),
                     on_click=self._run_stale_audit,
+                    style=audit_btn_style,
                 ),
                 self.stale_fix_btn,
             ],

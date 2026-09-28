@@ -36,6 +36,16 @@ from ..backend.settings_store import (  # noqa: F401 — re-exported for tests
 )
 from ..shared.themes import THEMES
 from ..shared.universes import UNIVERSES
+from .ui_kit import (
+    RADIUS_LG,
+    RADIUS_MD,
+    TIER_COMPACT,
+    TIER_WIDE,
+    PaletteAction,
+    filter_actions,
+    parse_watchlist_text,
+    width_tier,
+)
 from .views_layout import LayoutViewMixin
 from .views_results import ResultsViewMixin
 from .views_scan import ScanOrchestrationMixin
@@ -110,6 +120,13 @@ class ScannerApp(
         self.current_theme = "dark"
         self.theme_colors = THEMES["dark"]
 
+        # Responsive layout state — tier drives pane visibility + which
+        # table columns render (see ui_kit.width_tier / hidden_cols).
+        self.width_tier = "wide"
+        self._pending_tier = None
+        self._right_pinned = False
+        self._auto_side = False
+
         # Initial window geometry — set exactly once here. View switches and
         # theme changes rebuild controls but must never touch the window, so a
         # maximized window stays maximized (no resize/re-layout shock).
@@ -121,6 +138,8 @@ class ScannerApp(
         self._build_ui()
         # Global shortcuts (palette, run/stop, views, export, theme).
         self.page.on_keyboard_event = self._on_keyboard_event
+        # Responsive reflow — fires only on tier changes, never per-pixel.
+        self.page.on_resize = self._on_page_resize
         self._load_settings_to_ui()
         self._load_ui_prefs()
         self._restore_saved_results()
@@ -196,12 +215,15 @@ class ScannerApp(
         # Rebuilds (theme switch) must preserve the collapse state — a fresh
         # Container defaults to visible, which would desync from the flag.
         self.sidebar.visible = not getattr(self, "_sidebar_collapsed", False)
+        self.right_panel = self._build_right_panel()
+        # Rebuilds must re-derive auto-hide state for the current tier.
+        self.right_panel.visible = self.width_tier != TIER_COMPACT or self._right_pinned
         self.main_row = ft.Row(
             controls=[
                 self._build_rail(),
                 self.sidebar,
                 self._build_main_area(),
-                self._build_right_panel(),
+                self.right_panel,
             ],
             spacing=0,
             expand=True,
@@ -314,7 +336,8 @@ class ScannerApp(
     # ── Modern chrome: sidebar collapse, shortcuts, palette, toasts ──
 
     def _toggle_sidebar(self, e=None):
-        """Collapse/expand the sidebar in place."""
+        """Collapse/expand the sidebar in place (manual override wins)."""
+        self._auto_side = False
         self._sidebar_collapsed = not getattr(self, "_sidebar_collapsed", False)
         box = getattr(self, "sidebar", None)
         if box is not None:
@@ -323,6 +346,90 @@ class ScannerApp(
             self.page.update()
         except Exception:
             logger.info("Sidebar toggle page.update failed", exc_info=True)
+
+    def _toggle_right_panel(self, e=None):
+        """Pin/unpin the profile panel (compact tiers auto-hide it)."""
+        self._right_pinned = not getattr(self, "_right_pinned", False)
+        rp = getattr(self, "right_panel", None)
+        if rp is not None:
+            rp.visible = self._right_pinned or self.width_tier != TIER_COMPACT
+        try:
+            self.page.update()
+        except Exception:
+            logger.info("Right panel toggle failed", exc_info=True)
+
+    def _on_page_resize(self, e=None):
+        """Adopt a new width tier on resize — only on tier *changes*.
+
+        During a streaming scan the reflow is queued instead: forcing a
+        pool clear + full rebuild under a live stream would repaint all
+        rows on the UI thread mid-scan. The queue drains at scan teardown.
+        """
+        try:
+            tier = width_tier(getattr(self.page, "width", None))
+            if tier == getattr(self, "width_tier", TIER_WIDE):
+                # Same tier: skip the reflow, but still drop any queued tier
+                # — a resize that returned to where it started means the
+                # pending entry is stale, and applying it at teardown would
+                # reflow the app into a layout the window no longer matches.
+                self._pending_tier = None
+                return
+            if self.scanning:
+                self._pending_tier = tier
+                return
+            self._apply_width_tier(tier)
+        except Exception:
+            logger.info("Resize handling failed", exc_info=True)
+
+    def _apply_width_tier(self, tier, render=True):
+        """Pane + column reflow for a new width tier."""
+        self.width_tier = tier
+        compact = tier == TIER_COMPACT
+
+        rp = getattr(self, "right_panel", None)
+        if rp is not None:
+            rp.visible = not compact or getattr(self, "_right_pinned", False)
+
+        # Sidebar auto-collapses into compact; widen restores it unless
+        # the user had collapsed it manually before (or during) compact.
+        box = getattr(self, "sidebar", None)
+        if compact and not getattr(self, "_sidebar_collapsed", False):
+            self._sidebar_collapsed = True
+            self._auto_side = True
+            if box is not None:
+                box.visible = False
+        elif not compact and getattr(self, "_auto_side", False):
+            self._auto_side = False
+            self._sidebar_collapsed = False
+            if box is not None:
+                box.visible = True
+
+        if not render:
+            return
+        # Column set changed → regenerate header and full-rebuild rows.
+        holder = getattr(self, "header_holder", None)
+        if holder is not None:
+            holder.controls = []
+        if getattr(self, "_row_pool", None):
+            self._row_pool.clear()
+        if getattr(self, "_row_cells", None):
+            self._row_cells.clear()
+        if self.active_view == "dashboard":
+            self._render_current_page()
+        try:
+            self.page.update()
+        except Exception:
+            logger.info("Width-tier update failed", exc_info=True)
+
+    def _apply_pending_width_tier(self):
+        """Drain a resize deferred during a streaming scan (no re-render —
+        the caller re-renders right after with the new tier in effect)."""
+        tier = getattr(self, "_pending_tier", None)
+        if tier is None:
+            return
+        self._pending_tier = None
+        if tier != getattr(self, "width_tier", TIER_WIDE):
+            self._apply_width_tier(tier, render=False)
 
     def _toast(self, msg, kind="info"):
         """Non-modal feedback via a SnackBar dialog (thread-safe).
@@ -342,6 +449,7 @@ class ScannerApp(
             bar = ft.SnackBar(
                 content=ft.Text(str(msg), color=fg, size=13),
                 bgcolor=bg,
+                shape=ft.RoundedRectangleBorder(radius=RADIUS_MD),
                 open=True,
             )
             self.page.show_dialog(bar)
@@ -422,8 +530,6 @@ class ScannerApp(
             self._save_settings_page()
 
     def _palette_actions(self):
-        from .ui_kit import PaletteAction
-
         run_label = "Stop scan" if self.scanning else "Run scan"
         return [
             PaletteAction(
@@ -450,6 +556,12 @@ class ScannerApp(
             ),
             PaletteAction(
                 "toggle-sidebar", "Toggle sidebar", "", lambda: self._toggle_sidebar()
+            ),
+            PaletteAction(
+                "toggle-right-panel",
+                "Toggle profile panel",
+                "",
+                lambda: self._toggle_right_panel(),
             ),
             PaletteAction(
                 "focus-search", "Focus ticker search", "/", lambda: self._focus_search()
@@ -479,8 +591,6 @@ class ScannerApp(
 
     def _open_palette(self):
         """Command palette dialog (Ctrl+K): fuzzy filter, Enter runs."""
-        from .ui_kit import RADIUS_MD, filter_actions
-
         c = self.theme_colors
         query = ft.TextField(
             hint_text="Type a command…  (Enter runs the top hit)",
@@ -524,6 +634,8 @@ class ScannerApp(
         _render_list()
         self._palette_dlg = ft.AlertDialog(
             modal=True,
+            bgcolor=c["panel_bg"],
+            shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
             title=ft.Text("Command palette  (Ctrl+K)", size=14),
             content=ft.Container(
                 content=ft.Column([query, results_col], spacing=8), width=480
@@ -678,8 +790,6 @@ class ScannerApp(
 
     def _on_watchlist_picked(self, e):
         """Import a CSV/TXT watchlist file as a scannable universe."""
-        from .ui_kit import parse_watchlist_text
-
         try:
             files = list(getattr(e, "files", None) or [])
             if not files:
@@ -981,11 +1091,12 @@ class ScannerApp(
 
             removed = cache_manager.prune_stale_cache(force=True)
             self._log(
-                f"Pruned {removed} stale price-cache entrie(s) (previous trading days)"
+                f"Pruned {removed} price-cache entrie(s) (expired + over cap)"
                 if removed
                 else "Price cache clean — nothing to prune"
             )
-            self._toast(f"Pruned {removed} stale price-cache entries", "success")
+            if removed:
+                self._toast(f"Pruned {removed} price-cache entries", "success")
         except Exception as ex:
             self._log(f"Could not prune price cache: {ex}")
             self._toast(f"Could not prune price cache: {ex}", "error")
@@ -1128,8 +1239,12 @@ class ScannerApp(
         removes = len(res.get("annotated_fresh", []))
         if removes:
             parts.append(f"{removes} annotation removal(s)")
+        c = self.theme_colors
         dlg = ft.AlertDialog(
             modal=True,
+            bgcolor=c["panel_bg"],
+            shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
+            actions_alignment=ft.MainAxisAlignment.END,
             title=ft.Text("Apply audit fixes?"),
             content=ft.Text(
                 f"This edits scanner/shared/universes.py ({', '.join(parts)}). "
@@ -1145,6 +1260,11 @@ class ScannerApp(
                 ),
                 ft.Button(
                     content=ft.Text("Apply fixes"),
+                    bgcolor=c["green"],
+                    color=c["on_accent"],
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=RADIUS_MD)
+                    ),
                     on_click=lambda _: self._run_apply_fixes(dlg),
                 ),
             ],

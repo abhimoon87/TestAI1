@@ -69,6 +69,16 @@ CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache"
 )
 CACHE_TTL_HOURS = 4  # Cache expires after 4 hours
+# ponytail: hard row cap on price_cache. A full-market scan writes ~2.4k
+# parquet rows (~47 KB each, so ~115 MB per 4h generation), and the TTL alone
+# left the file at whatever a few concurrent generations peaked at. Keeping
+# the newest MAX_ROWS bounds the steady-state size. Upgrade path: make the cap
+# a setting, or store parquet on disk with only paths in sqlite, if a smaller
+# footprint is ever worth the extra I/O.
+PRICE_CACHE_MAX_ROWS = 6000
+# Only VACUUM when the db has at least this much reclaimable slack, so the
+# routine no-op prune (nothing expired, under the cap) stays free.
+VACUUM_SLACK_MB = 8.0
 
 
 from ..shared._index_utils import _normalize_daily_index
@@ -92,7 +102,8 @@ def prune_stale_cache(force: bool = False) -> int:
     Sweeping is rate-limited per process (``PRUNE_INTERVAL_SECONDS``) so scan
     starts stay cheap.
 
-    Returns the number of expired rows + stale (pkl, meta) pairs removed.
+    Returns the number of expired rows + cap-evicted live rows + stale
+    (pkl, meta) pairs removed.
     """
     global _last_prune_ts
     now = time.time()
@@ -103,13 +114,38 @@ def prune_stale_cache(force: bool = False) -> int:
 
     removed = 0
     try:
-        removed += (
-            db.get_conn()
-            .execute("DELETE FROM price_cache WHERE expires <= ?", (now,))
-            .rowcount
-        )
+        conn = db.get_conn()
+        removed += conn.execute(
+            "DELETE FROM price_cache WHERE expires <= ?", (now,)
+        ).rowcount
+        # Enforce the row cap on whatever is still live: keep the newest
+        # MAX_ROWS by expiry. Without this the file only ever grows to the
+        # peak of a few overlapping 4h generations (sqlite does not shrink
+        # a file on delete).
+        removed += conn.execute(
+            "DELETE FROM price_cache WHERE cache_key NOT IN"
+            " (SELECT cache_key FROM price_cache ORDER BY expires DESC LIMIT ?)",
+            (PRICE_CACHE_MAX_ROWS,),
+        ).rowcount
     except Exception as e:
         logger.info("Stale price-cache prune failed: %s", e)
+
+    # Hand the freed pages back to the OS. sqlite never shrinks the file on
+    # delete, so a trimmed cache would otherwise leave the file pinned at its
+    # high-water mark. A plain VACUUM is the only thing that reclaims here:
+    # incremental_vacuum needs auto_vacuum=INCREMENTAL (a schema-level change
+    # that cannot be applied to a populated db without a full rebuild anyway)
+    # and was measured reclaiming ~1 page per call. Gated on a real amount of
+    # slack so the common no-op prune never pays for a rewrite.
+    try:
+        conn = db.get_conn()
+        page = conn.execute("PRAGMA page_size").fetchone()[0]
+        free_mb = conn.execute("PRAGMA freelist_count").fetchone()[0] * page / 1e6
+        if free_mb >= VACUUM_SLACK_MB:
+            conn.execute("VACUUM")
+            logger.info("Reclaimed %.1f MB of price-cache slack via VACUUM", free_mb)
+    except Exception as e:
+        logger.info("price-cache vacuum skipped: %s", e)
 
     today = date.today().isoformat()
     try:

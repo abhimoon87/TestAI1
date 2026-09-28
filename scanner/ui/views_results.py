@@ -26,12 +26,19 @@ from ..shared.detail_specs import fmt_pct, ma_chip, signal_specs
 from .ui_kit import (
     ANIM_FAST,
     ANIM_NORMAL,
+    FS_2XL,
+    FS_BASE,
+    FS_LG,
+    FS_MD,
+    FS_XS,
     RADIUS_LG,
     RADIUS_MD,
     RADIUS_SM,
     _border_all,
+    _card_shadow,
     _margin_only,
     _padding_only,
+    hidden_cols,
     rating_color,
     score_color,
     shimmer_row,
@@ -123,10 +130,17 @@ class ResultsViewMixin:
     # Maps ticker → list[ft.Text] (the 19 text cells in column order).
     _row_cells: dict[str, list[ft.Text]]
 
+    def _hidden_cols(self) -> frozenset:
+        """Columns dropped at the current width tier (empty at wide)."""
+        return hidden_cols(getattr(self, "width_tier", "wide"))
+
     def _row_specs(self, r, rank, c, threshold):
-        """Shared 18-cell (text, color) pairs; MA cell filled from helpers."""
+        """Shared (text, color) pairs for the columns visible at this tier."""
         specs = _row_specs(r, rank, c, threshold)
         specs[6] = (self._ma_text(r), self._ma_color(r))
+        hidden = self._hidden_cols()
+        if hidden:
+            specs = [p for i, p in enumerate(specs) if RESULT_COLS[i] not in hidden]
         return specs
 
     def _display_results(self, results):
@@ -372,7 +386,10 @@ class ResultsViewMixin:
 
     def _make_header_row(self, c):
         headers = []
+        hidden = self._hidden_cols()
         for idx, text in enumerate(RESULT_COLS):
+            if text in hidden:
+                continue
             is_sorted = self.sort_col == idx
             arrow = (
                 " ▲"
@@ -661,8 +678,11 @@ class ResultsViewMixin:
         rating = r.get("combined_rating", "POOR")
         entry = bool(r.get("entry_signal"))
         accent = self._rating_accent(rating)
+        hidden = self._hidden_cols()
+        # Style pairs track the same filtered column set as the specs.
+        styles = [s for i, s in enumerate(_ROW_STYLE) if RESULT_COLS[i] not in hidden]
         cols = [
-            (text, color, *_ROW_STYLE[i])
+            (text, color, *styles[i])
             for i, (text, color) in enumerate(self._row_specs(r, rank, c, threshold))
         ]
 
@@ -1693,18 +1713,19 @@ class ResultsViewMixin:
                 [
                     ft.Text(
                         "Institutional Positioning",
-                        size=12,
+                        size=FS_MD,
                         weight=ft.FontWeight.BOLD,
                         color=c["cyan"],
                     ),
                     ft.Row(tiles, spacing=6, wrap=True),
-                    ft.Text(hint, size=9, color=c["text_faint"]),
+                    ft.Text(hint, size=FS_XS, color=c["text_faint"]),
                 ],
                 spacing=6,
             ),
             bgcolor=c["card"],
             border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
+            shadow=_card_shadow(),
             padding=12,
             margin=_margin_only(bottom=8),
         )
@@ -1732,7 +1753,7 @@ class ResultsViewMixin:
                     ),
                     ft.Text(
                         ticker,
-                        size=18,
+                        size=FS_2XL,
                         weight=ft.FontWeight.BOLD,
                         color=c["text"],
                         expand=True,
@@ -1776,9 +1797,15 @@ class ResultsViewMixin:
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            bgcolor=c["card"],
+            # Subtle left-to-right lift — the one gradient inside detail.
+            gradient=ft.LinearGradient(
+                begin=Alignment.CENTER_LEFT,
+                end=Alignment.CENTER_RIGHT,
+                colors=[c["card"], c["card2"]],
+            ),
             border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
+            shadow=_card_shadow(),
             padding=_padding_only(left=12, right=12, top=8, bottom=8),
             margin=_margin_only(bottom=8),
         )
@@ -1807,9 +1834,12 @@ class ResultsViewMixin:
                 ft.Container(
                     content=ft.Column(
                         [
-                            ft.Text(label, size=9, color=c["text_faint"]),
+                            ft.Text(label, size=FS_XS, color=c["text_faint"]),
                             ft.Text(
-                                value, size=13, weight=ft.FontWeight.BOLD, color=color
+                                value,
+                                size=FS_LG,
+                                weight=ft.FontWeight.BOLD,
+                                color=color,
                             ),
                         ],
                         spacing=2,
@@ -1827,7 +1857,7 @@ class ResultsViewMixin:
                 [
                     ft.Text(
                         "Key Signals",
-                        size=12,
+                        size=FS_MD,
                         weight=ft.FontWeight.BOLD,
                         color=c["cyan"],
                     ),
@@ -1838,6 +1868,7 @@ class ResultsViewMixin:
             bgcolor=c["card"],
             border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
+            shadow=_card_shadow(),
             padding=12,
             margin=_margin_only(bottom=8),
         )
@@ -1855,7 +1886,7 @@ class ResultsViewMixin:
                 ft.Row(
                     [
                         ft.Icon(icon_name, size=12, color=icon_color),
-                        ft.Text(r, size=11, color=c["text"], expand=True),
+                        ft.Text(r, size=FS_BASE, color=c["text"], expand=True),
                     ],
                     spacing=6,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1867,7 +1898,7 @@ class ResultsViewMixin:
                 [
                     ft.Text(
                         "Why this trade?",
-                        size=12,
+                        size=FS_MD,
                         weight=ft.FontWeight.BOLD,
                         color=c["cyan"],
                     ),
@@ -1878,7 +1909,9 @@ class ResultsViewMixin:
                     if reason_controls
                     else [
                         ft.Text(
-                            "No trade reasons available.", size=11, color=c["text_dim"]
+                            "No trade reasons available.",
+                            size=FS_BASE,
+                            color=c["text_dim"],
                         ),
                     ]
                 ),
@@ -1887,6 +1920,7 @@ class ResultsViewMixin:
             bgcolor=c["card"],
             border_radius=RADIUS_LG,
             border=_border_all(1, c["border"]),
+            shadow=_card_shadow(),
             padding=12,
             margin=_margin_only(bottom=8),
         )

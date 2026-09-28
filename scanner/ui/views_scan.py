@@ -253,6 +253,8 @@ class ScanOrchestrationMixin:
             len(self.all_results),
             self.active_view,
         )
+        # Drain any resize deferred while streaming — now safe to reflow.
+        self._apply_pending_width_tier()
         if hasattr(self, "_row_pool"):
             self._row_pool.clear()
         if hasattr(self, "_row_cells"):
