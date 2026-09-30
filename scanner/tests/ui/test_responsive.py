@@ -17,6 +17,7 @@ from scanner.ui.ui_kit import (
     hidden_cols,
     width_tier,
 )
+from scanner.ui.views_layout import SIDE_W
 
 _ROW = {"ticker": "TCS", "close": 100}
 
@@ -78,19 +79,19 @@ def test_created_row_cells_match_filtered_header():
 
 def test_apply_tier_auto_collapses_and_restores_panes():
     app = make_app()
-    app.sidebar = ft.Container(visible=True)
+    app.sidebar = ft.Container(width=SIDE_W)
     app.right_panel = ft.Container(visible=True)
 
     app._apply_width_tier(TIER_COMPACT)
     assert app.width_tier == TIER_COMPACT
-    assert app.sidebar.visible is False
+    assert app.sidebar.width == 0
     assert app.right_panel.visible is False
     assert app._sidebar_collapsed is True
     assert app._auto_side is True
     assert app.header_holder.controls == []
 
     app._apply_width_tier(TIER_WIDE)
-    assert app.sidebar.visible is True
+    assert app.sidebar.width == SIDE_W
     assert app.right_panel.visible is True
     assert app._sidebar_collapsed is False
 
@@ -106,12 +107,12 @@ def test_compact_keeps_pinned_right_panel():
 
 def test_manual_sidebar_collapse_survives_tier_cycle():
     app = make_app()
-    app.sidebar = ft.Container(visible=False)
+    app.sidebar = ft.Container(width=0)
     app._sidebar_collapsed = True
 
     app._apply_width_tier(TIER_COMPACT)
     app._apply_width_tier(TIER_WIDE)
-    assert app.sidebar.visible is False  # manual state wins over auto-restore
+    assert app.sidebar.width == 0  # manual state wins over auto-restore
     assert app._auto_side is False
 
 

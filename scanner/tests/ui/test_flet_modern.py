@@ -135,9 +135,9 @@ def test_palette_opens_with_all_actions():
     import flet as ft
 
     assert isinstance(app.page.shown[0], ft.AlertDialog)
-    # List is capped at 8 of the 13 registered actions
+    # List is capped at 8 of the 12 registered actions
     assert len(app._palette_state["shown"]) == 8
-    assert len(app._palette_actions()) == 13
+    assert len(app._palette_actions()) == 12
 
 
 def test_palette_filters_on_typing():
@@ -197,21 +197,12 @@ def test_toast_error_uses_white_text():
 # ── Sidebar collapse + keyboard ───────────────────────────────────────
 
 
-def test_sidebar_toggle_flips_visibility():
-    app = _ready_app()
-    assert app.sidebar.visible is not False
-    app._toggle_sidebar()
-    assert app.sidebar.visible is False
-    app._toggle_sidebar()
-    assert app.sidebar.visible is True
-
-
 def test_collapse_survives_ui_rebuild():
     app = _ready_app()
-    app._toggle_sidebar()
-    assert app.sidebar.visible is False
+    app._sidebar_collapsed = True
+    app.sidebar.width = 0
     app._build_ui()  # theme-switch-style rebuild
-    assert app.sidebar.visible is False
+    assert app.sidebar.width == 0
 
 
 def test_keyboard_routes_shortcuts():
@@ -313,16 +304,14 @@ def test_parse_empty_and_limit():
 # ── Copy ticker + watchlist import (1.0 client actions) ───────────────
 
 
+class _FakeServices:
+    def register_service(self, svc):
+        pass
+
+
 def test_news_stats_row_ends_with_copy_action():
     import flet as ft
     from flet.controls.context import _context_page
-
-    class _FakeServices:
-        def __init__(self):
-            self.registered = []
-
-        def register_service(self, svc):
-            self.registered.append(svc)
 
     app = _ready_app()
     # Client actions resolve per-page services through Flet's page context
@@ -355,6 +344,51 @@ def test_news_stats_row_omits_copy_without_page_context():
     assert isinstance(row, ft.Row)
     assert len(row.controls) == 3  # chips only, no copy button
     assert not any(isinstance(c, ft.IconButton) for c in row.controls)
+
+
+def test_results_row_ticker_cell_gains_copy_action():
+    import flet as ft
+    from flet.controls.context import _context_page
+
+    app = _ready_app()
+    c = app.theme_colors
+    app.page._services = _FakeServices()
+    token = _context_page.set(app.page)
+    try:
+        row = app._create_row_controls(
+            {"ticker": "TCS", "total": 45.0}, 1, c, c["card"], 50
+        )
+        badge_row = app._create_row_controls(
+            {
+                "ticker": "TCS",
+                "total": 45.0,
+                "_article_count": 4,
+                "_sentiment_score": 0.6,
+            },
+            1,
+            c,
+            c["card"],
+            50,
+        )
+    finally:
+        _context_page.reset(token)
+    cell = row.content.controls[1]
+    # Ticker text stays first; the copy button rides at the cell's right edge.
+    assert isinstance(cell.content, ft.Row)
+    assert isinstance(cell.content.controls[0], ft.Text)
+    copy_btn = cell.content.controls[-1]
+    assert isinstance(copy_btn, ft.IconButton)
+    assert copy_btn.tooltip == "Copy TCS"
+    assert isinstance(copy_btn.action, ft.CopyToClipboard)
+    assert copy_btn.action.data == "TCS"
+
+    # With a sentiment badge too: ticker first, badge second, copy last.
+    with_badge = badge_row.content.controls[1].content
+    assert isinstance(with_badge, ft.Row)
+    assert isinstance(with_badge.controls[0], ft.Text)
+    assert with_badge.controls[1].content.controls[1].value == "4"
+    assert isinstance(with_badge.controls[-1], ft.IconButton)
+    assert with_badge.controls[-1].action.data == "TCS"
 
 
 def test_watchlist_import_registers_universe(tmp_path):

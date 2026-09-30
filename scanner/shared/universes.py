@@ -657,6 +657,102 @@ NIFTY_BROAD = list(
     set(NIFTY_50 + BANK_NIFTY + NIFTY_NEXT_50 + NIFTY_MIDCAP_100 + NIFTY_SMALLCAP_100)
 )
 
+# ── FACTOR SCREENS ─────────────────────────────────────────────────────────
+# ponytail: hand-curated static snapshots — every member sits inside
+# NIFTY_BROAD so the stale audit and data fetches stay valid. Upgrade path:
+# rank candidates from the price cache (6m relative / excess return vs
+# NIFTY 50) and regenerate these lists instead of editing by hand.
+HIGH_ALPHA_STOCKS = [
+    "APOLLOHOSP",
+    "ASIANPAINT",
+    "ASTRAL",
+    "BAJAJ-AUTO",
+    "BAJFINANCE",
+    "BHARTIARTL",
+    "BOSCHLTD",
+    "BRITANNIA",
+    "CROMPTON",
+    "CUMMINSIND",
+    "DIVISLAB",
+    "DIXON",
+    "DRREDDY",
+    "EICHERMOT",
+    "GODREJCP",
+    "GRINDWELL",
+    "HCLTECH",
+    "HINDUNILVR",
+    "HONAUT",
+    "ICICIBANK",
+    "INFY",
+    "ITC",
+    "KPITTECH",
+    "LALPATHLAB",
+    "LT",
+    "LUPIN",
+    "MARICO",
+    "MARUTI",
+    "METROPOLIS",
+    "MFSL",
+    "NESTLEIND",
+    "PERSISTENT",
+    "POLYCAB",
+    "PVRINOX",
+    "SCHAEFFLER",
+    "SUNPHARMA",
+    "SUPREMEIND",
+    "TATACONSUM",
+    "TITAN",
+    "TORNTPHARM",
+    "TRENT",
+    "TVSMOTOR",
+    "ULTRACEMCO",
+    "VSTIND",
+    "ZYDUSLIFE",
+]
+
+HIGH_MOMENTUM_STOCKS = [
+    "AFFLE",
+    "ANGELONE",
+    "ASTRAL",
+    "BEL",
+    "BHARTIARTL",
+    "BLUESTARCO",
+    "BOSCHLTD",
+    "BSOFT",
+    "CAMPUS",
+    "CAMS",
+    "CDSL",
+    "COALINDIA",
+    "COFORGE",
+    "CROMPTON",
+    "CUMMINSIND",
+    "DATAPATTNS",
+    "DIXON",
+    "ELECON",
+    "GRINDWELL",
+    "HAL",
+    "HINDALCO",
+    "HONAUT",
+    "IRCTC",
+    "JSL",
+    "KPITTECH",
+    "LATENTVIEW",
+    "MPHASIS",
+    "NATIONALUM",
+    "NEWGEN",
+    "NMDC",
+    "NTPC",
+    "PERSISTENT",
+    "POLYCAB",
+    "SONATSOFTW",
+    "SUPREMEIND",
+    "THERMAX",
+    "TRENT",
+    "TVSMOTOR",
+    "VSTIND",
+    "ZENSARTECH",
+]
+
 # ── Dynamic Full-Market Placeholders (live fetch via symbol_fetcher) ─────
 # These are resolved lazily in get_universe() to avoid import-time network calls.
 # Initialized with NIFTY_BROAD so len>0 for tests/UI before live fetch replaces them.
@@ -689,6 +785,9 @@ UNIVERSES = {
     "NIFTY REALTY": NIFTY_REALTY,
     "NIFTY ENERGY": NIFTY_ENERGY,
     "NIFTY FINANCIAL": NIFTY_FINANCIAL,
+    # Factor Screens (curated subsets of NIFTY_BROAD)
+    "HIGH ALPHA STOCKS": HIGH_ALPHA_STOCKS,
+    "HIGH MOMENTUM STOCKS": HIGH_MOMENTUM_STOCKS,
     # Combined (static broad)
     "ALL (Combined)": NIFTY_BROAD,
     # ── Full Market — Live (chunked fetch, 5,900 unique) ──────────────────
@@ -716,6 +815,8 @@ _UNIVERSE_ALIASES = {
     "bsemidcap": "bse midcap",
     "bsesmallcap": "bse smallcap",
     "cashmarket": "cash market",
+    "highalphastocks": "high alpha stocks",
+    "highmomentumstocks": "high momentum stocks",
 }
 
 

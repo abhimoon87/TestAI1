@@ -46,7 +46,7 @@ from .ui_kit import (
     parse_watchlist_text,
     width_tier,
 )
-from .views_layout import LayoutViewMixin
+from .views_layout import SIDE_W, LayoutViewMixin
 from .views_results import ResultsViewMixin
 from .views_scan import ScanOrchestrationMixin
 from .views_settings import SettingsViewMixin
@@ -213,8 +213,10 @@ class ScannerApp(
 
         self.sidebar = self._build_sidebar()
         # Rebuilds (theme switch) must preserve the collapse state — a fresh
-        # Container defaults to visible, which would desync from the flag.
-        self.sidebar.visible = not getattr(self, "_sidebar_collapsed", False)
+        # Container defaults to expanded. Hide via width, not visible (see
+        # the ponytail note in _apply_width_tier: visible blanks the main area).
+        if getattr(self, "_sidebar_collapsed", False):
+            self.sidebar.width = 0
         self.right_panel = self._build_right_panel()
         # Rebuilds must re-derive auto-hide state for the current tier.
         self.right_panel.visible = self.width_tier != TIER_COMPACT or self._right_pinned
@@ -333,19 +335,7 @@ class ScannerApp(
         self.settings_view.visible = True
         self._fade_view_in(self.settings_view)
 
-    # ── Modern chrome: sidebar collapse, shortcuts, palette, toasts ──
-
-    def _toggle_sidebar(self, e=None):
-        """Collapse/expand the sidebar in place (manual override wins)."""
-        self._auto_side = False
-        self._sidebar_collapsed = not getattr(self, "_sidebar_collapsed", False)
-        box = getattr(self, "sidebar", None)
-        if box is not None:
-            box.visible = not self._sidebar_collapsed
-        try:
-            self.page.update()
-        except Exception:
-            logger.info("Sidebar toggle page.update failed", exc_info=True)
+    # ── Modern chrome: shortcuts, palette, toasts ──────────────────────
 
     def _toggle_right_panel(self, e=None):
         """Pin/unpin the profile panel (compact tiers auto-hide it)."""
@@ -392,17 +382,20 @@ class ScannerApp(
 
         # Sidebar auto-collapses into compact; widen restores it unless
         # the user had collapsed it manually before (or during) compact.
+        # ponytail: hide via width, not visible — flipping visible on this
+        # sidebar blanks the main area client-side (Flet 1.0 repaint bug;
+        # visible=False on right_panel is fine), width=0 renders identically.
         box = getattr(self, "sidebar", None)
         if compact and not getattr(self, "_sidebar_collapsed", False):
             self._sidebar_collapsed = True
             self._auto_side = True
             if box is not None:
-                box.visible = False
+                box.width = 0
         elif not compact and getattr(self, "_auto_side", False):
             self._auto_side = False
             self._sidebar_collapsed = False
             if box is not None:
-                box.visible = True
+                box.width = SIDE_W
 
         if not render:
             return
@@ -553,9 +546,6 @@ class ScannerApp(
             PaletteAction("export-csv", "Export CSV", "", lambda: self._export_csv()),
             PaletteAction(
                 "clear-results", "Clear results", "", lambda: self._clear_results()
-            ),
-            PaletteAction(
-                "toggle-sidebar", "Toggle sidebar", "", lambda: self._toggle_sidebar()
             ),
             PaletteAction(
                 "toggle-right-panel",

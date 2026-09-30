@@ -80,7 +80,7 @@ class ScanOrchestrationMixin:
             return
         self._stop_requested = True
         with self._scan_lock:
-            engine = self._scan_engine
+            engine = getattr(self, "_scan_engine", None)
         self.action_btn.disabled = True
         self.action_btn_label.value = "◷  STOPPING…"
         self.page.update()

@@ -491,13 +491,6 @@ class LayoutViewMixin:
         self.topbar = ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.IconButton(
-                        icon=ft.Icons.MENU_ROUNDED,
-                        icon_color=c["text_dim"],
-                        icon_size=18,
-                        tooltip="Toggle sidebar",
-                        on_click=self._toggle_sidebar,
-                    ),
                     self.topbar_title,
                     ft.Container(width=12),
                     self.search_entry,

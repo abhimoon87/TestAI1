@@ -497,3 +497,20 @@ class TestPageSize:
 
         app._load_all_pages()
         assert app.page_size == 500
+
+
+class TestStopBeforeEngineCreated:
+    """_stop_scan raced the worker thread: ``_scan_engine`` is assigned only
+    after the heavy ScannerEngine import, so STOP during "Starting…" hit a
+    bare attribute read and crashed ('ScannerApp' object has no attribute
+    '_scan_engine'). The guard must tolerate a not-yet-created engine."""
+
+    def test_action_click_while_starting_does_not_raise(self):
+        app = _make_app()
+        app.scanning = True  # _start_scan flipped it; worker not at engine= yet
+
+        app._on_action_click()  # routes to _stop_scan — engine never set
+
+        assert app._stop_requested is True
+        assert app.action_btn_label.value == "◷  STOPPING…"
+        assert app.action_btn.disabled is True

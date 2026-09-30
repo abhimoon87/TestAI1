@@ -722,10 +722,17 @@ class ResultsViewMixin:
                 txt.overflow = ft.TextOverflow.CLIP
                 txt.no_wrap = True
                 badge = self._sentiment_badge(r, c)
-                if badge is not None:
+                # Badge + client-side copy ride after the ticker; each
+                # swallows its own tap (no row → detail navigation).
+                tail = [
+                    ctrl
+                    for ctrl in (badge, self._copy_ticker_button(ticker, c))
+                    if ctrl is not None
+                ]
+                if tail:
                     txt.expand = True
                     cell.content = ft.Row(
-                        controls=[txt, badge],
+                        controls=[txt, *tail],
                         spacing=5,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     )
@@ -769,8 +776,9 @@ class ResultsViewMixin:
             margin=_margin_only(bottom=1),
         )
         row.on_hover = lambda e, base=bg: self._on_row_hover(row, base, e)
-        # Whole row → detail view (badge keeps news, sparkline keeps detail
-        # — Flet dispatches to the innermost control with a handler).
+        # Whole row → detail view (badge keeps news, copy button copies,
+        # sparkline keeps detail — Flet dispatches to the innermost
+        # control with a handler).
         row.on_click = lambda e, t=ticker: self._show_stock_detail(t)
         row.tooltip = "Click for detail view"
         row._base_bg = bg
@@ -1099,6 +1107,25 @@ class ResultsViewMixin:
                 return r
         return None
 
+    def _copy_ticker_button(self, ticker: str, c: dict) -> ft.IconButton | None:
+        """Icon button that copies ``ticker`` client-side (no server round-trip).
+
+        Constructing the action needs a live page context, which background
+        flushes don't have — so the button is best-effort and omitted there.
+        """
+        try:
+            action = ft.CopyToClipboard(ticker)
+        except Exception:
+            logger.debug("Copy action unavailable without page context", exc_info=True)
+            return None
+        return ft.IconButton(
+            icon=ft.Icons.CONTENT_COPY,
+            icon_size=14,
+            icon_color=c["text_dim"],
+            tooltip=f"Copy {ticker}",
+            action=action,
+        )
+
     def _news_stats_row(self, row: dict | None) -> ft.Row | None:
         """Key-price chips (close / RSI / 1M move) for the news panel header."""
         if not row:
@@ -1137,26 +1164,9 @@ class ResultsViewMixin:
             for label, color in chips
         ]
         if ticker:
-            # Client-side copy (no server round-trip). Constructing the
-            # action needs a live page context, which background flushes
-            # don't have — so the button is best-effort and omitted there.
-            try:
-                copy_action = ft.CopyToClipboard(ticker)
-            except Exception:
-                logger.info(
-                    "Copy action unavailable without page context", exc_info=True
-                )
-                copy_action = None
-            if copy_action is not None:
-                controls.append(
-                    ft.IconButton(
-                        icon=ft.Icons.CONTENT_COPY,
-                        icon_size=14,
-                        icon_color=c["text_dim"],
-                        tooltip=f"Copy {ticker}",
-                        action=copy_action,
-                    )
-                )
+            copy_btn = self._copy_ticker_button(ticker, c)
+            if copy_btn is not None:
+                controls.append(copy_btn)
         return ft.Row(controls=controls, spacing=5)
 
     @staticmethod

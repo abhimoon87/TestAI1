@@ -15,8 +15,11 @@ from scanner.shared.universes import (
     BSE_SENSEX,
     CASH_MARKET,
     FNO_STOCKS,
+    HIGH_ALPHA_STOCKS,
+    HIGH_MOMENTUM_STOCKS,
     NIFTY_50,
     NIFTY_AUTO,
+    NIFTY_BROAD,
     NIFTY_ENERGY,
     NIFTY_FINANCIAL,
     NIFTY_IT,
@@ -28,6 +31,7 @@ from scanner.shared.universes import (
     NIFTY_SMALLCAP_100,
     SUSPENDED_OR_DELISTED,
     UNIVERSES,
+    get_universe,
     strip_dead_members,
 )
 
@@ -56,6 +60,8 @@ class TestUniverseLists:
             ("NIFTY_REALTY", NIFTY_REALTY),
             ("NIFTY_ENERGY", NIFTY_ENERGY),
             ("NIFTY_FINANCIAL", NIFTY_FINANCIAL),
+            ("HIGH_ALPHA_STOCKS", HIGH_ALPHA_STOCKS),
+            ("HIGH_MOMENTUM_STOCKS", HIGH_MOMENTUM_STOCKS),
         ],
     )
     def test_not_empty(self, name, universe):
@@ -71,6 +77,8 @@ class TestUniverseLists:
             ("NIFTY_SMALLCAP_100", NIFTY_SMALLCAP_100),
             ("FNO_STOCKS", FNO_STOCKS),
             ("BSE_SENSEX", BSE_SENSEX),
+            ("HIGH_ALPHA_STOCKS", HIGH_ALPHA_STOCKS),
+            ("HIGH_MOMENTUM_STOCKS", HIGH_MOMENTUM_STOCKS),
         ],
     )
     def test_all_strings(self, name, universe):
@@ -101,6 +109,8 @@ class TestUniverseLists:
             ("FNO_STOCKS", FNO_STOCKS, 50),
             ("BSE_SENSEX", BSE_SENSEX, 25),
             ("NIFTY_IT", NIFTY_IT, 8),
+            ("HIGH_ALPHA_STOCKS", HIGH_ALPHA_STOCKS, 40),
+            ("HIGH_MOMENTUM_STOCKS", HIGH_MOMENTUM_STOCKS, 40),
         ],
     )
     def test_expected_sizes(self, name, universe, expected_min):
@@ -137,6 +147,8 @@ class TestUniversesMap:
             "CASH MARKET",
             "BSE SENSEX",
             "ALL (Combined)",
+            "HIGH ALPHA STOCKS",
+            "HIGH MOMENTUM STOCKS",
         ]
         for key in expected_keys:
             assert key in UNIVERSES, f"Missing key: {key}"
@@ -161,6 +173,26 @@ class TestUniversesMap:
             assert ticker in cash, f"NIFTY_50 stock {ticker} missing from CASH MARKET"
         for ticker in BANK_NIFTY:
             assert ticker in cash, f"BANK_NIFTY stock {ticker} missing from CASH MARKET"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Factor screens — curated subsets of NIFTY_BROAD
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFactorScreens:
+    @pytest.mark.parametrize("universe", [HIGH_ALPHA_STOCKS, HIGH_MOMENTUM_STOCKS])
+    def test_subset_of_nifty_broad_with_no_dead_members(self, universe):
+        """Members must be live NIFTY_BROAD tickers (stale audit + data)."""
+        assert set(universe) <= set(NIFTY_BROAD)
+        assert not set(universe) & set(SUSPENDED_OR_DELISTED)
+        assert len(universe) == len(set(universe))
+
+    def test_registered_in_map_and_resolves(self):
+        assert UNIVERSES["HIGH ALPHA STOCKS"] is HIGH_ALPHA_STOCKS
+        assert UNIVERSES["HIGH MOMENTUM STOCKS"] is HIGH_MOMENTUM_STOCKS
+        assert get_universe("HIGH ALPHA STOCKS") == HIGH_ALPHA_STOCKS
+        assert get_universe("highmomentumstocks") == HIGH_MOMENTUM_STOCKS
 
 
 # ══════════════════════════════════════════════════════════════════════════════
