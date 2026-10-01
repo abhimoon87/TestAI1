@@ -17,10 +17,8 @@ from scanner.shared.indicators import (
     adx,
     atr,
     ema,
-    highest,
     hull_ma,
     kama,
-    lowest,
     macd,
     obv,
     price_change,
@@ -373,22 +371,6 @@ class TestPriceChange:
         assert np.isnan(result.iloc[0])
         np.testing.assert_allclose(result.iloc[1], 10.0, atol=1e-10)
         np.testing.assert_allclose(result.iloc[2], 10.0, atol=1e-10)
-
-
-class TestHighestLowest:
-    def test_highest(self):
-        s = pd.Series([1.0, 3.0, 2.0, 5.0, 4.0])
-        result = highest(s, 3)
-        assert result.iloc[2] == 3.0
-        assert result.iloc[3] == 5.0
-        assert result.iloc[4] == 5.0
-
-    def test_lowest(self):
-        s = pd.Series([5.0, 3.0, 4.0, 1.0, 2.0])
-        result = lowest(s, 3)
-        assert result.iloc[2] == 3.0
-        assert result.iloc[3] == 1.0
-        assert result.iloc[4] == 1.0
 
 
 class TestVolumeProfilePoc:

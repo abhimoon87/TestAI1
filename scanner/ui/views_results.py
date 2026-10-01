@@ -44,14 +44,6 @@ from .ui_kit import (
     shimmer_row,
 )
 
-# Rating → theme-color-key accent used for row rails / washes.
-_RATING_ACCENT = {
-    "EXCELLENT": "green",
-    "GOOD": "lime",
-    "MODERATE": "orange",
-    "POOR": "red",
-}
-
 # Per-column (size, bold) — pairs with _row_specs() value/color order.
 _ROW_STYLE = (
     (11, False),
@@ -426,11 +418,6 @@ class ResultsViewMixin:
             margin=_margin_only(bottom=6),
         )
 
-    def _rating_accent(self, rating) -> str:
-        return self.theme_colors.get(
-            _RATING_ACCENT.get(rating, "red"), self.theme_colors["red"]
-        )
-
     # ── Active-filter chips (pinned section header) ───────────────────
 
     def _make_filter_chip(self, text, on_clear=None, tip=""):
@@ -677,7 +664,7 @@ class ResultsViewMixin:
         is_above = _score_of(r) >= threshold
         rating = r.get("combined_rating", "POOR")
         entry = bool(r.get("entry_signal"))
-        accent = self._rating_accent(rating)
+        accent = rating_color(rating, c)
         hidden = self._hidden_cols()
         # Style pairs track the same filtered column set as the specs.
         styles = [s for i, s in enumerate(_ROW_STYLE) if RESULT_COLS[i] not in hidden]
@@ -815,7 +802,7 @@ class ResultsViewMixin:
         total = _score_of(r)
         is_above = total >= threshold
         rating = r.get("combined_rating", "POOR")
-        accent = self._rating_accent(rating)
+        accent = rating_color(rating, c)
 
         for txt, (val, col) in zip(cells, self._row_specs(r, rank, c, threshold)):
             txt.value = val
@@ -1058,14 +1045,7 @@ class ResultsViewMixin:
         # "fetching…" placeholder; the worker replaces it once yfinance
         # responds.
         c = self.theme_colors
-        try:
-            from flet_spinkit import FadingCircle
-
-            spinner = FadingCircle(color=c["cyan"], size=14)
-        except ImportError:
-            spinner = ft.ProgressRing(
-                width=14, height=14, stroke_width=2, color=c["cyan"]
-            )
+        spinner = ft.ProgressRing(width=14, height=14, stroke_width=2, color=c["cyan"])
         loading = ft.Container(
             content=ft.Row(
                 [
@@ -1366,14 +1346,7 @@ class ResultsViewMixin:
         """Animated shimmer skeleton shown in the results area during a scan."""
         c = self.theme_colors
         skeleton_rows = [shimmer_row() for _ in range(8)]
-        try:
-            from flet_spinkit import DoubleBounce
-
-            spinner = DoubleBounce(color=c["green"], size=36)
-        except ImportError:
-            spinner = ft.ProgressRing(
-                width=36, height=36, stroke_width=3, color=c["green"]
-            )
+        spinner = ft.ProgressRing(width=36, height=36, stroke_width=3, color=c["green"])
         shimmer = ft.Shimmer(
             content=ft.Column(
                 skeleton_rows,

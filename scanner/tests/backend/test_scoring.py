@@ -15,12 +15,14 @@ import pandas as pd
 from scanner.backend import scoring
 from scanner.backend.scoring import (
     _get_combined_rating,
+    bullish_candle_pattern,
     check_filter,
     compute_scores,
     get_direction,
     get_ma,
     to_weekly,
 )
+from scanner.tests.conftest import _last2_df
 
 # ══════════════════════════════════════════════════════════════════════════════
 # get_ma — MA type dispatch
@@ -264,6 +266,46 @@ class TestGetDirection:
 
     def test_none_input(self):
         assert get_direction(None) is None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# bullish_candle_pattern — latest-bar candlestick confirmation
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestBullishCandlePattern:
+    def test_engulfing(self):
+        assert bullish_candle_pattern(_last2_df(98.0, 108.0, 97.0, 107.0)) == (
+            "engulfing"
+        )
+
+    def test_hammer(self):
+        # body 1, lower shadow 4 (>= 2x), upper shadow 0.5 (<= body)
+        assert bullish_candle_pattern(_last2_df(100.0, 101.5, 96.0, 101.0)) == "hammer"
+
+    def test_plain_green_bar_is_none(self):
+        # green but body doesn't cover the prior red body; wicks no hammer
+        assert bullish_candle_pattern(_last2_df(100.0, 110.0, 99.0, 102.0)) is None
+
+    def test_doji_is_none(self):
+        assert bullish_candle_pattern(_last2_df(100.0, 101.0, 99.0, 100.0)) is None
+
+    def test_red_bar_is_none(self):
+        assert bullish_candle_pattern(_last2_df(104.0, 105.0, 97.0, 101.0)) is None
+
+    def test_single_bar_is_none(self):
+        df = pd.DataFrame(
+            {"open": [100.0], "high": [101.0], "low": [99.0], "close": [101.0]}
+        )
+        assert bullish_candle_pattern(df) is None
+
+    def test_empty_and_none(self):
+        assert bullish_candle_pattern(pd.DataFrame()) is None
+        assert bullish_candle_pattern(None) is None
+
+    def test_nan_is_none(self):
+        df = _last2_df(98.0, 108.0, 97.0, np.nan)
+        assert bullish_candle_pattern(df) is None
 
 
 # ══════════════════════════════════════════════════════════════════════════════

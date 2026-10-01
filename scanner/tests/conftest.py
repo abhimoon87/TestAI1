@@ -78,6 +78,23 @@ def _frame_ending(days_ago, n=20):
     return pd.DataFrame({"close": [1.0] * n, "volume": [1] * n}, index=dates)
 
 
+def _last2_df(o, h, l, c):
+    """10 generic bars + a red bar (open 105, close 100) + the crafted last bar."""
+    flat = pd.DataFrame(
+        {
+            "open": [100.0] * 10,
+            "high": [102.0] * 10,
+            "low": [98.0] * 10,
+            "close": [101.0] * 10,
+        }
+    )
+    prev = pd.DataFrame(
+        {"open": [105.0], "high": [106.0], "low": [99.0], "close": [100.0]}
+    )
+    last = pd.DataFrame({"open": [o], "high": [h], "low": [l], "close": [c]})
+    return pd.concat([flat, prev, last], ignore_index=True)
+
+
 @pytest.fixture
 def synthetic_ohlcv(rng):
     """Generate a realistic synthetic OHLCV DataFrame (200 bars, daily-like).

@@ -183,28 +183,23 @@ def build_score_histogram(
 
 def build_price_chart(
     closes: list[float],
-    ma_fast: list[float] | None = None,
-    ma_slow: list[float] | None = None,
-    volume: list[float] | None = None,
     c: dict | None = None,
     width: int = 600,
     height: int = 200,
     title: str = "",
 ) -> ft.Container:
-    """Canvas line chart with optional MA overlays and volume bars.
+    """Canvas line chart of closing prices.
 
     ``closes``: list of closing prices (most recent last).
-    ``ma_fast`` / ``ma_slow``: optional MA overlay lines.
-    ``volume``: optional volume bars at the bottom (20% of height).
     """
     if c is None:
         c = {}
     if not closes or len(closes) < 2:
         return ft.Container(
             content=ft.Text(
-                "Insufficient price data", size=12, color=c.get("text_dim", "#8c92b0")
+                "Insufficient price data", size=12, color=c.get("text_dim", "#8ca89a")
             ),
-            bgcolor=c.get("card", "#1a1b24"),
+            bgcolor=c.get("card", "#152019"),
             border_radius=RADIUS_LG,
             width=width,
             height=height,
@@ -213,8 +208,7 @@ def build_price_chart(
 
     pad_l, pad_r, pad_t, pad_b = 8, 8, 24, 20
     chart_w = width - pad_l - pad_r
-    vol_h = int(height * 0.18) if volume else 0
-    chart_h = height - pad_t - pad_b - vol_h
+    chart_h = height - pad_t - pad_b
 
     n = len(closes)
     lo, hi = min(closes), max(closes)
@@ -238,7 +232,7 @@ def build_price_chart(
         Path(
             elements=line_elements,
             paint=ft.Paint(
-                color=c.get("cyan", "#22d3ee"),
+                color=c.get("cyan", "#14b8a6"),
                 stroke_width=1.5,
                 style=ft.PaintingStyle.STROKE,
                 stroke_cap=ft.StrokeCap.ROUND,
@@ -255,84 +249,11 @@ def build_price_chart(
         Path(
             elements=fill_elements,
             paint=ft.Paint(
-                color=ft.Colors.with_opacity(0.08, c.get("cyan", "#22d3ee")),
+                color=ft.Colors.with_opacity(0.08, c.get("cyan", "#14b8a6")),
                 style=ft.PaintingStyle.FILL,
             ),
         )
     )
-
-    # ── MA overlays ─────────────────────────────────────────────────
-    def _draw_ma(ma: list[float], color: str, label: str):
-        if not ma or len(ma) < 2:
-            return
-        offset = n - len(ma)
-        ma_pts = [(_x(offset + i), _y(v)) for i, v in enumerate(ma) if v is not None]
-        if len(ma_pts) < 2:
-            return
-        elems: list[Path.PathElement] = [Path.MoveTo(ma_pts[0][0], ma_pts[0][1])]
-        for x, y in ma_pts[1:]:
-            elems.append(Path.LineTo(x, y))
-        shapes.append(
-            Path(
-                elements=elems,
-                paint=ft.Paint(
-                    color=color,
-                    stroke_width=1,
-                    style=ft.PaintingStyle.STROKE,
-                    stroke_dash_pattern=[3, 2],
-                ),
-            )
-        )
-        # Legend dot
-        labels.append(
-            ft.Container(
-                content=ft.Row(
-                    [
-                        ft.Container(width=8, height=3, bgcolor=color, border_radius=2),
-                        ft.Text(label, size=8, color=color),
-                    ],
-                    spacing=3,
-                ),
-                left=pad_l + len(labels) * 70,
-                top=4,
-            )
-        )
-
-    _draw_ma(ma_fast, c.get("green", "#34d399"), "Fast MA")
-    _draw_ma(ma_slow, c.get("pink", "#a78bfa"), "Slow MA")
-
-    # ── Volume bars ─────────────────────────────────────────────────
-    if volume and vol_h > 0:
-        max_vol = max(volume) if volume else 1
-        if max_vol == 0:
-            max_vol = 1
-        vol_y_base = pad_t + chart_h + vol_h
-        vol_elements: list[Path.PathElement] = []
-        for i, v in enumerate(volume):
-            bx = _x(i)
-            bh = (v / max_vol) * (vol_h - 4)
-            by = vol_y_base - bh
-            vol_elements.extend(
-                [
-                    Path.MoveTo(bx - 1, by),
-                    Path.LineTo(bx + 1, by),
-                    Path.LineTo(bx + 1, vol_y_base),
-                    Path.LineTo(bx - 1, vol_y_base),
-                ]
-            )
-        if vol_elements:
-            # Colour volume bars: green if close > prev close, else red
-            shapes.append(
-                Path(
-                    elements=vol_elements,
-                    paint=ft.Paint(
-                        color=ft.Colors.with_opacity(
-                            0.35, c.get("text_faint", "#585d78")
-                        ),
-                        style=ft.PaintingStyle.FILL,
-                    ),
-                )
-            )
 
     # ── Y-axis labels ───────────────────────────────────────────────
     for i in range(5):
@@ -342,7 +263,7 @@ def build_price_chart(
             ft.Text(
                 f"{val:,.0f}",
                 size=8,
-                color=c.get("text_faint", "#585d78"),
+                color=c.get("text_faint", "#5a7a6a"),
                 left=0,
                 top=y - 6,
             )
@@ -353,9 +274,9 @@ def build_price_chart(
 
     result = ft.Container(
         content=content,
-        bgcolor=c.get("card", "#1a1b24"),
+        bgcolor=c.get("card", "#152019"),
         border_radius=RADIUS_LG,
-        border=_border_all(1, c.get("border", "#2a2b38")),
+        border=_border_all(1, c.get("border", "#1f3328")),
         padding=_padding_only(left=2, right=2, top=2, bottom=2),
     )
     if title:
@@ -366,7 +287,7 @@ def build_price_chart(
                         title,
                         size=12,
                         weight=ft.FontWeight.BOLD,
-                        color=c.get("text", "#e8eaf2"),
+                        color=c.get("text", "#e8f5ee"),
                     ),
                     result,
                 ],
@@ -440,7 +361,7 @@ def build_score_breakdown(
             ft.Text(
                 name,
                 size=9,
-                color=c.get("text_dim", "#8c92b0"),
+                color=c.get("text_dim", "#8ca89a"),
                 left=0,
                 top=y + 2,
             )
@@ -463,8 +384,8 @@ def build_score_breakdown(
 
     return ft.Container(
         content=content,
-        bgcolor=c.get("card", "#1a1b24"),
+        bgcolor=c.get("card", "#152019"),
         border_radius=RADIUS_LG,
-        border=_border_all(1, c.get("border", "#2a2b38")),
+        border=_border_all(1, c.get("border", "#1f3328")),
         padding=_padding_only(left=4, right=4, top=4, bottom=4),
     )

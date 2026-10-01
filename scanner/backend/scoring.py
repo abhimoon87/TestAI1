@@ -60,6 +60,7 @@ Refactored into composable helpers:
 from __future__ import annotations
 
 __all__ = [
+    "bullish_candle_pattern",
     "check_filter",
     "check_hp_freshness",
     "check_hp_volume",
@@ -370,6 +371,42 @@ def get_direction(filter_result: dict | None) -> str | None:
     if filter_result is None:
         return None
     return "Bull" if filter_result["ma_bullish"] else "Bear"
+
+
+def bullish_candle_pattern(df: pd.DataFrame) -> str | None:
+    """
+    Candlestick confirmation on the latest completed bar.
+
+    Returns "engulfing" for a bullish engulfing candle (prior bar red,
+    latest green, body covering the prior body), "hammer" for a hammer
+    (lower shadow >= 2x body, upper shadow <= body), else None.
+    Degenerate bars (doji, NaN, fewer than 2 rows) return None.
+    """
+    if df is None or len(df) < 2:
+        return None
+    try:
+        o, h, l, cl = (float(df[k].iloc[-1]) for k in ("open", "high", "low", "close"))
+        prev_o, prev_c = float(df["open"].iloc[-2]), float(df["close"].iloc[-2])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    if any(map(math.isnan, (o, h, l, cl, prev_o, prev_c))):
+        return None
+
+    body = abs(cl - o)
+    if body <= 0 or h <= l:
+        return None
+
+    # Bullish engulfing: prior red bar, latest green bar covering its body.
+    if prev_c < prev_o and cl > o and o <= prev_c and cl >= prev_o:
+        return "engulfing"
+
+    # Hammer: long lower shadow, small/no upper shadow.
+    lower = min(o, cl) - l
+    upper = h - max(o, cl)
+    if lower >= 2 * body and upper <= body:
+        return "hammer"
+
+    return None
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -5,7 +5,6 @@ source = scanner
 omit =
     scanner/tests/*
     scanner/setup_api_keys.py
-    scanner/backend/run_alpha_backtest.py
     */__pycache__/*
 
 [report]

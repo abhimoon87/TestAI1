@@ -8,6 +8,7 @@ from scanner.shared.constants import (
     DIRECTIONAL_TREND_FILTERS,
     POOR_RATINGS,
     RESULT_COLS,
+    TREND_FILTERS,
     score_of,
 )
 
@@ -24,8 +25,17 @@ def test_poor_ratings_are_tuple_of_str():
 
 
 def test_directional_trend_filters_content():
-    """DIRECTIONAL_TREND_FILTERS must contain exactly 'Bullish Only' and 'Bearish Only'."""
-    assert set(DIRECTIONAL_TREND_FILTERS) == {"Bullish Only", "Bearish Only"}
+    """DIRECTIONAL_TREND_FILTERS must be exactly the three directional options."""
+    assert set(DIRECTIONAL_TREND_FILTERS) == {
+        "Bullish Only",
+        "Bearish Only",
+        "Bullish + Candle",
+    }
+
+
+def test_trend_filters_superset_of_directional():
+    """Every directional filter must be a valid dropdown/CLI value."""
+    assert set(DIRECTIONAL_TREND_FILTERS) <= set(TREND_FILTERS)
 
 
 def test_score_of_zero_for_empty():

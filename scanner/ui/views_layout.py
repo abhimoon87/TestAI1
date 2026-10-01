@@ -241,7 +241,7 @@ class LayoutViewMixin:
             ["6 Months", "1 Year", "2 Years"], "1 Year"
         )
         self.trend_filter_dd = self._styled_dropdown(
-            ["All", "Bullish Only", "Bearish Only"], "All"
+            ["All", "Bullish Only", "Bearish Only", "Bullish + Candle"], "All"
         )
         self.rating_filter_dd = self._styled_dropdown(
             ["All", "Excellent", "Good", "Moderate", "Poor"],
@@ -1140,7 +1140,6 @@ class LayoutViewMixin:
         ("^BSESN", "SENSEX"),
         ("^CNXIT", "NIFTY IT"),
     )
-    _INDEX_FETCH_TIMEOUT = 8.0
 
     @staticmethod
     def _quote_from_df(df) -> dict | None:

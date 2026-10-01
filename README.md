@@ -40,7 +40,6 @@ The GUI also needs a display server.
 | Launch the GUI | `python -m scanner` (Windows: double-click `scanner/run.bat`, macOS/Linux: `scanner/run.sh`) |
 | Interactive CLI scan | `python -m scanner --cli` or `python -m scanner.backend.run_scanner` |
 | Headless scan from code | `ScannerEngine().scan(...)` — see `scanner/backend/scanner_engine.py` |
-| Backtest NIFTY Alpha 50 | `python -m scanner.backend.run_alpha_backtest` |
 | Backtest with options | `python -m scanner.backend.backtest --years 3` |
 
 In the GUI: pick a **universe**, **timeframe** (Daily/Weekly/Monthly), **data period**, optional **trend filter**, and a **min score threshold**, then press **RUN SCAN**. Results stream into the table incrementally; use the header row to sort, the search box to filter, and the top-bar buttons to export **HTML** or **CSV**. The **Import watchlist** button scans your own ticker list straight from a CSV/TXT file, and every news panel has a copy button for its ticker.
@@ -165,7 +164,6 @@ The **backtest engine** (`scanner/backend/backtest.py`) simulates the full strat
 historical daily data:
 
 ```bash
-python -m scanner.backend.run_alpha_backtest   # NIFTY Alpha 50
 python -m scanner.backend.backtest --years 3   # custom lookback
 ```
 

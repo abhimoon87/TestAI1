@@ -845,6 +845,7 @@ def fetch_batch_yfinance_stream(
                     progress=False,
                     threads=False,
                     timeout=15,
+                    repair=True,
                 )
             except Exception as e:
                 logger.warning("Chunk %d/%d download failed: %s", ci, len(chunks), e)

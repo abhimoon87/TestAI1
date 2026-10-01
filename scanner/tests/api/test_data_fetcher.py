@@ -373,6 +373,8 @@ class TestFetchBatchYfinance:
         # Verify .NS suffix was added
         call_args = mock_yf.download.call_args
         assert call_args[0][0] == ["INFY.NS"]
+        # Split/bonus price repair must be on (fixes bogus momentum inputs)
+        assert call_args.kwargs["repair"] is True
 
 
 class TestBatchDownloadCache:

@@ -52,8 +52,10 @@ ENRICH_OVERALL_TIMEOUT = 300
 TICKER_TIMEOUT = 60
 # Number of recent closes carried on each result row for the sparkline
 SPARK_BARS = 20
+# Valid trend filter values (dropdown + --trend-filter CLI flag)
+TREND_FILTERS = ("All", "Bullish Only", "Bearish Only", "Bullish + Candle")
 # Directional trend filters hide POOR/WEAK stocks
-DIRECTIONAL_TREND_FILTERS = ("Bullish Only", "Bearish Only")
+DIRECTIONAL_TREND_FILTERS = ("Bullish Only", "Bearish Only", "Bullish + Candle")
 POOR_RATINGS = ("POOR", "WEAK")
 # Stale member detection: default max age in days
 STALE_MEMBER_MAX_AGE_DAYS = 45

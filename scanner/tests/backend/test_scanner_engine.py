@@ -9,16 +9,18 @@ import pandas as pd
 import pytest
 
 from scanner.api import data_fetcher
+from scanner.backend import scanner_engine
 from scanner.backend.scanner_engine import (
     ScannerEngine,
     _build_scan_warnings,
     _enrich_rows_in_place,
     _find_stale_members,
+    _score_ticker,
     _stale_members_message,
     rating_ok_for_trend_filter,
 )
 from scanner.backend.settings_store import DEFAULT_SETTINGS
-from scanner.tests.conftest import _frame_ending
+from scanner.tests.conftest import _frame_ending, _last2_df
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +62,13 @@ class TestTrendFilterRating:
         assert not rating_ok_for_trend_filter("Bearish Only", "WEAK")
         assert rating_ok_for_trend_filter("Bearish Only", "MODERATE")
 
+    def test_bullish_candle_hides_poor(self):
+        """Bullish + Candle is directional: POOR/WEAK drop, rest stay."""
+        assert not rating_ok_for_trend_filter("Bullish + Candle", "POOR")
+        assert not rating_ok_for_trend_filter("Bullish + Candle", "WEAK")
+        assert rating_ok_for_trend_filter("Bullish + Candle", "GOOD")
+        assert rating_ok_for_trend_filter("Bullish + Candle", "MODERATE")
+
     def test_unknown_rating_is_kept(self):
         """A missing rating must never cause a row to be hidden defensively."""
         assert rating_ok_for_trend_filter("Bullish Only", None)
@@ -69,6 +78,82 @@ class TestTrendFilterRating:
         """Any unrecognised filter value behaves like 'All' (no rating drop)."""
         assert rating_ok_for_trend_filter("Bull", "POOR")
         assert rating_ok_for_trend_filter("", "POOR")
+
+
+class TestBullishCandleFilterGate:
+    """_score_ticker's "Bullish + Candle" gate: Bull direction + latest-bar pattern."""
+
+    @staticmethod
+    def _score(df, trend_filter, monkeypatch):
+        monkeypatch.setattr(
+            scanner_engine,
+            "check_filter",
+            lambda *a, **k: {"ma_bullish": True, "crossover_bars_ago": 0},
+        )
+        monkeypatch.setattr(
+            scanner_engine,
+            "compute_scores",
+            lambda *a, **k: {"total": 88.0, "combined_rating": "EXCELLENT"},
+        )
+        return _score_ticker(
+            "TC1",
+            df,
+            settings={"min_score": 50.0},
+            timeframe="D",
+            index_df=df,
+            trend_filter=trend_filter,
+            is_large=True,
+            global_data=None,
+            enrich=lambda *a: {},
+            use_enrichment_cache=False,
+        )
+
+    def test_passes_with_bullish_engulfing(self, monkeypatch):
+        """Bull direction + engulfing last bar → scored, not filtered."""
+        df = _last2_df(98.0, 108.0, 97.0, 107.0)
+        out, reason = self._score(df, "Bullish + Candle", monkeypatch)
+        assert out is not None
+        assert reason == "Bull"
+
+    def test_filters_missing_pattern(self, monkeypatch):
+        """Bull direction but no engulfing/hammer on the last bar → filtered."""
+        df = _last2_df(100.0, 110.0, 99.0, 102.0)
+        out, reason = self._score(df, "Bullish + Candle", monkeypatch)
+        assert (out, reason) == (None, "filtered")
+
+    def test_filters_non_bullish_direction(self, monkeypatch):
+        """Bear direction never reaches the pattern check → filtered."""
+        monkeypatch.setattr(
+            scanner_engine,
+            "check_filter",
+            lambda *a, **k: {"ma_bullish": False, "crossover_bars_ago": 0},
+        )
+        monkeypatch.setattr(
+            scanner_engine,
+            "compute_scores",
+            lambda *a, **k: pytest.fail("must not score past the direction gate"),
+        )
+        df = _last2_df(98.0, 108.0, 97.0, 107.0)
+        out, reason = _score_ticker(
+            "TC2",
+            df,
+            settings={"min_score": 50.0},
+            timeframe="D",
+            index_df=df,
+            trend_filter="Bullish + Candle",
+            is_large=True,
+            global_data=None,
+            enrich=lambda *a: {},
+            use_enrichment_cache=False,
+        )
+        assert (out, reason) == (None, "filtered")
+
+    def test_all_filter_never_checks_pattern(self, monkeypatch):
+        """trend_filter="All" ignores candlestick patterns entirely."""
+        df = _last2_df(100.0, 110.0, 99.0, 102.0)
+        out, reason = self._score(df, "All", monkeypatch)
+        assert out is not None
+        assert reason == "Bull"
 
 
 class TestEnrichRowsInPlaceCache:

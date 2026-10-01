@@ -63,7 +63,7 @@ SCORE_CATS = (
     ("Trend", "trend", 15, "green", "var(--green)"),
     ("Momentum", "momentum", 15, "cyan", "var(--cyan)"),
     ("RSI", "rsi", 8, "blue", "var(--blue)"),
-    ("MACD", "macd", 7, "macd", "#aa88ff"),
+    ("MACD", "macd", 7, "macd", "#2dd4bf"),
     ("Stoch", "stoch", 5, "pink", "#a78bfa"),
     ("OBV", "obv", 5, "lime", "var(--lime)"),
     ("Volume", "volume", 10, "orange", "var(--orange)"),

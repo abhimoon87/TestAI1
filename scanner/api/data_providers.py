@@ -83,12 +83,6 @@ VACUUM_SLACK_MB = 8.0
 
 from ..shared._index_utils import _normalize_daily_index
 
-
-def _normalize_cache_frame(df: pd.DataFrame) -> pd.DataFrame:
-    """Map a frame onto the canonical tz-naive IST trade-date calendar."""
-    return _normalize_daily_index(df)
-
-
 _PRUNE_LOCK = threading.Lock()
 _last_prune_ts = 0.0
 PRUNE_INTERVAL_SECONDS = 3600  # at most one stale-cache sweep per process per hour
@@ -262,7 +256,7 @@ def _read_cache_pair(
         if age_hours > CACHE_TTL_HOURS:
             return None
 
-        return _normalize_cache_frame(pd.read_parquet(cache_file)), cached_time
+        return _normalize_daily_index(pd.read_parquet(cache_file)), cached_time
     except Exception as e:
         logger.info("Cache read failed for %s: %s", ticker, e)
         return None
@@ -278,7 +272,7 @@ def _read_price_row(key: str, ticker: str) -> pd.DataFrame | None:
     if row is None or time.time() >= row["expires"]:
         return None
     try:
-        return _normalize_cache_frame(pd.read_parquet(io.BytesIO(row["payload"])))
+        return _normalize_daily_index(pd.read_parquet(io.BytesIO(row["payload"])))
     except Exception as e:
         logger.info("Cache read failed for %s: %s", ticker, e)
         return None
@@ -349,7 +343,7 @@ def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
     key = _cache_key(ticker, period, provider)
     with _CACHE_WRITE_LOCK:
         try:
-            df = _normalize_cache_frame(df)
+            df = _normalize_daily_index(df)
             _store_price_row(key, df, time.time() + CACHE_TTL_HOURS * 3600)
         except Exception as e:
             logger.debug("Cache write failed for %s: %s", ticker, e)

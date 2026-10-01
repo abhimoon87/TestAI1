@@ -6,6 +6,7 @@ run run_scan() with every external call (fetch, report, prompts) mocked.
 """
 
 import builtins
+import sys
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -180,3 +181,32 @@ class TestCliScoringLoop:
             run_scanner, "ScannerEngine", lambda: pytest.fail("no engine needed")
         )
         run_scanner.run_scan()  # 2-ticker TEST universe -> small path
+
+
+class TestTrendFilterFlag:
+    """--trend-filter CLI flag → shared scorer."""
+
+    def _run(self, cli_mocks, monkeypatch, argv):
+        monkeypatch.setattr(sys, "argv", argv)
+        seen = []
+
+        def fake_score_ticker(ticker, df, **kw):
+            seen.append(kw["trend_filter"])
+            return None, "filtered"
+
+        monkeypatch.setattr(run_scanner, "_score_ticker", fake_score_ticker)
+        run_scanner.run_scan()
+        return seen
+
+    def test_flag_forwarded_to_scorer(self, cli_mocks, monkeypatch):
+        argv = ["s", "--trend-filter", "Bullish + Candle"]
+        assert self._run(cli_mocks, monkeypatch, argv) == ["Bullish + Candle"] * 2
+
+    def test_invalid_value_falls_back_to_all(self, cli_mocks, monkeypatch):
+        argv = ["s", "--trend-filter", "sideways"]
+        assert self._run(cli_mocks, monkeypatch, argv) == ["All"] * 2
+
+    def test_parse_defaults(self):
+        parse = run_scanner._parse_trend_filter
+        assert parse(["s"]) == "All"
+        assert parse(["s", "--trend-filter"]) == "All"

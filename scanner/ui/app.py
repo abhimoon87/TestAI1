@@ -619,7 +619,6 @@ class ScannerApp(
             self._run_palette_action(state["shown"][0]) if state["shown"] else None
         )
         self._palette_query = query
-        self._palette_results = results_col
         self._palette_state = state
         _render_list()
         self._palette_dlg = ft.AlertDialog(

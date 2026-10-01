@@ -16,7 +16,6 @@ import flet as ft
 # ── Animation presets ───────────────────────────────────────────────
 ANIM_FAST = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
 ANIM_NORMAL = ft.Animation(300, ft.AnimationCurve.EASE_OUT)
-ANIM_BOUNCE = ft.Animation(300, ft.AnimationCurve.BOUNCE_OUT)
 
 # ── Corner-radius scale (single source of truth) ────────────────────
 # Geometric radii (circles = width/2, pills = height/2, 2px micro-rails)
@@ -30,7 +29,6 @@ RADIUS_XL = 16  # hero, large shells
 # Used by restyled surfaces — a full sweep of every ``size=`` literal
 # is deliberate debt, not a goal.
 FS_XS = 9  # eyebrow / micro labels
-FS_SM = 10  # captions, header cells
 FS_BASE = 11  # body, table cells
 FS_MD = 12  # secondary UI
 FS_LG = 13  # primary UI
@@ -117,7 +115,8 @@ def _card_shadow() -> list[ft.BoxShadow]:
     return [
         ft.BoxShadow(
             blur_radius=24, color=ft.Colors.with_opacity(0.55, ft.Colors.BLACK)
-        )
+        ),
+        ft.BoxShadow(blur_radius=40, spread_radius=-6, color="#10b98126"),
     ]
 
 

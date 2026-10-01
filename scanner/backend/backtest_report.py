@@ -65,7 +65,7 @@ def _generate_trade_chart(
 
     # Build SVG
     svg_parts = [
-        f'<svg width="{chart_w}" height="{chart_h}" style="background:#0f172a;border-radius:6px;font-family:monospace">'
+        f'<svg width="{chart_w}" height="{chart_h}" style="background:#0a0f0c;border-radius:6px;font-family:monospace">'
     ]
 
     # Grid lines (subtle)
@@ -73,20 +73,20 @@ def _generate_trade_chart(
         gy = margin_t + int(i / 4 * inner_h)
         gp = max_p - (i / 4 * p_range)
         svg_parts.append(
-            f'<line x1="{margin_l}" y1="{gy}" x2="{chart_w - margin_r}" y2="{gy}" stroke="#1e293b" stroke-width="0.5"/>'
+            f'<line x1="{margin_l}" y1="{gy}" x2="{chart_w - margin_r}" y2="{gy}" stroke="#1f3328" stroke-width="0.5"/>'
         )
         svg_parts.append(
-            f'<text x="{margin_l - 4}" y="{gy + 3}" fill="#475569" font-size="7" text-anchor="end">{gp:.0f}</text>'
+            f'<text x="{margin_l - 4}" y="{gy + 3}" fill="#5a7a6a" font-size="7" text-anchor="end">{gp:.0f}</text>'
         )
 
     # Target line (green dashed)
     if t.target_price > min_p:
         ty = sy(t.target_price)
         svg_parts.append(
-            f'<line x1="{margin_l}" y1="{ty}" x2="{chart_w - margin_r}" y2="{ty}" stroke="#22c55e" stroke-width="0.7" stroke-dasharray="3,3" opacity="0.6"/>'
+            f'<line x1="{margin_l}" y1="{ty}" x2="{chart_w - margin_r}" y2="{ty}" stroke="#10b981" stroke-width="0.7" stroke-dasharray="3,3" opacity="0.6"/>'
         )
         svg_parts.append(
-            f'<text x="{chart_w - margin_r - 2}" y="{ty - 3}" fill="#22c55e" font-size="7" text-anchor="end" opacity="0.8">TGT</text>'
+            f'<text x="{chart_w - margin_r - 2}" y="{ty - 3}" fill="#10b981" font-size="7" text-anchor="end" opacity="0.8">TGT</text>'
         )
 
     # Stop loss line (red dashed)
@@ -102,15 +102,15 @@ def _generate_trade_chart(
     # Entry line (blue)
     ey = sy(t.entry_price)
     svg_parts.append(
-        f'<line x1="{margin_l}" y1="{ey}" x2="{chart_w - margin_r}" y2="{ey}" stroke="#3b82f6" stroke-width="0.7" opacity="0.5"/>'
+        f'<line x1="{margin_l}" y1="{ey}" x2="{chart_w - margin_r}" y2="{ey}" stroke="#2dd4bf" stroke-width="0.7" opacity="0.5"/>'
     )
     svg_parts.append(
-        f'<text x="{margin_l + 2}" y="{ey - 3}" fill="#3b82f6" font-size="7" opacity="0.8">ENTRY</text>'
+        f'<text x="{margin_l + 2}" y="{ey - 3}" fill="#2dd4bf" font-size="7" opacity="0.8">ENTRY</text>'
     )
 
     # Price line (white)
     price_points = " ".join(f"{sx(i)},{sy(c)}" for i, c in enumerate(closes))
-    line_color = "#22c55e" if t.pnl > 0 else "#ef4444"
+    line_color = "#10b981" if t.pnl > 0 else "#ef4444"
     svg_parts.append(
         f'<polyline points="{price_points}" fill="none" stroke="{line_color}" stroke-width="1.2"/>'
     )
@@ -126,23 +126,23 @@ def _generate_trade_chart(
     if trail_idx >= 0:
         tx, ty = sx(trail_idx), sy(closes[trail_idx])
         svg_parts.append(
-            f'<polygon points="{tx},{ty - 4} {tx + 4},{ty} {tx},{ty + 4} {tx - 4},{ty}" fill="#eab308" stroke="#eab308" stroke-width="0.5"/>'
+            f'<polygon points="{tx},{ty - 4} {tx + 4},{ty} {tx},{ty + 4} {tx - 4},{ty}" fill="#facc15" stroke="#facc15" stroke-width="0.5"/>'
         )
 
     # Entry marker (blue circle)
     svg_parts.append(
-        f'<circle cx="{sx(0)}" cy="{sy(closes[0])}" r="3" fill="#3b82f6" stroke="#1e293b" stroke-width="1"/>'
+        f'<circle cx="{sx(0)}" cy="{sy(closes[0])}" r="3" fill="#2dd4bf" stroke="#1f3328" stroke-width="1"/>'
     )
 
     # Exit marker (orange circle)
-    exit_color = "#22c55e" if t.pnl > 0 else "#ef4444"
+    exit_color = "#10b981" if t.pnl > 0 else "#ef4444"
     svg_parts.append(
-        f'<circle cx="{sx(n - 1)}" cy="{sy(closes[-1])}" r="3" fill="{exit_color}" stroke="#1e293b" stroke-width="1"/>'
+        f'<circle cx="{sx(n - 1)}" cy="{sy(closes[-1])}" r="3" fill="{exit_color}" stroke="#1f3328" stroke-width="1"/>'
     )
 
     # Exit price label
     svg_parts.append(
-        f'<text x="{sx(n - 1) + 5}" y="{sy(closes[-1]) + 3}" fill="#f8fafc" font-size="7">Rs.{t.exit_price:,.0f}</text>'
+        f'<text x="{sx(n - 1) + 5}" y="{sy(closes[-1]) + 3}" fill="#e8f5ee" font-size="7">Rs.{t.exit_price:,.0f}</text>'
     )
 
     svg_parts.append("</svg>")
@@ -170,20 +170,20 @@ def generate_html_report(
     # --- Trade log rows with charts ---
     trade_rows = ""
     for t in sorted(engine.trades, key=lambda x: x.entry_date):
-        color = "#22c55e" if t.pnl > 0 else "#ef4444"
+        color = "#10b981" if t.pnl > 0 else "#ef4444"
         score_badge = (
-            "background:#22c55e"
+            "background:#10b981"
             if t.entry_score >= 70
-            else "background:#eab308"
+            else "background:#facc15"
             if t.entry_score >= 50
-            else "background:#94a3b8"
+            else "background:#8ca89a"
         )
-        pnl_bg = "rgba(34,197,94,0.08)" if t.pnl > 0 else "rgba(239,68,68,0.08)"
+        pnl_bg = "rgba(16,185,129,0.08)" if t.pnl > 0 else "rgba(239,68,68,0.08)"
         chart_svg = _generate_trade_chart(t, stock_data_for_charts)
         trade_rows += f"""
         <tr style="background:{pnl_bg}">
-            <td style="vertical-align:top"><strong>{html_mod.escape(t.ticker)}</strong><br><span style="color:#64748b;font-size:0.75em">{html_mod.escape(t.sector)}</span></td>
-            <td style="vertical-align:top">{t.entry_date.strftime("%Y-%m-%d")}<br><span style="color:#64748b;font-size:0.75em">{t.days_held}d</span></td>
+            <td style="vertical-align:top"><strong>{html_mod.escape(t.ticker)}</strong><br><span style="color:#8ca89a;font-size:0.75em">{html_mod.escape(t.sector)}</span></td>
+            <td style="vertical-align:top">{t.entry_date.strftime("%Y-%m-%d")}<br><span style="color:#8ca89a;font-size:0.75em">{t.days_held}d</span></td>
             <td style="vertical-align:top">Rs.{t.entry_price:,.0f}<br>SL: Rs.{t.stop_loss:,.0f}</td>
             <td style="vertical-align:top"><span style="{score_badge};color:#fff;padding:2px 6px;border-radius:4px;font-size:0.85em">{t.entry_score:.0f}</span></td>
             <td style="vertical-align:top">Rs.{t.exit_price:,.0f}<br>TGT: Rs.{t.target_price:,.0f}</td>
@@ -199,7 +199,7 @@ def generate_html_report(
         m["stock_stats"], key=lambda t: -m["stock_stats"][t]["total_pnl"]
     ):
         s = m["stock_stats"][ticker]
-        color = "#22c55e" if s["total_pnl"] > 0 else "#ef4444"
+        color = "#10b981" if s["total_pnl"] > 0 else "#ef4444"
         stock_rows += f"""
         <tr>
             <td><strong>{html_mod.escape(ticker)}</strong></td>
@@ -238,10 +238,10 @@ def generate_html_report(
         points = " ".join(f"{scale_x(i)},{scale_y(v)}" for i, v in enumerate(eq_vals))
 
         equity_chart_svg = f"""
-        <svg width="{chart_w}" height="{chart_h}" style="width:100%;height:auto;background:#0f172a;border-radius:8px">
-            <polyline points="{points}" fill="none" stroke="#22c55e" stroke-width="1.5"/>
+        <svg width="{chart_w}" height="{chart_h}" style="width:100%;height:auto;background:#0a0f0c;border-radius:8px">
+            <polyline points="{points}" fill="none" stroke="#10b981" stroke-width="1.5"/>
             <polyline points="0,{scale_y(m["initial_capital"])} {scale_x(n_points - 1)},{scale_y(m["initial_capital"])}"
-                      fill="none" stroke="#64748b" stroke-width="0.5" stroke-dasharray="4"/>
+                      fill="none" stroke="#8ca89a" stroke-width="0.5" stroke-dasharray="4"/>
         </svg>"""
     else:
         equity_chart_svg = "<p>No equity data</p>"
@@ -253,22 +253,22 @@ def generate_html_report(
 <title>Backtest Report - HMA/EMA Multi-Score Strategy</title>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; padding: 24px; }}
-  h1 {{ color: #f8fafc; font-size: 1.8em; margin-bottom: 4px; }}
-  h2 {{ color: #94a3b8; font-size: 1.1em; margin: 28px 0 12px; border-bottom: 1px solid #1e293b; padding-bottom: 6px; }}
-  .subtitle {{ color: #64748b; font-size: 0.9em; margin-bottom: 24px; }}
+  body {{ font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0f0c; color: #e8f5ee; padding: 24px; }}
+  h1 {{ color: #e8f5ee; font-size: 1.8em; margin-bottom: 4px; }}
+  h2 {{ color: #8ca89a; font-size: 1.1em; margin: 28px 0 12px; border-bottom: 1px solid #1f3328; padding-bottom: 6px; }}
+  .subtitle {{ color: #8ca89a; font-size: 0.9em; margin-bottom: 24px; }}
   .metrics-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }}
-  .metric-card {{ background: #1e293b; border-radius: 12px; padding: 20px; }}
-  .metric-label {{ color: #64748b; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }}
-  .metric-value {{ color: #f8fafc; font-size: 1.6em; font-weight: 700; margin-top: 4px; }}
-  .metric-value.positive {{ color: #22c55e; }}
+  .metric-card {{ background: #152019; border-radius: 12px; padding: 20px; }}
+  .metric-label {{ color: #8ca89a; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }}
+  .metric-value {{ color: #e8f5ee; font-size: 1.6em; font-weight: 700; margin-top: 4px; }}
+  .metric-value.positive {{ color: #10b981; }}
   .metric-value.negative {{ color: #ef4444; }}
-  .metric-sub {{ color: #94a3b8; font-size: 0.85em; margin-top: 2px; }}
-  .chart-container {{ background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 24px; }}
+  .metric-sub {{ color: #8ca89a; font-size: 0.85em; margin-top: 2px; }}
+  .chart-container {{ background: #152019; border-radius: 12px; padding: 20px; margin-bottom: 24px; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 0.88em; }}
-  th {{ background: #1e293b; color: #94a3b8; padding: 10px 12px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.8em; letter-spacing: 0.3px; }}
-  td {{ padding: 8px 12px; border-bottom: 1px solid #1e293b; }}
-  tr:hover td {{ background: #1e293b; }}
+  th {{ background: #152019; color: #8ca89a; padding: 10px 12px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 0.8em; letter-spacing: 0.3px; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #1f3328; }}
+  tr:hover td {{ background: #1a2a22; }}
 </style>
 </head>
 <body>

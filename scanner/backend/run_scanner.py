@@ -4,9 +4,7 @@ Scans Indian stocks and scores them using the same engine as the Pine Script ind
 
 Usage:
     python scanner/run_scanner.py
-
-Requirements:
-    pip install yfinance pandas numpy
+    python scanner/run_scanner.py --trend-filter "Bullish + Candle"
 """
 
 import logging
@@ -19,6 +17,7 @@ from ..api.data_fetcher import (
     fetch_batch_yfinance,
     fetch_index_data,
 )
+from ..shared.constants import TREND_FILTERS
 from ..shared.universes import UNIVERSES
 from .report import generate_html_report, save_report
 from .scanner_engine import (
@@ -132,6 +131,18 @@ def select_timeframe() -> str:
         logger.warning("  ✗ Invalid choice.")
 
 
+def _parse_trend_filter(argv: list[str]) -> str:
+    """Value of --trend-filter <value>; invalid/absent falls back to "All"."""
+    if "--trend-filter" not in argv:
+        return "All"
+    idx = argv.index("--trend-filter") + 1
+    val = argv[idx] if idx < len(argv) else ""
+    if val not in TREND_FILTERS:
+        logger.warning("Invalid --trend-filter %r, using All", val)
+        return "All"
+    return val
+
+
 def run_scan():
     """Main scan execution."""
     print_banner()
@@ -146,6 +157,7 @@ def run_scan():
     settings = load_settings()
     settings["data_period"] = period
     settings["timeframe"] = timeframe
+    trend_filter = _parse_trend_filter(sys.argv)
     index_symbol = settings.get("index_symbol", "NSEI")
 
     tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
@@ -154,6 +166,7 @@ def run_scan():
     logger.info("  Threshold:  %s+", threshold)
     logger.info("  Period:     %s", period)
     logger.info("  Timeframe:  %s", tf_names.get(timeframe, timeframe))
+    logger.info("  TrendFilter:%s", trend_filter)
     logger.info(
         "  FastMA:     %s%d  SlowMA: %s%d",
         settings.get("fast_ma_type", "HMA"),
@@ -220,7 +233,7 @@ def run_scan():
             settings=settings,
             timeframe=timeframe,
             index_df=index_df,
-            trend_filter="All",  # CLI has no directional filter
+            trend_filter=trend_filter,
             is_large=is_large,
             global_data=global_data,
             enrich=enrich,

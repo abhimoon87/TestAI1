@@ -12,10 +12,8 @@ __all__ = [
     "adx",
     "atr",
     "ema",
-    "highest",
     "hull_ma",
     "kama",
-    "lowest",
     "macd",
     "obv",
     "price_change",
@@ -267,16 +265,6 @@ def price_change(series: pd.Series, period: int) -> pd.Series:
     base = series.shift(period)
     base = base.mask(base == 0)
     return ((series - base) / base) * 100
-
-
-def highest(series: pd.Series, length: int) -> pd.Series:
-    """Rolling highest value."""
-    return series.rolling(length).max()
-
-
-def lowest(series: pd.Series, length: int) -> pd.Series:
-    """Rolling lowest value."""
-    return series.rolling(length).min()
 
 
 def volume_profile_poc(

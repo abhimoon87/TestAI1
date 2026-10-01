@@ -37,6 +37,9 @@ scanner/api_config.json
 .DS_Store
 Thumbs.db
 
+# Editor agent worktrees
+.kilo/
+
 # Cache
 scanner/.cache/
 scanner/**/.cache/

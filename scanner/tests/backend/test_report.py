@@ -785,8 +785,8 @@ class TestDetailPanelParity:
     def test_detail_chart_axis_labels_and_cyan_line(self):
         html = generate_html_report([self._rich_row()], fetch_news=False)
         assert html.count('<text class="axis-lbl"') == 5  # hi → lo y-axis ticks
-        assert 'stroke="#22d3ee"' in html  # app-cyan detail line
-        assert "#34d399" in html  # row sparklines keep direction colors
+        assert 'stroke="#14b8a6"' in html  # app-cyan detail line
+        assert "#10b981" in html  # row sparklines keep direction colors
         assert ".axis-lbl" in _css_block()
 
     def test_chart_needs_px_tail(self):

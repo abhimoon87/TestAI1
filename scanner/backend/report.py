@@ -20,7 +20,7 @@ def _sparkline_svg(closes: list, width: int = 100, height: int = 22) -> str:
     if len(px) < 2:
         return ""
     up = px[-1] >= px[0]
-    stroke = "#34d399" if up else "#f87171"
+    stroke = "#10b981" if up else "#f87171"
     fill = "rgba(52,211,153,0.15)" if up else "rgba(248,113,113,0.15)"
     lo, hi = min(px), max(px)
     span = (hi - lo) or 1.0
@@ -29,7 +29,7 @@ def _sparkline_svg(closes: list, width: int = 100, height: int = 22) -> str:
     detail = width > 200
     pad_l = 46 if detail else 0
     if detail:
-        stroke, fill = "#22d3ee", "rgba(34,211,238,0.15)"
+        stroke, fill = "#14b8a6", "rgba(20,184,166,0.15)"
     coords = []
     for i, v in enumerate(px):
         x = pad_l + i / max(n - 1, 1) * (width - pad_l)
@@ -52,7 +52,7 @@ def _sparkline_svg(closes: list, width: int = 100, height: int = 22) -> str:
             y = 2 + f * (height - 4)
             grid += (
                 f'<line class="grid" x1="{pad_l}" y1="{y:.0f}" x2="{width}" '
-                f'y2="{y:.0f}" stroke="rgba(160,170,200,0.14)" stroke-width="1"/>'
+                f'y2="{y:.0f}" stroke="rgba(90,122,106,0.16)" stroke-width="1"/>'
                 f'<text class="axis-lbl" x="{pad_l - 6}" y="{y:.0f}" '
                 f'text-anchor="end" dominant-baseline="middle">'
                 f"{hi - f * span:,.0f}</text>"
@@ -338,28 +338,28 @@ def fetch_news_batch(
 def _css_block() -> str:
     """CSS rules for the report <style> block (plain string, no f-string)."""
     css = """    :root {
-        /* Aurora (GUI) dark-theme palette — keeps the exported report visually
+        /* Emerald (GUI) dark-theme palette — keeps the exported report visually
            identical to the app: same surfaces, borders and accent colors. */
-        --bg: #0f0f13; --surface: #16161b; --surface2: #1c1c22; --surface3: #24242c;
-        --border: #2b2b34; --border-light: #3a3a46; --text: #e9eaf0; --text-dim: #8e93a8; --text-faint: #5c6178;
-        --green: #34d399; --lime: #a3e635; --orange: #fb923c; --red: #f87171;
-        --blue: #60a5fa; --cyan: #22d3ee; --yellow: #facc15;
+        --bg: #0a0f0c; --surface: #111a16; --surface2: #152019; --surface3: #1a2a22;
+        --border: #1f3328; --border-light: #2a4a3a; --text: #e8f5ee; --text-dim: #8ca89a; --text-faint: #5a7a6a;
+        --green: #10b981; --lime: #a3e635; --orange: #fb923c; --red: #f87171;
+        --blue: #2dd4bf; --cyan: #14b8a6; --yellow: #facc15;
         /* Component tints for the dark-only report */
         --focus-ring: rgba(52,211,153,0.15); --row-hover: rgba(52,211,153,0.06);
         --row-hl: rgba(52,211,153,0.10); --ticker-hover-bg: rgba(52,211,153,0.12);
-        --ticker-hover-c: #ffffff; --track: rgba(255,255,255,0.06); --row-line: rgba(43,43,52,0.6);
-        --news-line: rgba(43,43,52,0.5);
+        --ticker-hover-c: #ffffff; --track: rgba(255,255,255,0.06); --row-line: rgba(31,51,40,0.6);
+        --news-line: rgba(31,51,40,0.5);
         --radius: 12px; --radius-sm: 8px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    ::selection { background: rgba(52,211,153,0.30); color: #ffffff; }
+    ::selection { background: rgba(16,185,129,0.30); color: #ffffff; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: var(--bg); }
     ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 99px; border: 2px solid var(--bg); }
     ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
-    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(1200px 600px at 0% -10%, #1b2f4d 0%, var(--bg) 55%), var(--bg); color: var(--text); padding: 24px; line-height: 1.5; min-height: 100vh; }
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: radial-gradient(1200px 600px at 0% -10%, #0d3328 0%, var(--bg) 55%), var(--bg); color: var(--text); padding: 24px; line-height: 1.5; min-height: 100vh; }
     h1 { font-family: 'Inter', sans-serif; font-size: 1.35em; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 2px;
-         background: linear-gradient(90deg, #38bdf8, #a78bfa); -webkit-background-clip: text; background-clip: text; color: transparent; }
+         background: linear-gradient(90deg, #10b981, #14b8a6); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .subtitle { color: var(--text-dim); font-size: 0.82em; margin-bottom: 2px; }
 
     /* ─── Hero header (compact) ───────────────────────────── */
@@ -368,9 +368,9 @@ def _css_block() -> str:
             border: 1px solid var(--border); border-radius: 14px; padding: 13px 20px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
     .hero::before { content: ''; position: absolute; top: -70px; right: -50px; width: 280px; height: 190px; pointer-events: none;
-                    background: radial-gradient(closest-side, rgba(34,211,238,0.16), transparent 70%); }
+                    background: radial-gradient(closest-side, rgba(16,185,129,0.16), transparent 70%); }
     .hero-brand { flex: none; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
-                  font-size: 17px; color: #06121a; border-radius: 10px;
+                  font-size: 17px; color: #052e16; border-radius: 10px;
                   background: linear-gradient(135deg, var(--green), var(--cyan));
                   box-shadow: 0 4px 14px rgba(52,211,153,0.35); }
     .hero-text { position: relative; min-width: 0; }
@@ -412,7 +412,7 @@ def _css_block() -> str:
     .chip.active { background: rgba(52,211,153,0.14); border-color: rgba(52,211,153,0.45); color: var(--green); }
     .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
     table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8em; min-width: 1250px; }
-    th { background: rgba(28,28,34,0.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    th { background: rgba(17,26,22,0.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
          color: var(--text-dim); padding: 9px 10px; text-align: left; font-weight: 600; font-size: 0.75em; letter-spacing: 0.06em; text-transform: uppercase;
           border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; position: sticky; top: 0; z-index: 2; white-space: nowrap; transition: color 0.15s, background 0.15s; }
     th::before { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
@@ -447,7 +447,7 @@ def _css_block() -> str:
     .bar { height: 100%; border-radius: 99px; background: var(--green); transition: width 0.4s cubic-bezier(0.22,1,0.36,1); }
     .bar.mom { background: var(--cyan); }
     .bar.rsi { background: var(--blue); }
-    .bar.macd { background: #a78bfa; }
+    .bar.macd { background: #2dd4bf; }
     .bar.vol { background: var(--orange); }
     .bar.rs { background: var(--lime); }
     .bar.fund { background: #ffe600; }

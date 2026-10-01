@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import TypedDict
 
 from ..shared import db
-from ..shared.constants import RESULT_COLS
+from ..shared.constants import RESULT_COLS, TREND_FILTERS
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class ScannerSettings(TypedDict, total=False):
     min_score: float  # 0-100
     data_period: str  # 6mo | 1y | 2y
     timeframe: str  # D | W | M
-    trend_filter: str  # All | Bullish Only | Bearish Only
+    trend_filter: str  # All | Bullish Only | Bearish Only | Bullish + Candle
     # Dead-symbol cache
     negative_cache_ttl_hours: int
     # Scan hygiene: warn when a universe member's data is this old (days)
@@ -270,7 +270,7 @@ def _sanitize_settings(saved: dict) -> dict:
                     "slope_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
                     "data_period": ("6mo", "1y", "2y"),
                     "timeframe": ("D", "W", "M"),
-                    "trend_filter": ("All", "Bullish Only", "Bearish Only"),
+                    "trend_filter": TREND_FILTERS,
                 }
                 if key in enums and sval not in enums[key]:
                     raise ValueError(key)
