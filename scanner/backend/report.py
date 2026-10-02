@@ -159,7 +159,7 @@ def _sentiment(title: str, summary: str = "") -> str:
     b = len(words & SENTIMENT_BAD)
     if g > b:
         return "Good"
-    elif b > g:
+    if b > g:
         return "Bad"
     return "Neutral"
 
@@ -827,7 +827,7 @@ def _histogram_html(results: list) -> str:
     ]
     top = max(counts, default=0) or 1
     cols = ""
-    for (label, _, _, cls), n in zip(buckets, counts):
+    for (label, _, _, cls), n in zip(buckets, counts, strict=True):
         cols += (
             f'<div class="hist-col"><span class="hist-n">{n}</span>'
             f'<div class="hist-bar {cls}" style="height:{n / top * 100:.0f}%"></div>'
@@ -1001,7 +1001,7 @@ def _table_head_html() -> str:
 
 def _badge_html(r: dict, score: float) -> str:
     """Rating badge: combined rating when present, else score-based."""
-    combined_rating = r.get("combined_rating", None)
+    combined_rating = r.get("combined_rating")
     if combined_rating:
         rating_lower = _html.escape(combined_rating.lower())
         badge = (
@@ -1332,8 +1332,8 @@ def _result_row_html(
     news_html = _news_panel_html(ticker, news_items, fetch_news, detail_html)
 
     return f"""
-        <tr class="{"highlight" if score >= threshold else ""}" 
-            data-ma-bull="{"true" if ma_bullish else "false"}" 
+        <tr class="{"highlight" if score >= threshold else ""}"
+            data-ma-bull="{"true" if ma_bullish else "false"}"
             data-above-poc="{"true" if above_poc else "false"}"
             data-both-ma="{"true" if close_above_both else "false"}"
             data-crossed="{"true" if ma_crossed else "false"}"
@@ -1454,7 +1454,7 @@ def generate_html_report(
     for r in results:
         rows_html += _result_row_html(r, threshold, news_map, fetch_news, flow)
 
-    html = f"""<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1487,16 +1487,14 @@ def generate_html_report(
 </body>
 </html>"""
 
-    return html
-
 
 def _score_class(score: float) -> str:
     """Return CSS class for score coloring."""
     if score >= 70:
         return "excellent"
-    elif score >= 50:
+    if score >= 50:
         return "good"
-    elif score >= 30:
+    if score >= 30:
         return "moderate"
     return "poor"
 

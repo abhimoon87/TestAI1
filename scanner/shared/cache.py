@@ -43,6 +43,9 @@ class TTLCache(Generic[T]):
         self.namespace = namespace
         self._store: dict[str, tuple[T, float]] = {}
         self._lock = threading.Lock()
+        # Bumped by clear(); guards against an in-flight DB read re-inserting
+        # a cleared entry with a fresh TTL.
+        self._gen = 0
 
     def get(self, key: str) -> T | None:
         with self._lock:
@@ -62,6 +65,8 @@ class TTLCache(Generic[T]):
         # ponytail: unnamed caches are memory-only (no namespace, no isolation)
         if not self.namespace:
             return None
+        with self._lock:
+            gen = self._gen
         try:
             value = kv_get_json(self.namespace, key)
         except Exception:
@@ -69,7 +74,8 @@ class TTLCache(Generic[T]):
         if value is None:
             return None
         with self._lock:
-            self._store[key] = (copy.deepcopy(value), time.monotonic())
+            if self._gen == gen:
+                self._store[key] = (copy.deepcopy(value), time.monotonic())
         return copy.deepcopy(value)
 
     def set(self, key: str, value: T) -> None:
@@ -84,6 +90,7 @@ class TTLCache(Generic[T]):
 
     def clear(self) -> None:
         with self._lock:
+            self._gen += 1
             self._store.clear()
         if self.namespace:
             try:

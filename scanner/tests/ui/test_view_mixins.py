@@ -15,7 +15,7 @@ from scanner.shared.themes import THEMES
 from scanner.ui.views_results import ResultsViewMixin
 
 from .conftest import FakePage as _FakePage  # noqa: F401  (re-export)
-from .conftest import make_app as _make_app  # noqa: F401
+from .conftest import make_app as _make_app
 
 
 def _cell(row, idx):
@@ -656,9 +656,7 @@ class TestInsightStrip:
         gd = chart.content
         assert isinstance(gd, ft.GestureDetector)
         bar_w = (520 - 36 - 12) / 10
-        tap = lambda x: type(  # noqa: E731
-            "E", (), {"local_position": type("P", (), {"x": x})()}
-        )()
+        tap = lambda x: type("E", (), {"local_position": type("P", (), {"x": x})()})()
         gd.on_tap_down(tap(36 + 6.5 * bar_w))
         assert got == [6]
         gd.on_tap_down(tap(10))  # outside the plot — ignored

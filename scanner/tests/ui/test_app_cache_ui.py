@@ -9,7 +9,7 @@ from scanner.ui.app import ScannerApp
 from .conftest import FakeButton as _FakeButton  # noqa: F401
 from .conftest import FakeLabel as _FakeLabel  # noqa: F401
 from .conftest import FakePage as _FakePage  # noqa: F401
-from .conftest import make_app as _make_app  # noqa: F401
+from .conftest import make_app as _make_app
 
 
 def _populated_text(n):

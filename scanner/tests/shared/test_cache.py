@@ -125,6 +125,32 @@ class TestTTLCacheThreadSafety:
         assert cache.size == 1
 
 
+class TestTTLCacheClearRace:
+    def test_clear_during_db_read_does_not_resurrect(self, monkeypatch):
+        """A clear() landing during an in-flight DB read must not re-insert
+        the cleared entry with a fresh TTL."""
+        from scanner.shared import cache as cache_mod
+
+        c = TTLCache(ttl=3600, namespace="test_clear_race")
+        c.set("k", {"a": 1})  # both layers have it
+        c._store.pop("k")  # force the DB backstop path
+
+        calls = {"n": 0}
+
+        def racing_kv(ns, key):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                c.clear()  # clear lands while the read is "in flight"
+                return {"a": 1}  # stale value the read already fetched
+            return None
+
+        monkeypatch.setattr(cache_mod, "kv_get_json", racing_kv)
+
+        assert c.get("k") == {"a": 1}  # one stale serve is acceptable
+        assert "k" not in c._store  # ...but it must not be resurrected
+        assert c.get("k") is None  # subsequent reads see the clear
+
+
 class TestTTLCachePersistence:
     """Named caches survive instance death via the shared sqlite kv store."""
 

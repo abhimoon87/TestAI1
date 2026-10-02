@@ -415,9 +415,12 @@ def _enrich_rows_in_place(
                                 lambda: fetch_fundamentals(ticker),
                                 timeout=TICKER_TIMEOUT,
                             )
-                            if fund is not None and fund is not _TIMEOUT:
-                                if provider_keys:
-                                    enrichment_put(ticker, provider_keys, fund)
+                            if (
+                                fund is not None
+                                and fund is not _TIMEOUT
+                                and provider_keys
+                            ):
+                                enrichment_put(ticker, provider_keys, fund)
                         if fund is not None and fund is not _TIMEOUT:
                             df.attrs["_fundamentals"] = fund
                     except (RequestException, ValueError, KeyError) as e:
@@ -1432,7 +1435,7 @@ class ScannerEngine:
                     # callback sees the same sequence as a sequential run.
                     items = list(chunk_data.items())
                     ordered, _ = _parallel_score(items, _score_one, self._cancel_event)
-                    for idx, (ticker, _df) in enumerate(items):
+                    for idx, (_ticker, _df) in enumerate(items):
                         res = ordered.get(idx)
                         if res is None:
                             continue  # cancelled before this item ran

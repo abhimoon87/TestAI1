@@ -538,7 +538,7 @@ def fetch_insider_data(
             "source": "none",
         }
 
-    weighted = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
+    weighted = sum(s * w for s, w in zip(scores, weights, strict=True)) / sum(weights)
 
     sources = []
     if aletheia:

@@ -180,9 +180,7 @@ class TestSmallCacheReadthrough:
             return {"_sentiment_score": 0.7, "_article_count": 3}
 
         df = _crossover_df()
-        out, _ = self._score(
-            "PF11", df, enrich, lambda ticker: {"pe_ratio": 15.0}, monkeypatch
-        )
+        self._score("PF11", df, enrich, lambda ticker: {"pe_ratio": 15.0}, monkeypatch)
         assert calls == ["PF11"]
         assert df.attrs.get("_fundamentals") == {"pe_ratio": 15.0}
         entry = data_fetcher._enrichment_cache_get("PF11")

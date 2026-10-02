@@ -180,9 +180,9 @@ def fetch_nse_sme(trade_date: date | None = None) -> list[str]:
             df = cm.sme_band_complete(trade_date=d.strftime("%d-%m-%Y"))
             if "Symbol" in df.columns:
                 return df["Symbol"].str.strip().tolist()
-            elif "symbol" in df.columns:
+            if "symbol" in df.columns:
                 return df["symbol"].str.strip().tolist()
-            elif "SYMBOL" in df.columns:
+            if "SYMBOL" in df.columns:
                 return df["SYMBOL"].str.strip().tolist()
         except (KeyError, ValueError, ConnectionError, TimeoutError, OSError) as e:
             logger.debug("SME fetch failed for %s: %s", d, e)
@@ -224,9 +224,9 @@ def _fetch_index_list_raw(func) -> list[str]:
     df = func()
     if "Symbol" in df.columns:
         return df["Symbol"].str.strip().tolist()
-    elif "symbol" in df.columns:
+    if "symbol" in df.columns:
         return df["symbol"].str.strip().tolist()
-    elif "SYMBOL" in df.columns:
+    if "SYMBOL" in df.columns:
         return df["SYMBOL"].str.strip().tolist()
     return []
 

@@ -115,13 +115,13 @@ def get_ma(
     """Universal MA selector matching the Pine Script get_ma function."""
     if ma_type == "HMA":
         return hull_ma(src, length)
-    elif ma_type == "EMA":
+    if ma_type == "EMA":
         return ema(src, length)
-    elif ma_type == "SMA":
+    if ma_type == "SMA":
         return sma(src, length)
-    elif ma_type == "KAMA":
+    if ma_type == "KAMA":
         return kama(src, length)
-    elif ma_type == "VWMA":
+    if ma_type == "VWMA":
         if volume is not None and not volume.empty:
             return vwma(src, volume, length)
         return ema(src, length)  # fallback if no volume

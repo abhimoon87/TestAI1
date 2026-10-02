@@ -217,24 +217,29 @@ def _sanitize_settings(saved: dict) -> dict:
     for key, val in saved.items():
         if key not in DEFAULT_SETTINGS:
             if (
-                key == "ui_sort_col"
+                (
+                    key == "ui_sort_col"
+                    and isinstance(val, int)
+                    and 0 <= val < len(RESULT_COLS)
+                )
+                or key == "ui_sort_reverse"
+                and isinstance(val, bool)
+                or key == "ui_page_size"
                 and isinstance(val, int)
-                and 0 <= val < len(RESULT_COLS)
+                and 0 < val <= 500
+                or key == "ui_rating_filter"
+                and val
+                in (
+                    "ALL",
+                    "EXCELLENT",
+                    "GOOD",
+                    "MODERATE",
+                    "POOR",
+                )
+                or key == "universe"
+                and isinstance(val, str)
+                and val
             ):
-                cleaned[key] = val
-            elif key == "ui_sort_reverse" and isinstance(val, bool):
-                cleaned[key] = val
-            elif key == "ui_page_size" and isinstance(val, int) and 0 < val <= 500:
-                cleaned[key] = val
-            elif key == "ui_rating_filter" and val in (
-                "ALL",
-                "EXCELLENT",
-                "GOOD",
-                "MODERATE",
-                "POOR",
-            ):
-                cleaned[key] = val
-            elif key == "universe" and isinstance(val, str) and val:
                 cleaned[key] = val
             else:
                 logger.debug("Dropping unknown setting %r", key)

@@ -440,7 +440,9 @@ def fetch_social_sentiment(
             "twitter": None,
         }
 
-    weighted_score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
+    weighted_score = sum(s * w for s, w in zip(scores, weights, strict=True)) / sum(
+        weights
+    )
 
     sources = []
     if reddit and reddit.mention_count > 0:
@@ -460,7 +462,9 @@ def fetch_social_sentiment(
             mention_total += wsb.mention_count
             sources.append("wsb")
             # Recalculate weighted score
-            weighted_score = sum(s * w for s, w in zip(scores, weights)) / sum(weights)
+            weighted_score = sum(
+                s * w for s, w in zip(scores, weights, strict=True)
+            ) / sum(weights)
     except Exception as e:
         logger.info("WSB sentiment fetch failed for %s: %s", ticker, e)
 

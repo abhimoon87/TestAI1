@@ -22,13 +22,13 @@ import pandas as pd
 
 from ..api.data_fetcher import fetch_batch_yfinance, fetch_index_data
 from ..shared.universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
-from .backtest_indicators import (  # noqa: E402
+from .backtest_indicators import (
     precompute_nifty,
     precompute_stock,
 )
 
 # Sub-module re-exports (backward-compatible public API)
-from .backtest_models import (  # noqa: E402
+from .backtest_models import (
     DEFAULT_SETTINGS,
     WARMUP_BARS,
     Position,
@@ -37,15 +37,15 @@ from .backtest_models import (  # noqa: E402
     TradeResult,
     get_sector,
 )
-from .backtest_position import (  # noqa: E402
+from .backtest_position import (
     _close_position,
     update_position,
 )
-from .backtest_report import (  # noqa: E402
+from .backtest_report import (
     generate_html_report,
     save_trades_csv,
 )
-from .backtest_scoring import compute_score_at_bar  # noqa: E402
+from .backtest_scoring import compute_score_at_bar
 from .scoring import detect_crossover, get_ma
 
 logger = logging.getLogger(__name__)
@@ -701,7 +701,7 @@ class BacktestEngine:
             ss["total_pnl_pct"] += t.pnl_pct
             ss["stocks"].add(t.ticker)
 
-        for sec, ss in sector_stats.items():
+        for ss in sector_stats.values():
             ss["win_rate"] = ss["wins"] / ss["trades"] * 100 if ss["trades"] > 0 else 0
             ss["avg_pnl_pct"] = (
                 ss["total_pnl_pct"] / ss["trades"] if ss["trades"] > 0 else 0

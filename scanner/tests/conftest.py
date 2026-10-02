@@ -117,11 +117,10 @@ def synthetic_ohlcv(rng):
     volume = (rng.rand(n) * 1_000_000 + 500_000).astype(int)
 
     dates = pd.bdate_range("2024-01-01", periods=n)
-    df = pd.DataFrame(
+    return pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
         index=dates,
     )
-    return df
 
 
 @pytest.fixture

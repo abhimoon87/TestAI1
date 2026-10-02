@@ -22,7 +22,7 @@ from concurrent.futures.thread import _threads_queues, _worker
 import pandas as pd
 
 from ..shared import db
-from ..shared._index_utils import _normalize_daily_index  # noqa: F401
+from ..shared._index_utils import _normalize_daily_index
 from ..shared.trace import trace
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
 
         num_threads = len(self._threads)
         if num_threads < self._max_workers:
-            thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
+            thread_name = f"{self._thread_name_prefix or self}_{num_threads}"
             t = threading.Thread(
                 name=thread_name,
                 target=_worker,
@@ -125,9 +125,7 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame | None:
     if "volume" in df.columns:
         agg_rules["volume"] = "sum"
 
-    resampled = df.resample(rule).agg(agg_rules).dropna()
-
-    return resampled
+    return df.resample(rule).agg(agg_rules).dropna()
 
 
 # ── Global provider instance ───────────────────────────────────────────────
@@ -902,7 +900,7 @@ def fetch_batch_yfinance_stream(
             executor = _DaemonThreadPoolExecutor(max_workers=len(batch))
             future_to_ci = {
                 executor.submit(_fetch_chunk, chunk, ci): ci
-                for chunk, ci in zip(batch, batch_indices)
+                for chunk, ci in zip(batch, batch_indices, strict=True)
             }
             pending = set(future_to_ci)
             while pending:
@@ -1023,8 +1021,10 @@ def fetch_batch_yfinance_stream(
         logger.warning("yfinance not available for batch download")
         return
     except Exception:
+        # Re-raise: swallowing here ends the stream *normally*, so callers
+        # (scan_stream) finalize a partial scan as if it had completed.
         logger.exception("Batch streaming failed")
-        return
+        raise
 
 
 @trace(level=logging.INFO, log_args=True, log_result=False)

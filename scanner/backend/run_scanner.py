@@ -81,11 +81,11 @@ def select_threshold() -> float:
         choice = input("\n  Select threshold [1-4]: ").strip()
         if choice == "1":
             return 70.0
-        elif choice == "2":
+        if choice == "2":
             return 50.0
-        elif choice == "3":
+        if choice == "3":
             return 30.0
-        elif choice == "4":
+        if choice == "4":
             try:
                 val = float(input("  Enter minimum score: ").strip())
                 if 0 <= val <= 100:
@@ -106,9 +106,9 @@ def select_period() -> str:
         choice = input("\n  Select period [1-3]: ").strip()
         if choice == "1":
             return "6mo"
-        elif choice == "2":
+        if choice == "2":
             return "1y"
-        elif choice == "3":
+        if choice == "3":
             return "2y"
         logger.warning("  ✗ Invalid choice.")
 
@@ -124,9 +124,9 @@ def select_timeframe() -> str:
         choice = input("\n  Select timeframe [1-3]: ").strip()
         if choice == "1" or choice == "":
             return "D"
-        elif choice == "2":
+        if choice == "2":
             return "W"
-        elif choice == "3":
+        if choice == "3":
             return "M"
         logger.warning("  ✗ Invalid choice.")
 

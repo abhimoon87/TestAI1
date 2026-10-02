@@ -128,7 +128,7 @@ def _make_yf_download_result(tickers, n=200, force_multi=False):
     multi_cols = pd.MultiIndex.from_tuples(arrays)
 
     data = np.zeros((n, len(tickers) * 5))
-    for i, t in enumerate(tickers):
+    for i, _t in enumerate(tickers):
         rng2 = np.random.RandomState(42 + i)
         c = 500 + np.cumsum(rng2.randn(n) * 2)
         data[:, i * 5] = c + rng2.randn(n)  # Open
@@ -1193,6 +1193,28 @@ class TestStreamYieldsPerChunk:
 
         got = {t for chunk in yields for t in chunk}
         assert got == {f"T{i}" for i in range(200)}
+
+    def test_mid_stream_error_propagates_not_silent_stop(self):
+        """An error after chunks streamed must raise, not end the stream
+        normally — a silent stop lets callers finalize a partial scan as
+        if it had completed."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data  # TCS not in the result → missed
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch(
+                "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
+            ):
+                with patch(
+                    "scanner.api.data_fetcher._fetch_fallback_batch",
+                    side_effect=RuntimeError("fallback blew up"),
+                ):
+                    gen = fetch_batch_yfinance_stream(["RELIANCE", "TCS"], period="1y")
+                    first = next(gen)
+                    assert "RELIANCE" in first
+                    with pytest.raises(RuntimeError, match="fallback blew up"):
+                        next(gen)  # must raise, not StopIteration
 
 
 class TestScanStartStalePrune:

@@ -216,11 +216,25 @@ class ResultsViewMixin:
             if holder is not None and not holder.controls:
                 holder.controls = [self._make_header_row(c)]
 
+            # Prune rows that left the current page (stream path never
+            # rebuilds, so a page change must drop stale rows here).
+            page_tickers = {r.get("ticker") for r in page_shown}
+            self.table_column.controls = [
+                ctl
+                for ctl in self.table_column.controls
+                if (tk := getattr(ctl, "_pool_ticker", None)) is None
+                or tk in page_tickers
+            ]
+
             # Update existing rows and append new ones
             for rank, r in enumerate(page_shown, start + 1):
                 ticker = r.get("ticker", "?")
                 if ticker in pool:
                     self._update_row(ticker, rank, c, threshold, len(shown))
+                    # Row may be pooled but not currently displayed (page changed)
+                    row = pool[ticker]
+                    if not any(x is row for x in self.table_column.controls):
+                        self.table_column.controls.append(row)
                 else:
                     score = _score_of(r)
                     is_above = score >= threshold
@@ -804,7 +818,9 @@ class ResultsViewMixin:
         rating = r.get("combined_rating", "POOR")
         accent = rating_color(rating, c)
 
-        for txt, (val, col) in zip(cells, self._row_specs(r, rank, c, threshold)):
+        for txt, (val, col) in zip(
+            cells, self._row_specs(r, rank, c, threshold), strict=True
+        ):
             txt.value = val
             txt.color = col
 

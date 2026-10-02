@@ -398,9 +398,7 @@ def _fetch_jugaad(ticker: str, period: str) -> pd.DataFrame | None:
                 return None
 
         df = df[cols].copy()
-        df = df.dropna()
-
-        return df
+        return df.dropna()
 
     except ImportError:
         return None
@@ -510,9 +508,7 @@ def _fetch_yfinance(ticker: str, period: str) -> pd.DataFrame | None:
 
         df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
         df.columns = ["open", "high", "low", "close", "volume"]
-        df = df.dropna()
-
-        return df
+        return df.dropna()
 
     except ImportError:
         return None
@@ -591,9 +587,7 @@ def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
             return None
 
         df = df[available].copy()
-        df = df.dropna()
-
-        return df
+        return df.dropna()
 
     except ImportError:
         return None

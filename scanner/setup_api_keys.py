@@ -92,9 +92,8 @@ def setup_finnhub():
         set_env_variable("FINNHUB_API_KEY", key)
         logger.info("  [OK] FINNHUB_API_KEY set for this session")
         return key
-    else:
-        logger.info("  [SKIP] Finnhub setup skipped")
-        return None
+    logger.info("  [SKIP] Finnhub setup skipped")
+    return None
 
 
 def setup_alpha_vantage():
@@ -116,9 +115,8 @@ def setup_alpha_vantage():
         set_env_variable("ALPHA_VANTAGE_API_KEY", key)
         logger.info("  [OK] ALPHA_VANTAGE_API_KEY set for this session")
         return key
-    else:
-        logger.info("  [SKIP] Alpha Vantage setup skipped")
-        return None
+    logger.info("  [SKIP] Alpha Vantage setup skipped")
+    return None
 
 
 def test_providers():
@@ -140,9 +138,8 @@ def test_providers():
             logger.info("       EPS Growth: %s", fund.get("eps_growth", "N/A"))
             logger.info("       Revenue Growth: %s", fund.get("rev_growth", "N/A"))
             return True
-        else:
-            logger.warning("  [WARN] No data fetched (using fallback)")
-            return False
+        logger.warning("  [WARN] No data fetched (using fallback)")
+        return False
 
     except Exception as e:
         logger.error("  [ERROR] Test failed: %s", e)
