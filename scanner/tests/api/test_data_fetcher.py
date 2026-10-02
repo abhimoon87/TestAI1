@@ -29,7 +29,12 @@ from scanner.api.data_fetcher import (
 
 @pytest.fixture(autouse=True)
 def _isolate_negative_cache(tmp_path, monkeypatch):
-    """Reset the negative cache per test."""
+    """Point the on-disk negative cache at a temp file and reset it per test."""
+    monkeypatch.setattr(
+        data_fetcher,
+        "_NEGATIVE_CACHE_PATH",
+        str(tmp_path / "dead_symbols.json"),
+    )
     monkeypatch.setattr(data_fetcher, "_negative_cache", None)
     monkeypatch.setattr(
         data_fetcher,
@@ -42,10 +47,20 @@ def _isolate_negative_cache(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _isolate_enrichment_cache(tmp_path, monkeypatch):
-    """Reset the enrichment cache per test."""
-    data_fetcher._ENRICHMENT_CACHE.clear()
+    """Point the on-disk enrichment cache at a temp file and reset per test."""
+    monkeypatch.setattr(
+        data_fetcher,
+        "_ENRICHMENT_CACHE_PATH",
+        str(tmp_path / "enrichment_cache.json"),
+    )
+    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+    monkeypatch.setattr(
+        data_fetcher,
+        "ENRICHMENT_CACHE_TTL_HOURS",
+        float(data_fetcher.ENRICHMENT_CACHE_TTL_HOURS),
+    )
     yield
-    data_fetcher._ENRICHMENT_CACHE.clear()
+    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
 
 
 @pytest.fixture(autouse=True)
@@ -973,18 +988,17 @@ class TestEnrichmentCache:
     def test_expired_entry_is_evicted(self):
         """Past the TTL window the cache is re-populated from the providers."""
         data_fetcher._enrichment_cache_put("STALE", {"_social_score": 0.5}, None)
-        entry, _ = data_fetcher._ENRICHMENT_CACHE._store["STALE"]
-        entry["ts"] = time.time() - 25 * 3600
+        data_fetcher._enrichment_cache["STALE"]["ts"] = time.time() - 25 * 3600
 
         assert data_fetcher._enrichment_cache_get("STALE") is None
-        assert data_fetcher._enrichment_cache_get("STALE") is None
+        assert "STALE" not in data_fetcher._enrichment_cache
 
     def test_entry_survives_new_process_load_from_disk(self):
         """Entries persist to the kv store and reload on a fresh process."""
         from scanner.shared import db
 
         data_fetcher._enrichment_cache_put("RELIANCE", {"_fii_is_buying": True}, None)
-        data_fetcher._ENRICHMENT_CACHE._store.clear()  # simulate a new process
+        data_fetcher._enrichment_cache = None  # simulate a new process
 
         entry = data_fetcher._enrichment_cache_get("RELIANCE")
         assert entry is not None
@@ -1001,7 +1015,7 @@ class TestEnrichmentCache:
             },
             expires=time.time() + 7 * 86400,
         )
-        data_fetcher._ENRICHMENT_CACHE._store.clear()
+        data_fetcher._enrichment_cache = None
 
         assert data_fetcher._enrichment_cache_get("RELIANCE") is not None
         assert data_fetcher._enrichment_cache_get("ANCIENT") is None

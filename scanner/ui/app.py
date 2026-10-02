@@ -150,8 +150,10 @@ class ScannerApp(
 
         def _warm_symbols():
             try:
+                from ..api.symbol_fetcher import _load_disk_cache
                 from ..shared.universes import get_universe
 
+                _load_disk_cache()
                 get_universe("FULL MARKET (NSE+BSE ~5,900)")
             except Exception:
                 logger.info("Symbol warm-up failed", exc_info=True)
@@ -206,30 +208,6 @@ class ScannerApp(
 
         theme_mode = "dark"
         self.page.theme_mode = theme_mode
-
-        # System fonts throughout; Theme only styles chrome (scrollbars,
-        # hover, focus, tooltips, dividers).
-        self.page.theme = self.page.dark_theme = ft.Theme(
-            hover_color=ft.Colors.with_opacity(0.10, c["green"]),
-            splash_color=ft.Colors.with_opacity(0.16, c["green"]),
-            focus_color=ft.Colors.with_opacity(0.12, c["green"]),
-            divider_color=c["border"],
-            scrollbar_theme=ft.ScrollbarTheme(
-                thumb_visibility=True,
-                interactive=True,
-                thickness=8,
-                radius=4,
-                thumb_color=ft.Colors.with_opacity(0.45, c["green"]),
-                track_color=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
-            ),
-            tooltip_theme=ft.TooltipTheme(
-                text_style=ft.TextStyle(size=11, color=c["text"]),
-                decoration=ft.BoxDecoration(
-                    bgcolor=c["card2"],
-                    border_radius=ft.BorderRadius.all(6),
-                ),
-            ),
-        )
 
         self.page.controls.clear()
 

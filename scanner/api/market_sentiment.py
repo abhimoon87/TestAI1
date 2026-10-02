@@ -1,13 +1,13 @@
 """
 Market Sentiment Provider
-Headline keyword scoring across news providers with fallback:
-MarketAux -> NewsAPI -> GNews -> Yahoo Finance -> Noozra RSS.
+Combines MarketAux (ticker-tagged sentiment) + NewsAPI/GNews (headlines)
+for news-based sentiment scoring.
 """
 
 import logging
 import os
 import re
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
 
 import requests
 
@@ -15,7 +15,7 @@ from ..shared.cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
-# ── Sentiment Word Lists ────────────────────────────────────────────────
+# ── Sentiment Word Lists ────────────────────────────────────────────────────
 
 POSITIVE_WORDS = {
     "surge",
@@ -147,7 +147,7 @@ NEGATIVE_WORDS = {
     "overvalued",
 }
 
-# ── Cache ─────────────────────────────────────────────────────
+# ── Cache ───────────────────────────────────────────────────────────────────
 
 _SENTIMENT_CACHE: TTLCache[dict] = TTLCache(ttl=4 * 3600, namespace="market_sentiment")
 
@@ -156,7 +156,7 @@ def _cache_key(ticker: str, source: str) -> str:
     return _SENTIMENT_CACHE.make_key(ticker, source)
 
 
-# ── Simple Keyword Sentiment ───────────────────────────────────
+# ── Simple Keyword Sentiment ───────────────────────────────────────────────
 
 
 def _keyword_sentiment(text: str) -> float:
@@ -172,121 +172,424 @@ def _keyword_sentiment(text: str) -> float:
     return (pos - neg) / total
 
 
-# ── Provider article fetchers (return raw article lists) ───────
+# ── MarketAux Provider ─────────────────────────────────────────────────────
 
 
-def _title_desc(article: dict) -> str:
-    return f"{article.get('title', '')} {article.get('description', '')}"
+@dataclass
+class MarketAuxSentiment:
+    """News sentiment from MarketAux API (ticker-tagged)."""
+
+    ticker: str
+    sentiment_score: float  # -1.0 to 1.0
+    article_count: int
+    sources: list[str] = field(default_factory=list)
+    cached: bool = False
 
 
-def _lookback(days: int, fmt: str) -> str:
-    return (datetime.now() - timedelta(days=days)).strftime(fmt)
+def fetch_marketaux_sentiment(
+    ticker: str,
+    api_key: str | None = None,
+    days: int = 7,
+) -> MarketAuxSentiment | None:
+    """
+    Fetch news sentiment for a ticker from MarketAux.
 
+    Args:
+        ticker: Stock ticker (e.g., "RELIANCE.NS")
+        api_key: MarketAux API key (or env MARKETAUX_API_KEY)
+        days: Lookback period in days
 
-def _marketaux_articles(ticker: str, api_key: str) -> list:
-    """MarketAux: entity lookup, then ticker-tagged news (articles key 'data')."""
+    Returns:
+        MarketAuxSentiment or None on failure
+    """
+    api_key = api_key or os.environ.get("MARKETAUX_API_KEY")
+    if not api_key:
+        logger.debug("MarketAux: no API key, skipping")
+        return None
+
+    # Check cache
+    cache_k = _cache_key(ticker, "marketaux")
+    cached = _SENTIMENT_CACHE.get(cache_k)
+    if cached:
+        return MarketAuxSentiment(**cached, cached=True)
+
+    # Strip .NS/.BO suffix for MarketAux
     symbol = ticker.replace(".NS", "").replace(".BO", "")
-    resp = requests.get(
-        "https://api.marketaux.com/v1/entity/search",
-        params={"search": symbol, "api_token": api_key},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    entities = resp.json().get("data", [])
-    if not entities or not entities[0].get("entity_id"):
-        return []
-    resp = requests.get(
-        "https://api.marketaux.com/v1/news",
-        params={
-            "entity_ids": entities[0]["entity_id"],
+
+    try:
+        from datetime import datetime, timedelta
+
+        date_from = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        url = "https://api.marketaux.com/v1/entity/search"
+        params = {"search": symbol, "api_token": api_key}
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        entities = data.get("data", [])
+        if not entities:
+            logger.debug("MarketAux: no entity found for %s", symbol)
+            return None
+
+        entity_id = entities[0].get("entity_id")
+        if not entity_id:
+            return None
+
+        # Fetch news for entity
+        url = "https://api.marketaux.com/v1/news"
+        params = {
+            "entity_ids": entity_id,
             "api_token": api_key,
-            "published_after": _lookback(7, "%Y-%m-%d"),
+            "published_after": date_from,
             "limit": 50,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json().get("data", [])
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        news_data = resp.json()
+
+        articles = news_data.get("data", [])
+        if not articles:
+            return MarketAuxSentiment(
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                sources=[],
+                cached=False,
+            )
+
+        # Compute sentiment from article titles + descriptions
+        sentiments = []
+        sources = set()
+        for article in articles:
+            title = article.get("title", "")
+            desc = article.get("description", "")
+            text = f"{title} {desc}"
+            sentiments.append(_keyword_sentiment(text))
+            source = article.get("source", "")
+            if source:
+                sources.add(source)
+
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+        result = MarketAuxSentiment(
+            ticker=ticker,
+            sentiment_score=round(avg_sentiment, 3),
+            article_count=len(articles),
+            sources=list(sources)[:5],
+            cached=False,
+        )
+
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "sources": result.sources,
+            },
+        )
+
+        return result
+
+    except (requests.RequestException, KeyError, ValueError) as e:
+        logger.warning("MarketAux failed for %s: %s", ticker, e)
+        return None
 
 
-def _newsapi_articles(ticker: str, api_key: str) -> list:
-    resp = requests.get(
-        "https://newsapi.org/v2/everything",
-        params={
-            "q": ticker.replace(".NS", "").replace(".BO", ""),
-            "from": _lookback(7, "%Y-%m-%d"),
+# ── NewsAPI Provider ───────────────────────────────────────────────────────
+
+
+@dataclass
+class NewsAPISentiment:
+    """News sentiment from NewsAPI.org."""
+
+    ticker: str
+    sentiment_score: float
+    article_count: int
+    top_headlines: list[str] = field(default_factory=list)
+    cached: bool = False
+
+
+def fetch_newsapi_sentiment(
+    ticker: str,
+    api_key: str | None = None,
+    days: int = 7,
+) -> NewsAPISentiment | None:
+    """
+    Fetch news sentiment from NewsAPI.org.
+
+    Args:
+        ticker: Stock ticker
+        api_key: NewsAPI key (or env NEWSAPI_KEY)
+        days: Lookback days
+
+    Returns:
+        NewsAPISentiment or None
+    """
+    api_key = api_key or os.environ.get("NEWSAPI_KEY")
+    if not api_key:
+        logger.debug("NewsAPI: no API key, skipping")
+        return None
+
+    cache_k = _cache_key(ticker, "newsapi")
+    cached = _SENTIMENT_CACHE.get(cache_k)
+    if cached:
+        return NewsAPISentiment(**cached, cached=True)
+
+    symbol = ticker.replace(".NS", "").replace(".BO", "")
+
+    try:
+        from datetime import datetime, timedelta
+
+        from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        url = "https://newsapi.org/v2/everything"
+        params = {
+            "q": symbol,
+            "from": from_date,
             "sortBy": "relevancy",
             "language": "en",
             "pageSize": 50,
             "apiKey": api_key,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json().get("articles", [])
-
-
-def _gnews_articles(ticker: str, api_key: str) -> list:
-    resp = requests.get(
-        "https://gnews.io/api/v4/search",
-        params={
-            "q": ticker.replace(".NS", "").replace(".BO", ""),
-            "from": _lookback(7, "%Y-%m-%dT00:00:00Z"),
-            "lang": "en",
-            "max": 10,
-            "token": api_key,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json().get("articles", [])
-
-
-def _yfinance_articles(ticker: str, api_key: str | None = None) -> list:
-    import yfinance as yf
-
-    nse_ticker = ticker if ticker.endswith(".NS") else f"{ticker}.NS"
-    return yf.Ticker(nse_ticker).news or []
-
-
-# ── Shared provider flow: cache -> fetch -> keyword-score -> cache ─
-
-
-def _fetch_headline_provider(
-    ticker: str,
-    source: str,
-    fetch_articles,
-    text_of,
-    api_key: str | None,
-    score_n: int | None = None,
-) -> dict | None:
-    """Score one provider's articles, or None when it yields nothing.
-
-    Returns {"sentiment_score", "article_count"} and caches it for 4h.
-    Failures are logged and treated as "provider unavailable".
-    """
-    cache_k = _cache_key(ticker, source)
-    cached = _SENTIMENT_CACHE.get(cache_k)
-    if cached:
-        return cached
-    try:
-        articles = fetch_articles(ticker, api_key)
-        if not articles:
-            return None
-        scored = articles if score_n is None else articles[:score_n]
-        scores = [_keyword_sentiment(text_of(a)) for a in scored]
-        result = {
-            "sentiment_score": round(sum(scores) / len(scores), 3),
-            "article_count": len(articles),
         }
-        _SENTIMENT_CACHE.set(cache_k, result)
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        articles = data.get("articles", [])
+        if not articles:
+            return NewsAPISentiment(
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                top_headlines=[],
+                cached=False,
+            )
+
+        sentiments = []
+        headlines = []
+        for article in articles[:20]:
+            title = article.get("title", "") or ""
+            desc = article.get("description", "") or ""
+            text = f"{title} {desc}"
+            sentiments.append(_keyword_sentiment(text))
+            if title and len(headlines) < 3:
+                headlines.append(title[:120])
+
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+        result = NewsAPISentiment(
+            ticker=ticker,
+            sentiment_score=round(avg_sentiment, 3),
+            article_count=len(articles),
+            top_headlines=headlines,
+            cached=False,
+        )
+
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "top_headlines": result.top_headlines,
+            },
+        )
+
         return result
-    except Exception as e:
-        logger.warning("%s failed for %s: %s", source, ticker, e)
+
+    except (requests.RequestException, KeyError, ValueError) as e:
+        logger.warning("NewsAPI failed for %s: %s", ticker, e)
         return None
 
 
-# ── Unified Sentiment Fetcher ────────────────────────────────────────────────
+# ── GNews Provider (Free, no key) ──────────────────────────────────────────
+
+
+@dataclass
+class GNewsSentiment:
+    """News sentiment from GNews API (free tier)."""
+
+    ticker: str
+    sentiment_score: float
+    article_count: int
+    cached: bool = False
+
+
+def fetch_gnews_sentiment(
+    ticker: str,
+    api_key: str | None = None,
+    days: int = 7,
+) -> GNewsSentiment | None:
+    """
+    Fetch news sentiment from GNews (free, 100 requests/day).
+
+    Args:
+        ticker: Stock ticker
+        api_key: GNews API key (or env GNEWS_API_KEY)
+        days: Lookback days
+
+    Returns:
+        GNewsSentiment or None
+    """
+    api_key = api_key or os.environ.get("GNEWS_API_KEY")
+    if not api_key:
+        logger.debug("GNews: no API key, skipping")
+        return None
+
+    cache_k = _cache_key(ticker, "gnews")
+    cached = _SENTIMENT_CACHE.get(cache_k)
+    if cached:
+        return GNewsSentiment(**cached, cached=True)
+
+    symbol = ticker.replace(".NS", "").replace(".BO", "")
+
+    try:
+        from datetime import datetime, timedelta
+
+        when = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
+
+        url = "https://gnews.io/api/v4/search"
+        params = {
+            "q": symbol,
+            "from": when,
+            "lang": "en",
+            "max": 10,
+            "token": api_key,
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+
+        articles = data.get("articles", [])
+        if not articles:
+            return GNewsSentiment(
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                cached=False,
+            )
+
+        sentiments = []
+        for article in articles:
+            title = article.get("title", "")
+            desc = article.get("description", "")
+            text = f"{title} {desc}"
+            sentiments.append(_keyword_sentiment(text))
+
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+        result = GNewsSentiment(
+            ticker=ticker,
+            sentiment_score=round(avg_sentiment, 3),
+            article_count=len(articles),
+            cached=False,
+        )
+
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+            },
+        )
+
+        return result
+
+    except (requests.RequestException, KeyError, ValueError) as e:
+        logger.warning("GNews failed for %s: %s", ticker, e)
+        return None
+
+
+# ── Yahoo Finance News Provider (Free, No Key) ─────────────────────────────
+
+
+@dataclass
+class YFinanceNewsSentiment:
+    """News sentiment from Yahoo Finance (free, no API key required)."""
+
+    ticker: str
+    sentiment_score: float
+    article_count: int
+    top_headlines: list[str] = field(default_factory=list)
+    cached: bool = False
+
+
+def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
+    """
+    Fetch news sentiment from Yahoo Finance (free, no API key).
+
+    Args:
+        ticker: Stock ticker (e.g., "RELIANCE.NS")
+
+    Returns:
+        YFinanceNewsSentiment or None
+    """
+    cache_k = _cache_key(ticker, "yfinance_news")
+    cached = _SENTIMENT_CACHE.get(cache_k)
+    if cached:
+        return YFinanceNewsSentiment(**cached, cached=True)
+
+    try:
+        import yfinance as yf
+
+        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
+        stock = yf.Ticker(nse_ticker)
+        news = stock.news  # Returns list of dicts with title, publisher, link, etc.
+
+        if not news:
+            return YFinanceNewsSentiment(
+                ticker=ticker,
+                sentiment_score=0.0,
+                article_count=0,
+                top_headlines=[],
+                cached=False,
+            )
+
+        sentiments = []
+        headlines = []
+
+        for article in news[:20]:  # Analyze up to 20 articles
+            title = article.get("title", "")
+            publisher = article.get("publisher", "")
+            # Combine title + publisher for sentiment
+            text = f"{title} {publisher}"
+            score = _keyword_sentiment(text)
+            sentiments.append(score)
+
+            if title and len(headlines) < 3:
+                headlines.append(title[:120])
+
+        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0.0
+
+        result = YFinanceNewsSentiment(
+            ticker=ticker,
+            sentiment_score=round(avg_sentiment, 3),
+            article_count=len(news),
+            top_headlines=headlines,
+            cached=False,
+        )
+
+        _SENTIMENT_CACHE.set(
+            cache_k,
+            {
+                "ticker": ticker,
+                "sentiment_score": result.sentiment_score,
+                "article_count": result.article_count,
+                "top_headlines": result.top_headlines,
+            },
+        )
+
+        return result
+
+    except Exception as e:
+        logger.info("Yahoo Finance news failed for %s: %s", ticker, e)
+        return None
+
+
+# ── Unified Sentiment Fetcher ──────────────────────────────────────────────
 
 
 def fetch_sentiment(
@@ -295,66 +598,87 @@ def fetch_sentiment(
     newsapi_key: str | None = None,
     gnews_key: str | None = None,
 ) -> dict:
-    """Headline keyword sentiment with provider fallback.
-
-    Priority: MarketAux (ticker-tagged) -> NewsAPI -> GNews -> Yahoo Finance
-    -> Noozra RSS. Returns {sentiment_score, article_count, source};
-    source="none" when every provider fails.
     """
-    providers = (
-        # (source, api_key, fetch_articles, text_of, score_n)
-        (
-            "marketaux",
-            marketaux_key or os.environ.get("MARKETAUX_API_KEY"),
-            _marketaux_articles,
-            _title_desc,
-            None,
-        ),
-        (
-            "newsapi",
-            newsapi_key or os.environ.get("NEWSAPI_KEY"),
-            _newsapi_articles,
-            _title_desc,
-            20,
-        ),
-        (
-            "gnews",
-            gnews_key or os.environ.get("GNEWS_API_KEY"),
-            _gnews_articles,
-            _title_desc,
-            None,
-        ),
-        (
-            "yfinance",
-            None,
-            _yfinance_articles,
-            lambda a: f"{a.get('title', '')} {a.get('publisher', '')}",
-            20,
-        ),
-    )
-    for source, key, fetch_articles, text_of, score_n in providers:
-        if source != "yfinance" and not key:
-            continue  # key-gated providers without a key are skipped
-        result = _fetch_headline_provider(
-            ticker, source, fetch_articles, text_of, key, score_n
-        )
-        if result:
-            return {**result, "source": source}
+    Fetch news sentiment from multiple sources with fallback.
 
-    # Noozra RSS fallback (free, no key)
+    Priority:
+      1. MarketAux (ticker-tagged, best quality)
+      2. NewsAPI (80k+ sources)
+      3. GNews (free tier)
+      4. Yahoo Finance (free, no key - fallback)
+
+    Returns:
+        {
+            "sentiment_score": float,  # -1.0 to 1.0
+            "article_count": int,
+            "source": str,  # "marketaux" | "newsapi" | "gnews" | "yfinance" | "none"
+            "top_headlines": list[str],
+        }
+    """
+    # Try MarketAux first (best: ticker-tagged)
+    ma = fetch_marketaux_sentiment(ticker, marketaux_key)
+    if ma and ma.article_count > 0:
+        return {
+            "sentiment_score": ma.sentiment_score,
+            "article_count": ma.article_count,
+            "source": "marketaux",
+            "top_headlines": [],
+        }
+
+    # Try NewsAPI
+    na = fetch_newsapi_sentiment(ticker, newsapi_key)
+    if na and na.article_count > 0:
+        return {
+            "sentiment_score": na.sentiment_score,
+            "article_count": na.article_count,
+            "source": "newsapi",
+            "top_headlines": na.top_headlines,
+        }
+
+    # Try GNews
+    gn = fetch_gnews_sentiment(ticker, gnews_key)
+    if gn and gn.article_count > 0:
+        return {
+            "sentiment_score": gn.sentiment_score,
+            "article_count": gn.article_count,
+            "source": "gnews",
+            "top_headlines": [],
+        }
+
+    # Try Yahoo Finance (free fallback, no key needed)
+    yf_news = fetch_yfinance_news_sentiment(ticker)
+    if yf_news and yf_news.article_count > 0:
+        return {
+            "sentiment_score": yf_news.sentiment_score,
+            "article_count": yf_news.article_count,
+            "source": "yfinance",
+            "top_headlines": yf_news.top_headlines,
+        }
+
+    # ── Noozra RSS (free, no key) ──────────────────────────────────────
     try:
         from .free_apis import fetch_noozra_news
 
         noozra = fetch_noozra_news(query=ticker, max_items=10)
         if noozra:
-            combined_text = " ".join(n.title for n in noozra)
+            # Keyword sentiment on headlines
+            headlines = [n.title for n in noozra]
+            combined_text = " ".join(headlines)
+            kw_score = _keyword_sentiment(combined_text)
             if combined_text.strip():
                 return {
-                    "sentiment_score": _keyword_sentiment(combined_text),
+                    "sentiment_score": kw_score,
                     "article_count": len(noozra),
                     "source": "noozra",
+                    "top_headlines": headlines[:5],
                 }
     except Exception as e:
         logger.info("Noozra news fetch failed for %s: %s", ticker, e)
 
-    return {"sentiment_score": 0.0, "article_count": 0, "source": "none"}
+    # No sentiment data
+    return {
+        "sentiment_score": 0.0,
+        "article_count": 0,
+        "source": "none",
+        "top_headlines": [],
+    }

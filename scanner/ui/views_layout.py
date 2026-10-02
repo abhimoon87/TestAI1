@@ -336,13 +336,7 @@ class LayoutViewMixin:
         )
         self.watchlist_import_container = ft.Container(
             content=ft.TextButton(
-                content=ft.Row(
-                    controls=[
-                        ft.Icon(ft.Icons.UPLOAD_FILE, size=14),
-                        ft.Text("Import watchlist…", size=11),
-                    ],
-                    spacing=6,
-                ),
+                content=ft.Text("Import watchlist…", size=11),
                 tooltip="Import tickers from a CSV/TXT file",
                 style=ft.ButtonStyle(color=c["cyan"]),
                 action=ft.PickFiles(
@@ -687,25 +681,11 @@ class LayoutViewMixin:
         self.header_holder = ft.Column(spacing=0)
 
         self.page_prev_btn = ft.TextButton(
-            content=ft.Row(
-                controls=[
-                    ft.Icon(ft.Icons.CHEVRON_LEFT, size=16),
-                    ft.Text("Prev", size=12),
-                ],
-                spacing=4,
-            ),
-            on_click=lambda e: self._change_page(-1),
+            content=ft.Text("◀ Prev", size=12), on_click=lambda e: self._change_page(-1)
         )
         self.page_label = ft.Text("Page 1 / 1", size=11, color=c["text_dim"])
         self.page_next_btn = ft.TextButton(
-            content=ft.Row(
-                controls=[
-                    ft.Text("Next", size=12),
-                    ft.Icon(ft.Icons.CHEVRON_RIGHT, size=16),
-                ],
-                spacing=4,
-            ),
-            on_click=lambda e: self._change_page(1),
+            content=ft.Text("Next ▶", size=12), on_click=lambda e: self._change_page(1)
         )
         self.page_size_options = ["50", "100", "200", "500"]
         # Shared themed dropdown — same surface as every other select.

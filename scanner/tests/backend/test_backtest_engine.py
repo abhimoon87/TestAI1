@@ -7,18 +7,31 @@ so the engine's cross-ticker date union in ``run()`` (~backtest.py:889)
 treated them as separate calendars and the simulation ran on ~2x the real
 number of days.  The fetch layer now normalizes every daily frame onto one
 tz-naive midnight IST calendar; these tests prove that invariant holds when
-raw mixed-flavor frames flow out of the price cache through ``load_data()``
+legacy mixed-flavor frames flow out of the disk cache through ``load_data()``
 into ``run()``.
 """
 
+import hashlib
+import json
 import logging
+import os
+from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from scanner.api import data_providers
 from scanner.backend.backtest import WARMUP_BARS, BacktestEngine
+
+
+@pytest.fixture(autouse=True)
+def _isolate_price_cache(tmp_path, monkeypatch):
+    """Point the on-disk price cache at a temp dir (no shared .cache)."""
+    monkeypatch.setattr(data_providers, "CACHE_DIR", str(tmp_path / "price_cache"))
+    yield
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -40,13 +53,22 @@ def _frame(days, seed):
     )
 
 
-def _write_flavored_cache_entry(ticker, period, provider, df):
-    """Write a raw (un-normalized) frame the way the pre-fix cache layer did."""
-    data_providers._set_cached(ticker, period, provider, df)
+def _write_legacy_cache_entry(ticker, period, provider, df):
+    """Write a pkl entry the way pre-fix code did: raw stamps, no normalization."""
+    from scanner.tests.conftest import safe_to_parquet
+
+    os.makedirs(data_providers.CACHE_DIR, exist_ok=True)
+    raw = f"{ticker}_{period}_{provider}_{date.today().isoformat()}"
+    key = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
+    cache_file = os.path.join(data_providers.CACHE_DIR, f"{key}.parquet")
+    meta_file = os.path.join(data_providers.CACHE_DIR, f"{key}.meta")
+    safe_to_parquet(df, cache_file, index=True)
+    with open(meta_file, "w") as f:
+        json.dump({"timestamp": datetime.now().isoformat(), "rows": len(df)}, f)
 
 
 def _seed_flavored_cache(n=500, start="2023-01-01"):
-    """Plant two raw cache entries covering the SAME trade days in two flavors.
+    """Plant two LEGACY cache entries covering the SAME trade days in two flavors.
 
     ``MIDNIGHT`` holds local-midnight naive stamps (the yfinance .NS path);
     ``UTCCLOSE`` holds tz-aware 18:30-UTC stamps on the previous day (the
@@ -54,9 +76,9 @@ def _seed_flavored_cache(n=500, start="2023-01-01"):
     these union to ~2x n until a reader normalizes them.
     """
     trade_days = pd.bdate_range(start, periods=n)
-    _write_flavored_cache_entry("MIDNIGHT", "2y", "cache", _frame(trade_days, seed=1))
+    _write_legacy_cache_entry("MIDNIGHT", "2y", "cache", _frame(trade_days, seed=1))
     prev = trade_days - pd.Timedelta(days=1) + pd.Timedelta(hours=18, minutes=30)
-    _write_flavored_cache_entry(
+    _write_legacy_cache_entry(
         "UTCCLOSE", "2y", "cache", _frame(prev.tz_localize("UTC"), seed=2)
     )
     return trade_days

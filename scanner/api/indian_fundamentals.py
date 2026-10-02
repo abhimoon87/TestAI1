@@ -346,6 +346,96 @@ def fetch_peer_comparison(ticker: str) -> PeerComparison | None:
         return None
 
 
+# ── Yahoo Finance Valuation (Free, No Key) ─────────────────────────────────
+
+
+@dataclass
+class YahooValuation:
+    """Valuation data from Yahoo Finance (free, no API key)."""
+
+    ticker: str
+    pe_trailing: float | None = None
+    pe_forward: float | None = None
+    pb_ratio: float | None = None
+    ps_ratio: float | None = None
+    peg_ratio: float | None = None
+    dividend_yield: float | None = None
+    profit_margin: float | None = None
+    roe: float | None = None
+    beta: float | None = None
+    intrinsic_value: float | None = None  # Graham number if calculable
+    cached: bool = False
+
+
+def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
+    """
+    Fetch valuation data from Yahoo Finance (free, no API key).
+
+    Args:
+        ticker: Stock ticker (e.g., "RELIANCE")
+
+    Returns:
+        YahooValuation or None
+    """
+    cache_k = hashlib.md5(
+        f"yahoo_val:{ticker}".encode(), usedforsecurity=False
+    ).hexdigest()
+    cached = _FUND_CACHE.get(cache_k)
+    if cached:
+        return YahooValuation(**cached, cached=True)
+
+    try:
+        import yfinance as yf
+
+        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
+        stock = yf.Ticker(nse_ticker)
+        info = stock.info
+
+        if not info:
+            return None
+
+        result = {}
+
+        # Extract valuation metrics
+        for field_name, key in [
+            ("pe_trailing", "trailingPE"),
+            ("pe_forward", "forwardPE"),
+            ("pb_ratio", "priceToBook"),
+            ("ps_ratio", "priceToSalesTrailing12Months"),
+            ("peg_ratio", "pegRatio"),
+            ("dividend_yield", "dividendYield"),
+            ("profit_margin", "profitMargins"),
+            ("roe", "returnOnEquity"),
+            ("beta", "beta"),
+        ]:
+            val = info.get(key)
+            if val is not None:
+                result[field_name] = float(val)
+
+        # Calculate Graham Number if we have EPS and P/B
+        eps = info.get("trailingEps")
+        pb = result.get("pb_ratio")
+        if eps and pb and eps > 0:
+            # Graham Number = sqrt(22.5 * EPS * Book Value per Share)
+            # Approximate: Book Value = Price / PB
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            if price and pb > 0:
+                book_value = price / pb
+                graham = (22.5 * eps * book_value) ** 0.5
+                result["intrinsic_value"] = round(graham, 2)
+
+        if not result:
+            return None
+
+        val = YahooValuation(ticker=ticker, **result)
+        _FUND_CACHE.set(cache_k, {"ticker": ticker, **result})
+        return val
+
+    except Exception as e:
+        logger.info("Yahoo valuation fetch failed for %s: %s", ticker, e)
+        return None
+
+
 # ── Unified Fundamentals Fetcher ───────────────────────────────────────────
 
 
@@ -357,20 +447,25 @@ def fetch_indian_fundamentals(ticker: str) -> dict:
         {
             "trendlyne": TrendlyneFundamentals | None,
             "screener": PeerComparison | None,
+            "yahoo_valuation": YahooValuation | None,
             "source": str,
         }
     """
     trendlyne = fetch_trendlyne_fundamentals(ticker)
     screener = fetch_peer_comparison(ticker)
+    yahoo_val = fetch_yahoo_valuation(ticker)
 
     sources = []
     if trendlyne:
         sources.append("trendlyne")
     if screener:
         sources.append("screener")
+    if yahoo_val:
+        sources.append("yahoo_valuation")
 
     return {
         "trendlyne": trendlyne,
         "screener": screener,
+        "yahoo_valuation": yahoo_val,
         "source": "+".join(sources) if sources else "none",
     }

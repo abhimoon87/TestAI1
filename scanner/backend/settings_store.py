@@ -7,16 +7,84 @@ kept: settings.json is imported once as a backup snapshot, and every
 save_results run still exports last_results.json for eyeballing/git.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 import tempfile
 from datetime import datetime
+from typing import TypedDict
 
 from ..shared import db
 from ..shared.constants import RESULT_COLS, TREND_FILTERS
 
 logger = logging.getLogger(__name__)
+
+
+class ScannerSettings(TypedDict, total=False):
+    """Canonical key list for the settings dict shared by GUI, CLI and engine.
+
+    The runtime representation stays a plain ``dict`` (zero-cost adoption —
+    every existing ``settings.get(...)`` call site keeps working), while the
+    TypedDict gives static checkers and IDEs autocomplete + typo detection.
+    ``DEFAULT_SETTINGS`` below is the single source of truth for values;
+    ``_sanitize_settings`` is the single source of truth for validation.
+    """
+
+    # Moving Averages
+    fast_ma_type: str  # HMA | EMA | SMA | KAMA | VWMA
+    fast_ma_len: int
+    slow_ma_type: str  # HMA | EMA | SMA | KAMA | VWMA
+    slow_ma_len: int
+    # Technical Analysis
+    rsi_len: int
+    rs_length: int
+    vol_ma_len: int
+    atr_len: int
+    # Relative Strength
+    index_symbol: str
+    # Volume Profile
+    vp_lookback: int
+    # Sideways Filter
+    adx_len: int
+    adx_threshold: float
+    chop_len: int
+    chop_threshold: float
+    slope_ma_type: str
+    slope_ma_len: int
+    slope_lookback: int
+    flat_threshold: float
+    sideways_strong_move_pct: float
+    volume_participation_len: int
+    # Step Channel
+    crossover_lookback: int
+    # Entry gate (mirrors backtest engine): require ADX >= this for entry signal
+    min_adx_entry: float
+    # Scanner
+    min_score: float  # 0-100
+    data_period: str  # 6mo | 1y | 2y
+    timeframe: str  # D | W | M
+    trend_filter: str  # All | Bullish Only | Bearish Only | Bullish + Candle
+    # Dead-symbol cache
+    negative_cache_ttl_hours: int
+    # Scan hygiene: warn when a universe member's data is this old (days)
+    stale_member_max_age_days: float
+    # UI
+    reduce_motion: bool  # suppress decorative transitions/animations
+    # Provider toggles
+    use_market_sentiment: bool
+    use_social_sentiment: bool
+    use_indian_market: bool
+    use_indian_fundamentals: bool
+    use_insider_data: bool
+    use_macro_data: bool
+    # Entry mode: "classic" (original), "high_probability" (optimized), "custom"
+    entry_mode: str
+    hp_counter_signal_penalty: bool
+    hp_freshness_max_bars: int
+    hp_volume_confirmation: bool
+
 
 SCANNER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_FILE = os.path.join(SCANNER_DIR, "settings.json")
@@ -24,7 +92,7 @@ API_CONFIG_FILE = os.path.join(SCANNER_DIR, "api_config.json")
 RESULTS_FILE = os.path.join(SCANNER_DIR, "last_results.json")
 
 # ── Default Settings (mirrors Pine Script indicator) ─────────────────────────
-DEFAULT_SETTINGS: dict = {
+DEFAULT_SETTINGS: ScannerSettings = {
     # Moving Averages
     "fast_ma_type": "HMA",
     "fast_ma_len": 40,
@@ -65,6 +133,13 @@ DEFAULT_SETTINGS: dict = {
     "stale_member_max_age_days": 45.0,
     # UI
     "reduce_motion": False,
+    # Provider toggles
+    "use_market_sentiment": True,
+    "use_social_sentiment": True,
+    "use_indian_market": True,
+    "use_indian_fundamentals": True,
+    "use_insider_data": True,
+    "use_macro_data": True,
     # Entry mode: "classic" (original), "high_probability" (optimized), "custom"
     "entry_mode": "classic",
     "hp_counter_signal_penalty": True,
@@ -83,8 +158,13 @@ API_KEY_NAMES = (
     "MARKETAUX_API_KEY",
     "NEWS_API_KEY",
     "GNEWS_API_KEY",
+    "TWITTER_API_KEY",
     "ALETHEIA_API_KEY",
     "CONGRESS_API_KEY",
+    "FRED_API_KEY",
+    "ECONPULSE_API_KEY",
+    "ECONDB_API_KEY",
+    "HALAL_API_KEY",
 )
 
 
@@ -202,9 +282,9 @@ def _sanitize_settings(saved: dict) -> dict:
     return cleaned
 
 
-def load_settings() -> dict:
+def load_settings() -> ScannerSettings:
     """Load settings from the db, importing settings.json once if db is empty."""
-    settings: dict = DEFAULT_SETTINGS.copy()
+    settings: ScannerSettings = DEFAULT_SETTINGS.copy()
     saved = None
     try:
         row = (
@@ -245,7 +325,7 @@ def _write_settings(settings) -> None:
     )
 
 
-def save_settings(settings: dict):
+def save_settings(settings: ScannerSettings):
     """Save settings to the db (single row)."""
     try:
         _write_settings(settings)
