@@ -20,6 +20,7 @@ from flet.canvas import Canvas, Path
 from flet.controls.alignment import Alignment
 
 logger = logging.getLogger(__name__)
+from ..backend.report import _fmt_cr
 from ..shared.constants import RESULT_COLS
 from ..shared.constants import score_of as _score_of
 from ..shared.detail_specs import fmt_pct, ma_chip, signal_specs
@@ -1505,14 +1506,6 @@ class ResultsViewMixin:
 
     # ── Institutional positioning (detail panel) ──────────────────────────
 
-    @staticmethod
-    def _fmt_cr(v) -> str:
-        """₹ flow as a signed Cr string, e.g. ₹-3,694 Cr / ₹+2,838 Cr."""
-        try:
-            return f"₹{float(v):+,.0f} Cr"
-        except (TypeError, ValueError):
-            return "—"
-
     def _inst_tile(self, label, value, total, recent, c, state=None):
         """One compact tile: label → [arrow] value → total/recent sub-line."""
         arrow, arrow_c = "", c["text_dim"]
@@ -1651,9 +1644,7 @@ class ResultsViewMixin:
         def _flow_tile(label, key):
             if flow:
                 total, recent = flow_window_pcts(flow, key)
-                return self._inst_tile(
-                    label, self._fmt_cr(flow[0][key]), total, recent, c
-                )
+                return self._inst_tile(label, _fmt_cr(flow[0][key]), total, recent, c)
             return self._inst_tile(label, pending, None, None, c, state=state)
 
         def _pct_tile(label, key, snap_pct=None, flow_key=None, marker_key=None):
@@ -1673,7 +1664,7 @@ class ResultsViewMixin:
             if net is not None:
                 # scan-time NSE market net — the same markers the FII/DII
                 # filter keys off, so a filtered row always renders a tile
-                return self._inst_tile(label, self._fmt_cr(net), None, None, c)
+                return self._inst_tile(label, _fmt_cr(net), None, None, c)
             return self._inst_tile(label, pending, None, None, c, state=state)
 
         tiles = [

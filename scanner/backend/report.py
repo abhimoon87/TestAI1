@@ -6,7 +6,7 @@ Produces a sortable, filterable table with color-coded scores and news sentiment
 import html as _html
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 from ..shared.detail_specs import SCORE_CATS, fmt_pct, signal_specs
@@ -246,50 +246,24 @@ def _fetch_news_parallel(
     max_workers: int = 8,
     fetch_fn=None,
 ) -> dict[str, list]:
-    """
-    Fetch news for multiple tickers in parallel.
+    """Parallel news fetch: {ticker: items} ([] on failure).
 
-    Args:
-        tickers: Tickers to fetch news for.
-        max_items / months_back: Passed through to the per-ticker fetcher.
-        max_workers: Parallelism cap.
-        fetch_fn: Optional per-ticker callable ``(ticker, max_items,
-            months_back) -> list``; defaults to :func:`fetch_stock_news`.
-
-    Returns:
-        Dict mapping ticker -> list of news item dicts (``[]`` on failure).
+    ``fetch_fn`` takes ``(ticker, max_items, months_back)``; defaults to
+    :func:`fetch_stock_news`.
     """
     fetch_fn = fetch_fn or fetch_stock_news
-    news_map: dict[str, list] = {}
     if not tickers:
-        return news_map
+        return {}
 
     def _fetch_one(ticker: str) -> tuple[str, list]:
-        return ticker, fetch_fn(ticker, max_items, months_back)
+        try:
+            return ticker, fetch_fn(ticker, max_items, months_back)
+        except Exception as e:
+            logger.info("News fetch failed for %s: %s", ticker, e)
+            return ticker, []
 
-    workers = min(max_workers, len(tickers))
-    try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_fetch_one, t): t for t in tickers}
-            for future in as_completed(futures):
-                ticker = futures[future]
-                try:
-                    t, items = future.result()
-                    news_map[t] = items
-                except Exception as e:
-                    logger.info("Parallel news fetch failed for %s: %s", ticker, e)
-                    news_map[ticker] = []
-    except Exception as e:
-        logger.info("ThreadPoolExecutor failed: %s", e)
-        # Fallback: sequential fetch (never let one ticker abort the rest)
-        for t in tickers:
-            try:
-                news_map[t] = fetch_fn(t, max_items, months_back)
-            except Exception as e2:
-                logger.info("Sequential news fetch failed for %s: %s", t, e2)
-                news_map[t] = []
-
-    return news_map
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(tickers))) as pool:
+        return dict(pool.map(_fetch_one, tickers))
 
 
 def fetch_news_for_ticker(
@@ -1104,7 +1078,7 @@ def _fmt_cr(v) -> str:
     try:
         return f"₹{float(v):+,.0f} Cr"
     except (TypeError, ValueError):
-        return "-"
+        return "—"
 
 
 def _inst_tile_html(

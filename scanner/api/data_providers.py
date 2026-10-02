@@ -233,35 +233,6 @@ def _cache_key(ticker: str, period: str, provider: str) -> str:
     return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
 
-def _legacy_cache_key(ticker: str, period: str, provider: str) -> str:
-    """Pre-fix day-keyed cache key (kept for reading legacy entries)."""
-    today = date.today().isoformat()
-    norm = str(ticker or "").strip().upper()
-    raw = f"{norm}_{period}_{provider}_{today}"
-    return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
-
-
-def _read_cache_pair(
-    cache_file: str, meta_file: str, ticker: str
-) -> tuple[pd.DataFrame, datetime] | None:
-    """(frame, cached timestamp) when the pkl+meta pair exists and is fresh."""
-    if not os.path.exists(cache_file) or not os.path.exists(meta_file):
-        return None
-    try:
-        with open(meta_file) as f:
-            meta = json.load(f)
-        cached_time = datetime.fromisoformat(meta["timestamp"])
-        age_hours = (datetime.now() - cached_time).total_seconds() / 3600
-
-        if age_hours > CACHE_TTL_HOURS:
-            return None
-
-        return _normalize_daily_index(pd.read_parquet(cache_file)), cached_time
-    except Exception as e:
-        logger.info("Cache read failed for %s: %s", ticker, e)
-        return None
-
-
 def _read_price_row(key: str, ticker: str) -> pd.DataFrame | None:
     """Return the frame from the db if the BLOB row is still fresh."""
     row = (
@@ -276,26 +247,6 @@ def _read_price_row(key: str, ticker: str) -> pd.DataFrame | None:
     except Exception as e:
         logger.info("Cache read failed for %s: %s", ticker, e)
         return None
-
-
-def _import_price_pair(key: str, ticker: str) -> pd.DataFrame | None:
-    """Fold a pre-migration parquet+meta file pair into the db (once).
-
-    Returns the frame when the pair exists and is fresh (so caches written
-    before the sqlite migration keep serving until they age out).
-    """
-    cache_file = os.path.join(CACHE_DIR, f"{key}.parquet")
-    meta_file = os.path.join(CACHE_DIR, f"{key}.meta")
-    hit = _read_cache_pair(cache_file, meta_file, ticker)
-    if hit is None:
-        return None
-    df, cached_time = hit
-    expires = cached_time.timestamp() + CACHE_TTL_HOURS * 3600
-    try:
-        _store_price_row(key, df, expires)
-    except Exception:
-        logger.debug("Cache import failed for %s", ticker, exc_info=True)
-    return df
 
 
 def _store_price_row(key: str, df: pd.DataFrame, expires: float) -> None:
@@ -318,24 +269,8 @@ def _store_price_row(key: str, df: pd.DataFrame, expires: float) -> None:
 
 
 def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
-    """Retrieve cached data if fresh enough.
-
-    Reads the current (date-independent) key first, then falls back to the
-    legacy day-keyed entry so caches written by older versions keep working
-    until they age out and are pruned.
-    """
-    key = _cache_key(ticker, period, provider)
-    legacy = _legacy_cache_key(ticker, period, provider)
-    for k in (key, legacy):
-        hit = _read_price_row(k, ticker)
-        if hit is not None:
-            return hit
-    # db miss → import a legacy file pair (pre-sqlite cache) once
-    for k in (key, legacy):
-        hit = _import_price_pair(k, ticker)
-        if hit is not None:
-            return hit
-    return None
+    """Retrieve cached data if fresh enough."""
+    return _read_price_row(_cache_key(ticker, period, provider), ticker)
 
 
 def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):

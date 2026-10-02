@@ -56,7 +56,7 @@ from .scoring import (
     compute_scores,
     get_direction,
 )
-from .settings_store import ScannerSettings, get_api_key, load_api_config
+from .settings_store import get_api_key, load_api_config
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,6 @@ def _score_ticker(
     index_df: Any,
     trend_filter: str,
     is_large: bool,
-    global_data: dict | None,
     enrich: Callable,
     use_enrichment_cache: bool = True,
 ) -> tuple[dict | None, str]:
@@ -167,13 +166,12 @@ def _score_ticker(
         # Skip fundamentals/enrichment in fast mode phase 1 (large universes
         # attach them later in the top-200 pass and re-score there).
         if is_large:
-            enriched = {**settings, **(global_data or {}), "_skip_vp": True}
+            enriched = {**settings, "_skip_vp": True}
         else:
             enriched = _enrich_small_cached(
                 ticker,
                 df,
                 settings,
-                global_data,
                 enrich,
                 use_cache=use_enrichment_cache,
             )
@@ -210,63 +208,38 @@ def _score_ticker(
         return None, "error"
 
 
-# Provider-key prefixes grouped by the settings flag that gates them, used
-# to filter cached enrichment keys when flags changed since the entry was
-# written. Shariah keys have no flag (always fetched live and cached).
-_PROVIDER_FLAG_PREFIXES = (
-    (("_sentiment", "_article"), "use_market_sentiment"),
-    (("_social", "_mention"), "use_social_sentiment"),
-    (("_delivery", "_fii", "_dii", "_institutional", "_52w"), "use_indian_market"),
-    (
-        ("_pe_relative", "_is_quality", "_valuation", "_promoter"),
-        "use_indian_fundamentals",
-    ),
-    (("_insider",), "use_insider_data"),
-)
-
 # Defaults live enrichment sets unconditionally for these keys (mirrors
-# _enrich_with_providers); used to backfill cache entries written while a
-# provider was disabled so a re-enabled provider sees identical data.
+# _enrich_with_providers); used to backfill cache entries that predate a
+# provider so older rows score identically to fresh live enrichment.
 _PROVIDER_DEFAULTS = {
     "_sentiment_score": 0.0,
     "_article_count": 0,
     "_sentiment_source": "none",
-    "_social_score": 0.0,
-    "_mention_count": 0,
-    "_social_source": "none",
     "_insider_score": 0.0,
     "_insider_source": "none",
 }
 
 
-def _enrich_small_cached(ticker, df, settings, global_data, enrich, use_cache=True):
+def _enrich_small_cached(ticker, df, settings, enrich, use_cache=True):
     """Enrichment-cache read-through for the small-universe (full) path.
 
     A hit skips ~3s of provider calls per ticker: cached fundamentals are
-    attached to ``df`` and cached provider keys are merged over settings +
-    global data. Keys from providers the user has since disabled are
-    dropped (a disabled provider must not leak stale keys into trade
-    reasons), and enabled-but-missing keys get the same defaults live
-    enrichment would set. A miss runs the live path verbatim and populates
-    the cache, mirroring the phase-2 writer (same key extraction, same
-    skip-empty guard).
+    attached to ``df`` and cached provider keys are merged over settings.
+    Missing keys get the same defaults live enrichment would set. A miss
+    runs the live path verbatim and populates the cache, mirroring the
+    phase-2 writer (same key extraction, same skip-empty guard).
     """
     if use_cache:
         cached = enrichment_get(ticker)
         if cached is not None:
             providers = dict(cached.get("providers") or {})
-            for prefixes, flag in _PROVIDER_FLAG_PREFIXES:
-                if settings.get(flag, True):
-                    for key, default in _PROVIDER_DEFAULTS.items():
-                        if key.startswith(prefixes) and key not in providers:
-                            providers[key] = default
-                else:
-                    for key in [k for k in providers if k.startswith(prefixes)]:
-                        del providers[key]
+            for key, default in _PROVIDER_DEFAULTS.items():
+                if key not in providers:
+                    providers[key] = default
             fund = cached.get("fundamentals")
             if fund is not None:
                 df.attrs["_fundamentals"] = fund
-            return {**settings, **(global_data or {}), **providers}
+            return {**settings, **providers}
     if df.attrs.get("_fundamentals") is None:
         try:
             fund = fetch_fundamentals(ticker)
@@ -274,11 +247,9 @@ def _enrich_small_cached(ticker, df, settings, global_data, enrich, use_cache=Tr
                 df.attrs["_fundamentals"] = fund
         except (RequestException, ValueError, KeyError) as e:
             logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
-    enriched = enrich(ticker, settings, global_data)
+    enriched = enrich(ticker, settings)
     provider_keys = {
-        k: v
-        for k, v in enriched.items()
-        if k.startswith("_") and k not in settings and k not in (global_data or {})
+        k: v for k, v in enriched.items() if k.startswith("_") and k not in settings
     }
     enrichment_put(ticker, provider_keys, df.attrs.get("_fundamentals"))
     return enriched
@@ -335,12 +306,129 @@ def _parallel_score(items, score_fn, cancel_event, max_workers=8):
     return ordered, cancelled
 
 
+def _tally(scores, direction, results, counts) -> tuple[int, int]:
+    """Account one (scores, direction) pair. Returns (filtered, poor) increments."""
+    if scores is None:
+        return (direction == "filtered"), (direction == "poor_rating")
+    counts[direction] = counts.get(direction, 0) + 1
+    results.append(scores)
+    return 0, 0
+
+
+def _make_scorer(
+    settings, timeframe, index_df, trend_filter, is_large, enrich, use_cache=True
+):
+    """Phase-1 per-ticker scorer shared by scan()/scan_stream()/the CLI."""
+
+    def _score_one(item):
+        ticker, df = item
+        return _score_ticker(
+            ticker,
+            df,
+            settings=settings,
+            timeframe=timeframe,
+            index_df=index_df,
+            trend_filter=trend_filter,
+            is_large=is_large,
+            enrich=enrich,
+            use_enrichment_cache=use_cache,
+        )
+
+    return _score_one
+
+
+def _enrich_top(
+    results,
+    batch_data,
+    settings,
+    timeframe,
+    index_df,
+    enrich,
+    cancel_event=None,
+    progress=None,
+    log=None,
+):
+    """Phase-2 body shared by scan()/scan_stream()/CLI.
+
+    Sorts, enriches the global top-200 in place, and returns
+    ``(enriched_top, merged_results)``. ``_finalize_scan`` (or the CLI)
+    re-sorts the merged list afterwards because enrichment moves scores.
+    """
+    results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
+    top_n = min(ENRICH_TOP_N, len(results))
+    top = results[:top_n]
+    rest = results[top_n:]
+    if progress:
+        progress(0.82, f"Enriching top {top_n} stocks...")
+    if log:
+        log(f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment...")
+    enriched_top = _enrich_rows_in_place(
+        top,
+        batch_data,
+        settings=settings,
+        timeframe=timeframe,
+        index_df=index_df,
+        enrich=enrich,
+        cancel_event=cancel_event,
+        progress_callback=progress,
+    )
+    return enriched_top, enriched_top + rest
+
+
+def _log_scan_outcome(
+    result, universe, elapsed, tickers, settings, prefix, cancel_event=None
+) -> None:
+    """Shared wind-down + completion logging for scan()/scan_stream().
+
+    A stop requested while the loop was between/inside batches (generator
+    stop or late poll exit, not a loop-top check) must always surface as
+    cancelled.
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        result.cancelled = True
+    if result.cancelled:
+        logger.info(
+            "%s_cancelled: universe=%s elapsed=%.1fs results=%d",
+            prefix,
+            universe,
+            elapsed,
+            len(result.results),
+        )
+    elif result.error:
+        logger.info(
+            "%s_error: universe=%s elapsed=%.1fs error=%s",
+            prefix,
+            universe,
+            elapsed,
+            result.error,
+        )
+    else:
+        logger.info(
+            "%s_completed: universe=%s elapsed=%.1fs tickers=%d results=%d "
+            "passed=%d filtered=%d bull=%d bear=%d",
+            prefix,
+            universe,
+            elapsed,
+            len(tickers),
+            len(result.results),
+            len(
+                [
+                    r
+                    for r in result.results
+                    if r["total"] >= settings.get("min_score", 50)
+                ]
+            ),
+            result.filtered_out,
+            result.direction_counts.get("Bull", 0),
+            result.direction_counts.get("Bear", 0),
+        )
+
+
 def _enrich_rows_in_place(
     rows: list[dict],
     batch_data: dict,
     *,
     settings: dict,
-    global_data: dict | None,
     timeframe: str,
     index_df: Any,
     enrich: Callable,
@@ -379,22 +467,17 @@ def _enrich_rows_in_place(
             if cached is not None:
                 record_enrichment_hit()
                 enriched = dict(settings)
-                enriched.update(global_data or {})
                 enriched.update(cached.get("providers") or {})
             else:
                 record_enrichment_miss()
                 try:
-                    enriched = enrich(
-                        ticker, settings, global_data, executor=_provider_executor
-                    )
+                    enriched = enrich(ticker, settings, executor=_provider_executor)
                 except TypeError:
-                    enriched = enrich(ticker, settings, global_data)
+                    enriched = enrich(ticker, settings)
                 provider_keys = {
                     k: v
                     for k, v in enriched.items()
-                    if k.startswith("_")
-                    and k not in settings
-                    and k not in (global_data or {})
+                    if k.startswith("_") and k not in settings
                 }
             for k, v in enriched.items():
                 if k.startswith("_") and k not in r:
@@ -430,7 +513,6 @@ def _enrich_rows_in_place(
                             index_df=index_df,
                             settings={
                                 **settings,
-                                **(global_data or {}),
                                 "_skip_vp": True,
                                 # Provider "_"-keys (flows, delivery, …) so
                                 # score_bar's institutional bonus applies in
@@ -622,13 +704,13 @@ class ScannerEngine:
         trend_filter: str,
         index_symbol: str,
         scan_label: str = "SCAN",
-    ) -> tuple[list[str], Any, dict, bool]:
+    ) -> tuple[list[str], Any, bool]:
         """Shared setup for scan() and scan_stream().
 
         Resolves the universe, strips dead members, logs the header,
-        fetches the index, caches API keys and global enrichment data.
+        fetches the index and caches API keys.
 
-        Returns ``(tickers, index_df, global_data, is_large)``.
+        Returns ``(tickers, index_df, is_large)``.
         """
         try:
             tickers = get_universe(universe)
@@ -666,20 +748,13 @@ class ScannerEngine:
         else:
             self._log(f"Warning: {index_symbol} index unavailable, using proxy for RS")
 
-        self._log("Fetching global macro/commodity data...")
-        global_data = self._fetch_global_enrichment(settings)
-        if global_data:
-            self._log(
-                f"Global enrichment: {len(global_data)} keys (macro, forex, crypto, commodity)"
-            )
-
         is_large = len(tickers) > LARGE_UNIVERSE_THRESHOLD
         if is_large:
             self._log(
                 f"Large universe fast mode: {len(tickers)} stocks — technicals first, enrich top {ENRICH_TOP_N} only"
             )
 
-        return tickers, index_df, global_data, is_large
+        return tickers, index_df, is_large
 
     def _finalize_scan(
         self,
@@ -767,82 +842,20 @@ class ScannerEngine:
                 enrichment_cache_size(),
             )
 
-    def _fetch_global_enrichment(self, settings: dict) -> dict:
-        """
-        Fetch macro/mandi data ONCE (not per-ticker) — parallelized.
-        """
-        from concurrent.futures import as_completed
-
-        global_data: dict = {}
-        api_config = load_api_config()
-
-        def _fetch_macro():
-            from ..api.macro_data import fetch_macro_data
-
-            return fetch_macro_data(
-                fred_key=get_api_key("FRED_API_KEY", api_config),
-                econpulse_key=get_api_key("ECONPULSE_API_KEY", api_config),
-                econdb_key=get_api_key("ECONDB_API_KEY", api_config),
-            )
-
-        def _fetch_mandi():
-            from ..api.free_apis import fetch_mandi_prices
-
-            return fetch_mandi_prices()
-
-        futures = {}
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            if settings.get("use_macro_data", True):
-                futures[ex.submit(_fetch_macro)] = "macro"
-                futures[ex.submit(_fetch_mandi)] = "mandi"
-            for fut in as_completed(futures):
-                kind = futures[fut]
-                try:
-                    res = fut.result()
-                    if kind == "macro" and res:
-                        regime = res.get("regime")
-                        if regime:
-                            global_data["_macro_regime"] = regime.regime
-                            global_data["_macro_confidence"] = regime.confidence
-                            global_data["_macro_signals"] = regime.signals
-                        forex = res.get("forex")
-                        if forex:
-                            global_data["_inr_change_1d"] = forex.change_1d
-                            global_data["_inr_change_1w"] = forex.change_1w
-                            global_data["_forex_source"] = "frankfurter"
-                        crypto = res.get("crypto")
-                        if crypto:
-                            global_data["_btc_fear_greed"] = crypto.fear_greed_index
-                            global_data["_btc_fear_greed_label"] = (
-                                crypto.fear_greed_label
-                            )
-                    elif kind == "mandi" and res:
-                        global_data["_commodity_trend"] = "neutral"
-                        global_data["_commodity_source"] = "mandi"
-                except (RequestException, ValueError, KeyError) as e:
-                    logger.debug("%s fetch failed: %s", kind, e)
-
-        return global_data
-
     def _enrich_with_providers(
         self,
         ticker: str,
         settings: dict,
-        global_data: dict | None = None,
         executor=None,
     ) -> dict:
         """
         Enrich settings with data from provider modules.
-        Runs all 5 per-ticker providers in parallel via ThreadPoolExecutor.
+        Runs all 4 per-ticker providers in parallel via ThreadPoolExecutor.
         If an executor is provided, reuses it; otherwise creates a temporary one.
         """
         from concurrent.futures import as_completed
 
         enriched = settings.copy()
-
-        # Merge pre-fetched global data (macro/mandi — already fetched once)
-        if global_data:
-            enriched.update(global_data)
 
         # Load API keys (cached per scan, not per-ticker)
         api_config = load_api_config()
@@ -856,14 +869,6 @@ class ScannerEngine:
                 marketaux_key=get_api_key("MARKETAUX_API_KEY", api_config),
                 newsapi_key=get_api_key("NEWS_API_KEY", api_config),
                 gnews_key=get_api_key("GNEWS_API_KEY", api_config),
-            )
-
-        def _fetch_social():
-            from ..api.social_sentiment import fetch_social_sentiment
-
-            return fetch_social_sentiment(
-                ticker,
-                twitter_api_key=get_api_key("TWITTER_API_KEY", api_config),
             )
 
         def _fetch_indian_market():
@@ -885,22 +890,16 @@ class ScannerEngine:
                 congress_key=get_api_key("CONGRESS_API_KEY", api_config),
             )
 
-        # Launch all 5 providers in parallel
+        # Launch all 4 providers in parallel
         futures = {}
         _own_executor = executor is None
         if _own_executor:
-            executor = ThreadPoolExecutor(max_workers=5)
+            executor = ThreadPoolExecutor(max_workers=4)
         try:
-            if settings.get("use_market_sentiment", True):
-                futures[executor.submit(_fetch_sentiment)] = "sentiment"
-            if settings.get("use_social_sentiment", True):
-                futures[executor.submit(_fetch_social)] = "social"
-            if settings.get("use_indian_market", True):
-                futures[executor.submit(_fetch_indian_market)] = "india"
-            if settings.get("use_indian_fundamentals", True):
-                futures[executor.submit(_fetch_indian_fundamentals)] = "india_fund"
-            if settings.get("use_insider_data", True):
-                futures[executor.submit(_fetch_insider)] = "insider"
+            futures[executor.submit(_fetch_sentiment)] = "sentiment"
+            futures[executor.submit(_fetch_indian_market)] = "india"
+            futures[executor.submit(_fetch_indian_fundamentals)] = "india_fund"
+            futures[executor.submit(_fetch_insider)] = "insider"
 
             try:
                 for future in as_completed(futures, timeout=ENRICH_PROVIDER_TIMEOUT):
@@ -913,10 +912,6 @@ class ScannerEngine:
                             )
                             enriched["_article_count"] = result.get("article_count", 0)
                             enriched["_sentiment_source"] = result.get("source", "none")
-                        elif category == "social":
-                            enriched["_social_score"] = result.get("social_score", 0.0)
-                            enriched["_mention_count"] = result.get("mention_count", 0)
-                            enriched["_social_source"] = result.get("source", "none")
                         elif category == "india":
                             delivery = result.get("delivery")
                             if delivery:
@@ -932,13 +927,6 @@ class ScannerEngine:
                                 enriched["_fii_net"] = fii_dii.fii_net
                                 enriched["_dii_net"] = fii_dii.dii_net
                                 enriched["_institutional_source"] = "nse"
-                            week52 = result.get("week52")
-                            if week52:
-                                enriched["_52w_position"] = week52.position_in_range
-                                enriched["_52w_pct_from_high"] = (
-                                    week52.pct_from_52w_high
-                                )
-                                enriched["_52w_source"] = "nse"
                         elif category == "india_fund":
                             trendlyne = result.get("trendlyne")
                             if trendlyne and trendlyne.promoter_holding:
@@ -980,30 +968,13 @@ class ScannerEngine:
             if _own_executor:
                 executor.shutdown(wait=False)
 
-        # ── Premium Finance (Category 20 - Shariah) ────────────────────
-        try:
-            from ..api.premium_finance import fetch_shariah_data
-
-            shariah = _call_with_timeout(
-                lambda: fetch_shariah_data(
-                    ticker,
-                    api_key=get_api_key("HALAL_API_KEY", api_config),
-                ),
-                timeout=15,
-            )
-            if shariah and shariah is not _TIMEOUT:
-                enriched["_is_shariah_compliant"] = shariah.is_shariah_compliant
-                enriched["_shariah_source"] = "halal_terminal"
-        except (RequestException, ValueError, KeyError, AttributeError) as e:
-            logger.debug("Shariah data fetch failed for %s: %s", ticker, e)
-
         return enriched
 
     @trace(level=logging.INFO, log_args=True)
     def scan(
         self,
         universe: str,
-        settings: ScannerSettings,
+        settings: dict,
         period: str = "1y",
         timeframe: str = "D",
         trend_filter: str = "All",
@@ -1028,6 +999,7 @@ class ScannerEngine:
         """
         self._cancel_event.clear()
         result = ScanResult()
+        tickers: list[str] = []  # bound before try so the outcome log never NameErrors
         import time as _time
 
         t_start = _time.monotonic()
@@ -1041,7 +1013,7 @@ class ScannerEngine:
         )
 
         try:
-            tickers, index_df, global_data, is_large = self._prepare_scan(
+            tickers, index_df, is_large = self._prepare_scan(
                 universe,
                 settings,
                 period,
@@ -1086,19 +1058,14 @@ class ScannerEngine:
 
             # ── Phase 1: Fast technical scoring (no enrichment) ────────────
             # Use ThreadPool for CPU-bound scoring on large universes
-            def _score_one(item):
-                ticker, df = item
-                return _score_ticker(
-                    ticker,
-                    df,
-                    settings=settings,
-                    timeframe=timeframe,
-                    index_df=index_df,
-                    trend_filter=trend_filter,
-                    is_large=is_large,
-                    global_data=global_data,
-                    enrich=self._enrich_with_providers,
-                )
+            _score_one = _make_scorer(
+                settings,
+                timeframe,
+                index_df,
+                trend_filter,
+                is_large,
+                self._enrich_with_providers,
+            )
 
             if is_large and total > 200:
                 # Parallel scoring for large universes — poll cancel every 0.5s
@@ -1134,16 +1101,11 @@ class ScannerEngine:
                                 0.1 + (done / total * 0.7), f"Scoring {done}/{total}"
                             )
                         scores, direction = future.result()
+                        f, p = _tally(scores, direction, results, direction_counts)
+                        filtered_out += f
+                        poor_rating_hidden += p
                         if scores is None:
-                            if direction == "filtered":
-                                filtered_out += 1
-                            elif direction == "poor_rating":
-                                poor_rating_hidden += 1
                             continue
-                        direction_counts[direction] = (
-                            direction_counts.get(direction, 0) + 1
-                        )
-                        results.append(scores)
                         if len(results) % 20 == 0 or len(results) <= 5:
                             tag = (
                                 "\u2713"
@@ -1176,14 +1138,11 @@ class ScannerEngine:
                     progress = 0.1 + (done / total * 0.9) if total > 0 else 0.5
                     self._progress(progress, f"[{done}/{total}] {ticker}")
 
+                    f, p = _tally(scores, direction, results, direction_counts)
+                    filtered_out += f
+                    poor_rating_hidden += p
                     if scores is None:
-                        if direction == "filtered":
-                            filtered_out += 1
-                        elif direction == "poor_rating":
-                            poor_rating_hidden += 1
                         continue
-                    direction_counts[direction] = direction_counts.get(direction, 0) + 1
-                    results.append(scores)
 
                     if len(results) % 10 == 0 or len(results) <= 5:
                         score_val = scores["total"]
@@ -1198,26 +1157,17 @@ class ScannerEngine:
 
             # ── Phase 2: Enrich top 200 for large universes ───────────────
             if is_large and results and not self._cancel_event.is_set():
-                results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-                top_n = min(ENRICH_TOP_N, len(results))
-                top = results[:top_n]
-                rest = results[top_n:]
-                self._progress(0.82, f"Enriching top {top_n} stocks...")
-                self._log(
-                    f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment..."
-                )
-                enriched_top = _enrich_rows_in_place(
-                    top,
+                _, results = _enrich_top(
+                    results,
                     batch_data,
-                    settings=settings,
-                    global_data=global_data,
-                    timeframe=timeframe,
-                    index_df=index_df,
-                    enrich=self._enrich_with_providers,
+                    settings,
+                    timeframe,
+                    index_df,
+                    self._enrich_with_providers,
                     cancel_event=self._cancel_event,
-                    progress_callback=self._progress,
+                    progress=self._progress,
+                    log=self._log,
                 )
-                results = enriched_top + rest
 
             self._progress(0.95, "Finalizing scan...")
 
@@ -1239,55 +1189,17 @@ class ScannerEngine:
             self._log(f"\nERROR: {type(e).__name__}: {e}")
             logger.exception("Scan failed")
 
-        # A user stop can land while the batch download winds down without
-        # another ticker/chunk to iterate (the generator stops cleanly before
-        # the loop body's own cancel check runs), leaving an empty result
-        # with cancelled=False. Always surface a requested stop.
-        if self._cancel_event.is_set():
-            result.cancelled = True
-
         elapsed = _time.monotonic() - t_start
-        if result.cancelled:
-            logger.info(
-                "scan_cancelled: universe=%s elapsed=%.1fs results=%d",
-                universe,
-                elapsed,
-                len(result.results),
-            )
-        elif result.error:
-            logger.info(
-                "scan_error: universe=%s elapsed=%.1fs error=%s",
-                universe,
-                elapsed,
-                result.error,
-            )
-        else:
-            logger.info(
-                "scan_completed: universe=%s elapsed=%.1fs tickers=%d results=%d "
-                "passed=%d filtered=%d bull=%d bear=%d",
-                universe,
-                elapsed,
-                len(tickers),
-                len(result.results),
-                len(
-                    [
-                        r
-                        for r in result.results
-                        if r["total"] >= settings.get("min_score", 50)
-                    ]
-                ),
-                result.filtered_out,
-                result.direction_counts.get("Bull", 0),
-                result.direction_counts.get("Bear", 0),
-            )
-
+        _log_scan_outcome(
+            result, universe, elapsed, tickers, settings, "scan", self._cancel_event
+        )
         return result
 
     @trace(level=logging.INFO, log_args=True)
     def scan_stream(
         self,
         universe: str,
-        settings: ScannerSettings,
+        settings: dict,
         period: str = "1y",
         timeframe: str = "D",
         trend_filter: str = "All",
@@ -1309,6 +1221,7 @@ class ScannerEngine:
         batch_cb = on_batch
         self._cancel_event.clear()
         result = ScanResult()
+        tickers: list[str] = []  # bound before try so the outcome log never NameErrors
         import time as _time
 
         t_start = _time.monotonic()
@@ -1322,7 +1235,7 @@ class ScannerEngine:
         )
 
         try:
-            tickers, index_df, global_data, is_large = self._prepare_scan(
+            tickers, index_df, is_large = self._prepare_scan(
                 universe,
                 settings,
                 period,
@@ -1341,19 +1254,14 @@ class ScannerEngine:
             fetched_so_far = 0
             batch_idx = 0
 
-            def _score_one(item):
-                ticker, df = item
-                return _score_ticker(
-                    ticker,
-                    df,
-                    settings=settings,
-                    timeframe=timeframe,
-                    index_df=index_df,
-                    trend_filter=trend_filter,
-                    is_large=is_large,
-                    global_data=global_data,
-                    enrich=self._enrich_with_providers,
-                )
+            _score_one = _make_scorer(
+                settings,
+                timeframe,
+                index_df,
+                trend_filter,
+                is_large,
+                self._enrich_with_providers,
+            )
 
             # ── Stream per parallel batch ─────────────────────────────────
             reset_negative_skips()
@@ -1413,16 +1321,11 @@ class ScannerEngine:
                             continue
                         for fut in completed:
                             scores, direction = fut.result()
-                            if scores is None:
-                                if direction == "filtered":
-                                    filtered_out += 1
-                                elif direction == "poor_rating":
-                                    poor_rating_hidden += 1
-                                continue
-                            direction_counts[direction] = (
-                                direction_counts.get(direction, 0) + 1
+                            f, p = _tally(
+                                scores, direction, chunk_results, direction_counts
                             )
-                            chunk_results.append(scores)
+                            filtered_out += f
+                            poor_rating_hidden += p
                     if not cancelled_loop:
                         ex.shutdown(wait=True)
                 else:
@@ -1437,16 +1340,11 @@ class ScannerEngine:
                         if res is None:
                             continue  # cancelled before this item ran
                         scores, direction = res
-                        if scores is None:
-                            if direction == "filtered":
-                                filtered_out += 1
-                            elif direction == "poor_rating":
-                                poor_rating_hidden += 1
-                            continue
-                        direction_counts[direction] = (
-                            direction_counts.get(direction, 0) + 1
+                        f, p = _tally(
+                            scores, direction, chunk_results, direction_counts
                         )
-                        chunk_results.append(scores)
+                        filtered_out += f
+                        poor_rating_hidden += p
 
                 if chunk_results:
                     # Keep global results sorted incrementally for top-200 calc later
@@ -1474,32 +1372,24 @@ class ScannerEngine:
 
             # ── Phase 2: Enrich top 200 for large universes (update in place) ─
             if is_large and results and not self._cancel_event.is_set():
-                results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-                top_n = min(ENRICH_TOP_N, len(results))
-                top = results[:top_n]
-                rest = results[top_n:]
-                self._progress(0.82, f"Enriching top {top_n} of {len(results)}…")
-                self._log(
-                    f"Enriching top {top_n} of {len(results)} with fundamentals/sentiment..."
-                )
-                enriched_top = _enrich_rows_in_place(
-                    top,
+                enriched_top, results = _enrich_top(
+                    results,
                     batch_data_all,
-                    settings=settings,
-                    global_data=global_data,
-                    timeframe=timeframe,
-                    index_df=index_df,
-                    enrich=self._enrich_with_providers,
+                    settings,
+                    timeframe,
+                    index_df,
+                    self._enrich_with_providers,
                     cancel_event=self._cancel_event,
-                    progress_callback=self._progress,
+                    progress=self._progress,
+                    log=self._log,
                 )
-                # Merge: enriched top + rest, will trigger UI update
-                results = enriched_top + rest
                 if batch_cb and enriched_top:
                     try:
                         # Send enriched top as update batch — UI will replace existing tickers
                         batch_cb(enriched_top)
-                        self._log(f"Top {top_n} enrichment complete — grid updated")
+                        self._log(
+                            f"Top {len(enriched_top)} enrichment complete — grid updated"
+                        )
                     except Exception as e:
                         logger.info("on_batch enrichment callback failed: %s", e)
 
@@ -1521,45 +1411,14 @@ class ScannerEngine:
             self._log(f"\nERROR: {type(e).__name__}: {e}")
             logger.exception("Stream scan failed")
 
-        # Same wind-down guarantee as scan(): if the user cancelled while the
-        # stream was between/inside batches (loop exited via generator stop,
-        # not via the loop-top check), report it as cancelled.
-        if self._cancel_event.is_set():
-            result.cancelled = True
-
         elapsed = _time.monotonic() - t_start
-        if result.cancelled:
-            logger.info(
-                "stream_scan_cancelled: universe=%s elapsed=%.1fs results=%d",
-                universe,
-                elapsed,
-                len(result.results),
-            )
-        elif result.error:
-            logger.info(
-                "stream_scan_error: universe=%s elapsed=%.1fs error=%s",
-                universe,
-                elapsed,
-                result.error,
-            )
-        else:
-            logger.info(
-                "stream_scan_completed: universe=%s elapsed=%.1fs tickers=%d results=%d "
-                "passed=%d filtered=%d bull=%d bear=%d",
-                universe,
-                elapsed,
-                len(tickers),
-                len(result.results),
-                len(
-                    [
-                        r
-                        for r in result.results
-                        if r["total"] >= settings.get("min_score", 50)
-                    ]
-                ),
-                result.filtered_out,
-                result.direction_counts.get("Bull", 0),
-                result.direction_counts.get("Bear", 0),
-            )
-
+        _log_scan_outcome(
+            result,
+            universe,
+            elapsed,
+            tickers,
+            settings,
+            "stream_scan",
+            self._cancel_event,
+        )
         return result

@@ -91,17 +91,6 @@ class TTLCache(Generic[T]):
             except Exception:
                 pass
 
-    def clear_expired(self) -> int:
-        now = time.monotonic()
-        removed = 0
-        with self._lock:
-            for k in list(self._store.keys()):
-                _, ts = self._store[k]
-                if now - ts >= self.ttl:
-                    self._store.pop(k, None)
-                    removed += 1
-        return removed
-
     def make_key(self, *parts: str, hashed: bool = True) -> str:
         prefix = f"{self.namespace}:" if self.namespace else ""
         raw = prefix + ":".join(str(p) for p in parts)

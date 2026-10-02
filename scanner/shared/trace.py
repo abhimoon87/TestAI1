@@ -48,15 +48,6 @@ BACKUP_COUNT = 5
 # Custom TRACE level (below DEBUG) for ultra-verbose entry/exit
 TRACE_LEVEL = 5
 logging.addLevelName(TRACE_LEVEL, "TRACE")
-
-
-def _trace(self, msg, *args, **kwargs):
-    if self.isEnabledFor(TRACE_LEVEL):
-        self._log(TRACE_LEVEL, msg, args, **kwargs)
-
-
-logging.Logger.trace = _trace  # type: ignore[attr-defined]
-
 _configured = False
 _trace_path: Path = DEFAULT_TRACE_FILE
 

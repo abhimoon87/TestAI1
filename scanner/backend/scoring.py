@@ -79,8 +79,6 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 import pandas as pd
 
@@ -99,10 +97,6 @@ from ..shared.indicators import (
     volume_profile_poc,
     vwma,
 )
-from ..shared.trace import trace
-
-if TYPE_CHECKING:
-    from .settings_store import ScannerSettings
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MOVING AVERAGE SELECTOR
@@ -1097,12 +1091,11 @@ def _get_combined_rating(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@trace(level=5, log_args=False)
 def compute_scores(
     df: pd.DataFrame,
     timeframe: str = "D",
     index_df: pd.DataFrame | None = None,
-    settings: ScannerSettings | None = None,
+    settings: dict | None = None,
 ) -> dict | None:
     """
     Compute the 10-category score for a stock.

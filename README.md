@@ -120,7 +120,7 @@ The 10 categories and their maximum weights match the Pine Script:
 
 ## API keys (optional)
 
-All enrichment is **optional** — the scanner works keyless using free NSE/Yahoo data. Adding keys upgrades quality: sentiment sources, institutional data, fundamentals, macro, insider and Shariah checks.
+All enrichment is **optional** — the scanner works keyless using free NSE/Yahoo data. Adding keys upgrades quality: sentiment sources, institutional data, fundamentals and insider checks.
 
 **1. Create `scanner/api_config.json`:**
 
@@ -137,22 +137,13 @@ All enrichment is **optional** — the scanner works keyless using free NSE/Yaho
 export FINNHUB_API_KEY=cxxxxxxx
 ```
 
-**3. Or run the interactive setup wizard:**
-
-```bash
-python -m scanner.setup_api_keys
-```
-
-Every known key, its purpose, and its free tier is registered in `API_KEY_REGISTRY` in `scanner/backend/settings_store.py`. Current registry:
+Every known key is registered in `API_KEY_NAMES` in `scanner/backend/settings_store.py`. Current registry:
 
 | Category | Keys |
 |---|---|
 | Finance | `FINNHUB_API_KEY`, `ALPHA_VANTAGE_API_KEY` |
 | News | `MARKETAUX_API_KEY`, `NEWS_API_KEY`, `GNEWS_API_KEY` |
-| Social | `TWITTER_API_KEY` |
 | Insider | `ALETHEIA_API_KEY`, `CONGRESS_API_KEY` |
-| Macro | `FRED_API_KEY`, `ECONPULSE_API_KEY`, `ECONDB_API_KEY` |
-| Shariah | `HALAL_API_KEY` |
 
 Without keys, provider fetches return empty results and the scanner simply scores on technicals + yfinance fundamentals.
 

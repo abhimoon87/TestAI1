@@ -21,10 +21,9 @@ from ..shared.constants import TREND_FILTERS
 from ..shared.universes import UNIVERSES
 from .report import generate_html_report, save_report
 from .scanner_engine import (
-    ENRICH_TOP_N,
     ScannerEngine,
-    _enrich_rows_in_place,
-    _score_ticker,
+    _enrich_top,
+    _make_scorer,
 )
 from .settings_store import load_settings
 
@@ -214,33 +213,29 @@ def run_scan():
             "  Large universe (%d stocks) — fast technical pass, enrich top 200 at end",
             len(tickers),
         )
-        _engine = ScannerEngine()
-        global_data = _engine._fetch_global_enrichment(settings)
-        enrich = _engine._enrich_with_providers
+        enrich = ScannerEngine()._enrich_with_providers
     else:
-        global_data = None
 
-        def enrich(_t, s, _g):
+        def enrich(_t, s):
             return dict(s)  # no 5-provider enrichment on small lists
+
+    # CLI small lists skip provider enrichment by design: output must not
+    # depend on enrichment-cache state.
+    score_one = _make_scorer(
+        settings,
+        timeframe,
+        index_df,
+        trend_filter,
+        is_large,
+        enrich,
+        use_cache=False,
+    )
 
     for i, (ticker, df) in enumerate(stock_data.items(), 1):
         logger.info("  [%d/%d] %s...", i, len(stock_data), ticker)
 
         # Crossover filter -> direction -> fundamentals -> score -> rating gate
-        scores, reason = _score_ticker(
-            ticker,
-            df,
-            settings=settings,
-            timeframe=timeframe,
-            index_df=index_df,
-            trend_filter=trend_filter,
-            is_large=is_large,
-            global_data=global_data,
-            enrich=enrich,
-            # CLI small lists skip provider enrichment by design: output must
-            # not depend on enrichment-cache state.
-            use_enrichment_cache=False,
-        )
+        scores, reason = score_one((ticker, df))
         if scores is None:
             if reason == "filtered":
                 filtered_out += 1
@@ -266,26 +261,19 @@ def run_scan():
 
     # ── Phase 2 (large universes): enrich top 200 + re-score like the engine ─
     if is_large and results:
-        results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
-        top_n = min(ENRICH_TOP_N, len(results))
-        top = results[:top_n]
-        rest = results[top_n:]
-        logger.info(
-            "Enriching top %d of %d with fundamentals/sentiment...", top_n, len(results)
-        )
-        enriched_top = _enrich_rows_in_place(
-            top,
+        enriched_top, results = _enrich_top(
+            results,
             stock_data,
-            settings=settings,
-            global_data=global_data,
-            timeframe=timeframe,
-            index_df=index_df,
-            enrich=enrich,
+            settings,
+            timeframe,
+            index_df,
+            enrich,
+            log=logger.info,
         )
-        results = enriched_top + rest
         results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
         logger.info(
-            "Top %d enrichment complete — scores re-computed with fundamentals", top_n
+            "Top %d enrichment complete — scores re-computed with fundamentals",
+            len(enriched_top),
         )
 
     if not results:

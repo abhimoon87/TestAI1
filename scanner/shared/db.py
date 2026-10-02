@@ -217,19 +217,3 @@ def kv_prune() -> int:
         "DELETE FROM kv WHERE expires IS NOT NULL AND expires <= ?", (time.time(),)
     )
     return cur.rowcount
-
-
-def kv_import_src(namespace: str, path: str | os.PathLike):
-    """Legacy JSON to fold into an empty namespace once; else None.
-
-    None when the namespace already holds rows, the file is missing or
-    unreadable, or the payload is not a JSON object.
-    """
-    if kv_count(namespace) or not os.path.exists(path):
-        return None
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None

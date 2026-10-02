@@ -88,7 +88,7 @@ class TestCliScoringLoop:
                 return None, "filtered"
             return None, "no_score"
 
-        monkeypatch.setattr(run_scanner, "_score_ticker", fake_score_ticker)
+        monkeypatch.setattr(scanner_engine, "_score_ticker", fake_score_ticker)
 
         run_scanner.run_scan()
 
@@ -107,7 +107,6 @@ class TestCliScoringLoop:
         assert ticker0 == "AAA"
         assert kw0["trend_filter"] == "All"
         assert kw0["is_large"] is False
-        assert kw0["global_data"] is None
         assert kw0["timeframe"] == "D"
         assert callable(kw0["enrich"])
         assert kw0["settings"] == {
@@ -133,8 +132,7 @@ class TestCliScoringLoop:
             index_df=None,
             trend_filter="All",
             is_large=False,
-            global_data=None,
-            enrich=lambda _t, s, _g: dict(s),
+            enrich=lambda _t, s: dict(s),
         )
         assert direction == "Bull"
         assert captured["results"] == [expected]
@@ -151,7 +149,6 @@ class TestCliScoringLoop:
         monkeypatch.setattr(run_scanner, "fetch_batch_yfinance", lambda *a, **kw: data)
 
         fake_engine = MagicMock()
-        fake_engine._fetch_global_enrichment.return_value = {"macro": 1}
         fake_engine._enrich_with_providers.return_value = {}
         monkeypatch.setattr(run_scanner, "ScannerEngine", lambda: fake_engine)
 
@@ -162,18 +159,15 @@ class TestCliScoringLoop:
             enrich_calls["kw"] = kw
             return rows
 
-        monkeypatch.setattr(run_scanner, "_enrich_rows_in_place", fake_enrich_top)
+        monkeypatch.setattr(scanner_engine, "_enrich_rows_in_place", fake_enrich_top)
 
         run_scanner.run_scan()
 
-        # Phase-2 ran with the engine's provider-enrichment callable and the
-        # fetched global data; only the one scored row was enriched
+        # Phase-2 ran with the engine's provider-enrichment callable; only
+        # the one scored row was enriched
         assert enrich_calls["n"] == 1
-        assert enrich_calls["kw"]["global_data"] == {"macro": 1}
         assert enrich_calls["kw"]["timeframe"] == "D"
         assert enrich_calls["kw"]["enrich"] is fake_engine._enrich_with_providers
-        # And phase-1 used the engine semantics too
-        assert fake_engine._fetch_global_enrichment.call_count == 1
 
     def test_small_universe_skips_engine_setup(self, cli_mocks, monkeypatch):
         """Small lists must not instantiate the engine or fetch global data."""
@@ -194,7 +188,7 @@ class TestTrendFilterFlag:
             seen.append(kw["trend_filter"])
             return None, "filtered"
 
-        monkeypatch.setattr(run_scanner, "_score_ticker", fake_score_ticker)
+        monkeypatch.setattr(scanner_engine, "_score_ticker", fake_score_ticker)
         run_scanner.run_scan()
         return seen
 

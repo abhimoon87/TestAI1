@@ -25,15 +25,10 @@ from scanner.tests.conftest import _frame_ending, _last2_df
 
 @pytest.fixture(autouse=True)
 def _isolate_enrichment_cache(tmp_path, monkeypatch):
-    """Point the enrichment cache at a temp file and reset it per test."""
-    monkeypatch.setattr(
-        data_fetcher,
-        "_ENRICHMENT_CACHE_PATH",
-        str(tmp_path / "enrichment_cache.json"),
-    )
-    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+    """Reset the enrichment cache per test."""
+    data_fetcher._ENRICHMENT_CACHE.clear()
     yield
-    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+    data_fetcher._ENRICHMENT_CACHE.clear()
 
 
 def _tiny_df():
@@ -103,7 +98,6 @@ class TestBullishCandleFilterGate:
             index_df=df,
             trend_filter=trend_filter,
             is_large=True,
-            global_data=None,
             enrich=lambda *a: {},
             use_enrichment_cache=False,
         )
@@ -142,7 +136,6 @@ class TestBullishCandleFilterGate:
             index_df=df,
             trend_filter="Bullish + Candle",
             is_large=True,
-            global_data=None,
             enrich=lambda *a: {},
             use_enrichment_cache=False,
         )
@@ -168,7 +161,6 @@ class TestEnrichRowsInPlaceCache:
                 rows,
                 batch_data,
                 settings={},
-                global_data=None,
                 timeframe="D",
                 index_df=None,
                 enrich=enrich,
@@ -184,7 +176,7 @@ class TestEnrichRowsInPlaceCache:
         df = _tiny_df()
         rows = [{"ticker": "TCS", "total": 50.0}]
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             raise AssertionError("provider enrich must not run on a cache hit")
 
         with patch("scanner.backend.scanner_engine.fetch_fundamentals") as mock_fund:
@@ -221,7 +213,6 @@ class TestEnrichRowsInPlaceCache:
                 rows,
                 {"TCS": df},
                 settings={},
-                global_data=None,
                 timeframe="D",
                 index_df=None,
                 enrich=lambda *a, **k: AssertionError("cache hit, no enrich"),
@@ -235,7 +226,7 @@ class TestEnrichRowsInPlaceCache:
         rows = [{"ticker": "TCS", "total": 50.0}]
         calls = []
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             calls.append(ticker)
             return {"_sentiment_score": 0.7, "_article_count": 3}
 
@@ -262,7 +253,7 @@ class TestEnrichRowsInPlaceCache:
         df = _tiny_df()
         rows = [{"ticker": "SMALL", "total": 50.0}]
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             raise AssertionError("provider enrich must not run on a cache hit")
 
         with patch("scanner.backend.scanner_engine.fetch_fundamentals") as mock_fund:
@@ -277,7 +268,7 @@ class TestEnrichRowsInPlaceCache:
         df = _tiny_df()
         rows = [{"ticker": "NEW", "total": 50.0}]
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             return {}
 
         with patch(
@@ -308,7 +299,6 @@ class TestEnrichRowsInPlaceCancel:
             rows,
             {},
             settings={},
-            global_data=None,
             timeframe="D",
             index_df=None,
             enrich=slow_enrich,
@@ -323,7 +313,7 @@ class TestEnrichRowsInPlaceCancel:
         rows = [{"ticker": f"T{i}", "total": 50.0} for i in range(4)]
         seen = []
 
-        def fast_enrich(ticker, settings, gd):
+        def fast_enrich(ticker, settings):
             seen.append(ticker)
             return {}
 
@@ -331,7 +321,6 @@ class TestEnrichRowsInPlaceCancel:
             rows,
             {},
             settings={},
-            global_data=None,
             timeframe="D",
             index_df=None,
             enrich=fast_enrich,
@@ -393,7 +382,6 @@ class TestCancelPropagation:
                 "scanner.backend.scanner_engine.fetch_batch_yfinance_stream",
                 fake_stream,
             ),
-            patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}),
         ):
             th = threading.Thread(target=worker, daemon=True)
             th.start()
@@ -439,7 +427,6 @@ class TestCancelPropagation:
         with (
             patch("scanner.backend.scanner_engine.fetch_index_data", return_value=None),
             patch("scanner.backend.scanner_engine.fetch_batch_yfinance", fake_batch),
-            patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}),
         ):
             th = threading.Thread(target=worker, daemon=True)
             th.start()
@@ -499,7 +486,6 @@ class TestCancelPropagation:
                 "scanner.backend.scanner_engine.fetch_batch_yfinance_stream",
                 fake_stream,
             ),
-            patch.object(ScannerEngine, "_fetch_global_enrichment", return_value={}),
             patch("scanner.backend.scanner_engine._score_ticker", fake_score_ticker),
         ):
             th = threading.Thread(target=worker, daemon=True)
@@ -611,13 +597,27 @@ class TestStaleMembers:
 class TestPromoterProviderExtraction:
     """india_fund branch surfaces trendlyne promoter holding as a provider key."""
 
-    _SETTINGS: ClassVar[dict] = {
-        "use_market_sentiment": False,
-        "use_social_sentiment": False,
-        "use_indian_market": False,
-        "use_indian_fundamentals": True,
-        "use_insider_data": False,
-    }
+    _SETTINGS: ClassVar[dict] = {}
+
+    @pytest.fixture(autouse=True)
+    def _stub_other_providers(self):
+        """Providers always run now — stub the three this test doesn't patch."""
+        with (
+            patch(
+                "scanner.api.market_sentiment.fetch_sentiment",
+                return_value={
+                    "sentiment_score": 0.0,
+                    "article_count": 0,
+                    "source": "none",
+                },
+            ),
+            patch(
+                "scanner.api.indian_market.fetch_indian_market_data",
+                return_value={},
+            ),
+            patch("scanner.api.insider_data.fetch_insider_data", return_value={}),
+        ):
+            yield
 
     @staticmethod
     def _fund_result(promoter):
@@ -631,41 +631,21 @@ class TestPromoterProviderExtraction:
         return {
             "trendlyne": fund,
             "screener": None,
-            "yahoo_valuation": None,
             "source": "trendlyne" if fund else "none",
         }
 
     def test_promoter_holding_extracted_and_rounded(self):
-        with (
-            patch(
-                "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
-                return_value=self._fund_result(51.798),
-            ),
-            patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None),
+        with patch(
+            "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
+            return_value=self._fund_result(51.798),
         ):
-            out = ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS), {})
+            out = ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS))
         assert out["_promoter_holding"] == 51.8
 
     def test_no_promoter_key_without_data(self):
-        with (
-            patch(
-                "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
-                return_value=self._fund_result(None),
-            ),
-            patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None),
+        with patch(
+            "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
+            return_value=self._fund_result(None),
         ):
-            out = ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS), {})
+            out = ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS))
         assert "_promoter_holding" not in out
-
-    def test_flag_prefix_gates_promoter_key(self):
-        from scanner.backend.scanner_engine import _PROVIDER_FLAG_PREFIXES
-
-        match = next(
-            (
-                flag
-                for prefixes, flag in _PROVIDER_FLAG_PREFIXES
-                if any(p.startswith("_promoter") for p in prefixes)
-            ),
-            None,
-        )
-        assert match == "use_indian_fundamentals"

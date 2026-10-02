@@ -66,16 +66,6 @@ class TestTTLCacheBasics:
         assert cache.size == 0
         assert cache.get("a") is None
 
-    def test_clear_expired_counts_only_stale(self, clock):
-        c = TTLCache(ttl=50, namespace="")
-        c.set("stale", 1)
-        clock.now += 50  # "stale" expired, exactly at the boundary
-        c.set("fresh", 2)
-        removed = c.clear_expired()
-        assert removed == 1  # only "stale" expired
-        assert c.get("fresh") == 2
-        assert c.get("stale") is None
-
 
 class TestTTLCacheNamespacing:
     def test_namespaces_are_isolated(self):

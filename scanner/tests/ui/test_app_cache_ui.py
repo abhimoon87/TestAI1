@@ -68,12 +68,7 @@ def test_refresh_falls_back_to_empty_when_cache_unreadable(monkeypatch):
 
 def test_clear_wipes_real_cache_and_refreshes(tmp_path, monkeypatch):
     """End-to-end: seed the real (tmp-isolated) cache, clear via the handler."""
-    monkeypatch.setattr(
-        data_fetcher,
-        "_ENRICHMENT_CACHE_PATH",
-        str(tmp_path / "enrichment_cache.json"),
-    )
-    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+    data_fetcher._ENRICHMENT_CACHE.clear()
     data_fetcher._enrichment_cache_put(
         "RELIANCE", {"sentiment": {"score": 0.8}}, {"pe": 21.0}
     )

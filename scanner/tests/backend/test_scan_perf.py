@@ -60,11 +60,8 @@ def _flat_df():
 
 
 def _isolated_cache(monkeypatch, tmp_path):
-    """Point the enrichment disk cache at tmp and reset in-memory state."""
-    monkeypatch.setattr(
-        data_fetcher, "_ENRICHMENT_CACHE_PATH", str(tmp_path / "enrich.json")
-    )
-    monkeypatch.setattr(data_fetcher, "_enrichment_cache", None)
+    """Reset the enrichment cache in-memory state."""
+    data_fetcher._ENRICHMENT_CACHE.clear()
 
 
 # ── _parallel_score ───────────────────────────────────────────────────
@@ -149,11 +146,6 @@ class TestParallelScore:
 class TestSmallCacheReadthrough:
     SETTINGS: ClassVar[dict] = {
         "min_score": 50.0,
-        "use_market_sentiment": True,
-        "use_social_sentiment": True,
-        "use_indian_market": True,
-        "use_indian_fundamentals": True,
-        "use_insider_data": True,
     }
 
     def _score(self, ticker, df, enrich, fund, monkeypatch, use_cache=True):
@@ -166,7 +158,6 @@ class TestSmallCacheReadthrough:
             index_df=df,
             trend_filter="All",
             is_large=False,
-            global_data={},
             enrich=enrich,
             use_enrichment_cache=use_cache,
         )
@@ -175,7 +166,7 @@ class TestSmallCacheReadthrough:
         _isolated_cache(monkeypatch, tmp_path)
         calls = []
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             calls.append(ticker)
             return {"_sentiment_score": 0.7, "_article_count": 3}
 
@@ -198,7 +189,7 @@ class TestSmallCacheReadthrough:
             "PF12", {"_sentiment_score": 0.9, "_insider_score": 5}, {"pe_ratio": 20.0}
         )
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             raise AssertionError("providers must not run on a cache hit")
 
         def fund(ticker):
@@ -211,7 +202,7 @@ class TestSmallCacheReadthrough:
         df_live = _crossover_df(seed=21)
         live_calls = []
 
-        def enrich_live(ticker, settings, gd):
+        def enrich_live(ticker, settings):
             live_calls.append(ticker)
             return {"_sentiment_score": 0.9, "_insider_score": 5}
 
@@ -228,46 +219,12 @@ class TestSmallCacheReadthrough:
         assert out_hit["total"] == out_live["total"]
         assert out_hit["combined_rating"] == out_live["combined_rating"]
 
-    def test_disabled_flag_drops_stale_keys(self, monkeypatch, tmp_path):
-        _isolated_cache(monkeypatch, tmp_path)
-        data_fetcher._enrichment_cache_put(
-            "PF13", {"_sentiment_score": 0.9, "_insider_score": 5}, None
-        )
-
-        def enrich(ticker, settings, gd):
-            raise AssertionError("must not run on a cache hit")
-
-        df = _crossover_df(seed=31)
-        settings = dict(self.SETTINGS)
-        settings["use_market_sentiment"] = False
-        monkeypatch.setattr(
-            eng_mod,
-            "fetch_fundamentals",
-            lambda ticker: (_ for _ in ()).throw(
-                AssertionError("no fund call expected")
-            ),
-        )
-        out, _ = _score_ticker(
-            "PF13",
-            df,
-            settings=settings,
-            timeframe="D",
-            index_df=df,
-            trend_filter="All",
-            is_large=False,
-            global_data={},
-            enrich=enrich,
-            use_enrichment_cache=True,
-        )
-        assert "_sentiment_score" not in out  # disabled provider stays out...
-        assert out["_insider_score"] == 5  # ...while enabled keys replay
-
     def test_enabled_missing_keys_get_live_defaults(self, monkeypatch, tmp_path):
         _isolated_cache(monkeypatch, tmp_path)
-        # Cache written while sentiment was disabled: no sentiment keys.
+        # Cache entry that lacks sentiment keys entirely.
         data_fetcher._enrichment_cache_put("PF14", {"_insider_score": 1}, None)
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             raise AssertionError("must not run on a cache hit")
 
         df = _crossover_df(seed=41)
@@ -282,7 +239,7 @@ class TestSmallCacheReadthrough:
         )
         calls = []
 
-        def enrich(ticker, settings, gd):
+        def enrich(ticker, settings):
             calls.append(ticker)
             return {}
 
@@ -315,7 +272,7 @@ class TestScanStreamSmallParallel:
         batches = []
 
         # Patched onto the class, so it binds like a method (self first).
-        def enrich(_self, ticker, settings, gd):
+        def enrich(_self, ticker, settings):
             enrich_calls.append(ticker)
             time.sleep(0.2)
             return {"_sentiment_score": 0.5}
@@ -326,7 +283,7 @@ class TestScanStreamSmallParallel:
         monkeypatch.setattr(eng_mod.ScannerEngine, "_enrich_with_providers", enrich)
         eng = eng_mod.ScannerEngine()
         monkeypatch.setattr(
-            eng, "_prepare_scan", lambda *a, **k: (tickers, dfs["PS01"], {}, False)
+            eng, "_prepare_scan", lambda *a, **k: (tickers, dfs["PS01"], False)
         )
         monkeypatch.setattr(
             eng_mod, "fetch_batch_yfinance_stream", lambda *a, **k: iter([dict(dfs)])

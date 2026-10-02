@@ -279,115 +279,6 @@ def fetch_fii_dii_activity(days: int = 5) -> FIIDIIActivity | None:
         return None
 
 
-# ── 52-Week High/Low Data ──────────────────────────────────────────────────
-
-
-@dataclass
-class Week52Data:
-    """52-week high/low data for a stock."""
-
-    ticker: str
-    current_price: float
-    week52_high: float
-    week52_low: float
-    week52_high_date: str
-    week52_low_date: str
-    pct_from_52w_high: float  # Negative = below high
-    pct_from_52w_low: float  # Positive = above low
-    position_in_range: float  # 0 = at low, 100 = at high
-    is_near_52w_high: bool  # Within 10% of high
-    is_near_52w_low: bool  # Within 10% of low
-    cached: bool = False
-
-
-def fetch_52week_data(ticker: str) -> Week52Data | None:
-    """
-    Fetch 52-week high/low data from Yahoo Finance (free, no API key).
-
-    Args:
-        ticker: Stock ticker (e.g., "RELIANCE")
-
-    Returns:
-        Week52Data or None
-    """
-    cache_k = hashlib.md5(
-        f"52week:{ticker}".encode(), usedforsecurity=False
-    ).hexdigest()
-    cached = _INDIA_CACHE.get(cache_k)
-    if cached:
-        return Week52Data(**cached, cached=True)
-
-    try:
-        import yfinance as yf
-
-        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-        stock = yf.Ticker(nse_ticker)
-        info = stock.info
-
-        if not info:
-            return None
-
-        current_price = info.get("currentPrice") or info.get("regularMarketPrice")
-        week52_high = info.get("fiftyTwoWeekHigh")
-        week52_low = info.get("fiftyTwoWeekLow")
-
-        if not all([current_price, week52_high, week52_low]):
-            return None
-
-        current_price = float(current_price)
-        week52_high = float(week52_high)
-        week52_low = float(week52_low)
-
-        # Calculate percentages
-        pct_from_high = ((current_price - week52_high) / week52_high) * 100
-        pct_from_low = ((current_price - week52_low) / week52_low) * 100
-
-        # Position in range (0-100)
-        range_size = week52_high - week52_low
-        if range_size > 0:
-            position = ((current_price - week52_low) / range_size) * 100
-        else:
-            position = 50.0
-
-        result = Week52Data(
-            ticker=ticker,
-            current_price=round(current_price, 2),
-            week52_high=round(week52_high, 2),
-            week52_low=round(week52_low, 2),
-            week52_high_date=info.get("fiftyTwoWeekHighDate", ""),
-            week52_low_date=info.get("fiftyTwoWeekLowDate", ""),
-            pct_from_52w_high=round(pct_from_high, 2),
-            pct_from_52w_low=round(pct_from_low, 2),
-            position_in_range=round(position, 2),
-            is_near_52w_high=pct_from_high > -10.0,  # Within 10% of high
-            is_near_52w_low=pct_from_low < 10.0,  # Within 10% of low
-            cached=False,
-        )
-
-        _INDIA_CACHE.set(
-            cache_k,
-            {
-                "ticker": ticker,
-                "current_price": result.current_price,
-                "week52_high": result.week52_high,
-                "week52_low": result.week52_low,
-                "week52_high_date": result.week52_high_date,
-                "week52_low_date": result.week52_low_date,
-                "pct_from_52w_high": result.pct_from_52w_high,
-                "pct_from_52w_low": result.pct_from_52w_low,
-                "position_in_range": result.position_in_range,
-                "is_near_52w_high": result.is_near_52w_high,
-                "is_near_52w_low": result.is_near_52w_low,
-            },
-        )
-
-        return result
-
-    except Exception as e:
-        logger.info("52-week data fetch failed for %s: %s", ticker, e)
-        return None
-
-
 # ── Unified Indian Market Data ─────────────────────────────────────────────
 
 
@@ -399,26 +290,21 @@ def fetch_indian_market_data(ticker: str) -> dict:
         {
             "delivery": DeliveryData | None,
             "fii_dii": FIIDIIActivity | None,
-            "week52": Week52Data | None,
             "source": str,
         }
     """
     delivery = fetch_delivery_data(ticker)
     fii_dii = fetch_fii_dii_activity()
-    week52 = fetch_52week_data(ticker)
 
     sources = []
     if delivery:
         sources.append("delivery")
     if fii_dii:
         sources.append("fii_dii")
-    if week52:
-        sources.append("week52")
 
     return {
         "delivery": delivery,
         "fii_dii": fii_dii,
-        "week52": week52,
         "source": "+".join(sources) if sources else "none",
     }
 

@@ -4,120 +4,27 @@ Fetches live symbol lists from NSE via nselib.
 BSE support is limited due to anti-scraping measures on bseindia.com.
 """
 
-import json
 import logging
-import threading
-import time
 from datetime import date, timedelta
-from pathlib import Path
 
 import nselib.capital_market as cm
 
-from ..shared import db
+from ..shared.cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 # Cache TTL in seconds (4 hours)
 CACHE_TTL_SECONDS = 4 * 3600
 
-# In-memory cache with timestamps (guarded: readers/writers run on UI + scan threads)
-_cache: dict[str, list] = {}
-_cache_timestamps: dict[str, float] = {}
-_cache_lock = threading.Lock()
-_disk_loaded = False
-
-# Legacy disk cache (pre-sqlite) — imported into the kv store once
-_DISK_CACHE_FILE = Path(__file__).parent / ".cache" / "symbols.json"
-
-
-def _import_disk_legacy() -> None:
-    """Fold the pre-sqlite symbols.json into the kv store (once)."""
-    data = db.kv_import_src("symbols", _DISK_CACHE_FILE)
-    if not data:
-        return
-    for k, v in data.items():
-        if isinstance(v, dict) and isinstance(v.get("_ts"), (int, float)):
-            db.kv_put_json("symbols", k, v, expires=v["_ts"] + CACHE_TTL_SECONDS)
-
-
-def _load_disk_cache():
-    """Hydrate the in-memory cache from the kv store (once per process)."""
-    global _disk_loaded
-    with _cache_lock:
-        if _disk_loaded:
-            return
-        try:
-            _import_disk_legacy()
-            now = time.time()
-            loaded = 0
-            for k, raw in db.kv_items("symbols").items():
-                try:
-                    v = json.loads(raw)
-                except ValueError:
-                    continue
-                if not isinstance(v, dict):
-                    continue
-                ts = v.get("_ts", 0)
-                items = v.get("data")
-                if (
-                    isinstance(ts, (int, float))
-                    and now - ts < CACHE_TTL_SECONDS
-                    and isinstance(items, list)
-                    and all(isinstance(s, str) for s in items)
-                ):
-                    _cache[k] = items
-                    _cache_timestamps[k] = ts
-                    loaded += 1
-            if loaded:
-                logger.debug("Disk symbol cache loaded: %d keys", loaded)
-        except Exception as e:
-            logger.info("Disk cache load failed: %s", e)
-        finally:
-            _disk_loaded = True
-
-
-def _save_disk_cache():
-    try:
-        with _cache_lock:
-            payload = {
-                k: {"data": v, "_ts": _cache_timestamps.get(k, 0)}
-                for k, v in _cache.items()
-            }
-        for k, entry in payload.items():
-            db.kv_put_json(
-                "symbols", k, entry, expires=entry["_ts"] + CACHE_TTL_SECONDS
-            )
-    except Exception as e:
-        logger.info("Disk cache save failed: %s", e)
-
-
-def _is_cache_valid(key: str) -> bool:
-    """Check if cached data is still valid."""
-    _load_disk_cache()
-    with _cache_lock:
-        ts = _cache_timestamps.get(key)
-    if ts is None:
-        return False
-    return (time.time() - ts) < CACHE_TTL_SECONDS
+# Memory + sqlite kv cache (auto-hydrates from the kv store on first get)
+_cache: TTLCache[list] = TTLCache[list](ttl=CACHE_TTL_SECONDS, namespace="symbols")
 
 
 def _cache_get(key: str) -> list | None:
-    """Get cached value if valid (returns a copy)."""
-    if _is_cache_valid(key):
-        with _cache_lock:
-            return list(_cache.get(key, []))
-    return None
-
-
-def _cache_set(key: str, value: list):
-    """Set cache value with timestamp (persists to disk)."""
-    with _cache_lock:
-        _cache[key] = list(value)
-        _cache_timestamps[key] = time.time()
-    try:
-        _save_disk_cache()
-    except Exception:
-        logger.info("Symbol disk cache save failed", exc_info=True)
+    """Cached symbol list for a key, else None."""
+    value = _cache.get(key)
+    # legacy pre-TTLCache rows are dicts ({data,_ts}); they expire within 4h
+    return value if isinstance(value, list) else None
 
 
 def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> list:
@@ -131,7 +38,7 @@ def _fetch_with_cache(key: str, fetch_func, fallback: list | None = None) -> lis
     try:
         result = fetch_func()
         if result:
-            _cache_set(key, result)
+            _cache.set(key, list(result))
             return result
     except Exception as e:
         logger.warning("Live fetch failed for %s: %s", key, e)
