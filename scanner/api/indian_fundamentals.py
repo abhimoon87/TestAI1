@@ -227,14 +227,31 @@ def parse_shareholding_html(html: str) -> dict | None:
     return out if out["series"] else None
 
 
+def _merge_shareholding(screener: dict | None, lens: dict | None) -> dict:
+    """Promoters from Market Lens (primary), FII/DII from Screener.in."""
+    out = {
+        "quarter": (screener or {}).get("quarter") or (lens or {}).get("quarter"),
+        "series": dict((screener or {}).get("series") or {}),
+    }
+    lens_series = (lens or {}).get("series") or {}
+    if "promoters" in lens_series:
+        out["series"]["promoters"] = lens_series["promoters"]
+    return out
+
+
 def fetch_shareholding_pattern(ticker: str, cache_only: bool = False) -> dict | None:
-    """Latest quarterly shareholding % for ``ticker`` (Screener, no key)."""
+    """Latest quarterly shareholding % for ``ticker`` — merged, both sources.
+
+    Screener.in supplies FII/DII (and promoters when Market Lens is down);
+    Market Lens supplies promoters as primary. Cached a week either way.
+    """
     cache_k = hashlib.md5(f"shp:{ticker}".encode(), usedforsecurity=False).hexdigest()
     cached = _SHP_CACHE.get(cache_k)
     if cached:
         return cached
     if cache_only:
         return None
+    screener = None
     try:
         slug = quote(ticker, safe="")
         headers = {
@@ -250,12 +267,26 @@ def fetch_shareholding_pattern(ticker: str, cache_only: bool = False) -> dict | 
                 continue
             parsed = parse_shareholding_html(resp.text)
             if parsed:
-                _SHP_CACHE.set(cache_k, parsed)
-                return parsed
-        return None
+                screener = parsed
+                break
     except Exception as e:
         logger.info("Shareholding fetch failed for %s: %s", ticker, e)
+
+    lens = None
+    try:
+        from .market_lens import get_shareholding, ml_shareholding_shape
+
+        raw = get_shareholding(ticker)
+        if raw:
+            lens = ml_shareholding_shape(raw)
+    except Exception as e:
+        logger.info("Market Lens shareholding failed for %s: %s", ticker, e)
+
+    if screener is None and lens is None:
         return None
+    merged = _merge_shareholding(screener, lens)
+    _SHP_CACHE.set(cache_k, merged)
+    return merged
 
 
 # ── Screener.in Peer Comparison (Free, No Key) ────────────────────────────

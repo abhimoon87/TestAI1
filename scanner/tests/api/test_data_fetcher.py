@@ -373,8 +373,9 @@ class TestFetchBatchYfinance:
         # Verify .NS suffix was added
         call_args = mock_yf.download.call_args
         assert call_args[0][0] == ["INFY.NS"]
-        # Split/bonus price repair must be on (fixes bogus momentum inputs)
-        assert call_args.kwargs["repair"] is True
+        # repair=True runs DBSCAN/pandas repair per ticker -> GIL-starves the
+        # UI and made chunks 10-50x slower; auto_adjust already covers splits
+        assert not call_args.kwargs.get("repair")
 
 
 class TestBatchDownloadCache:
@@ -621,7 +622,7 @@ class TestFetchFundamentals:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Batch fallback (jugaad-data/nselib) for tickers yfinance missed
+# Batch fallback (jugaad-data/nselib/marketlens) for tickers yfinance missed
 # ══════════════════════════════════════════════════════════════════════════════
 
 

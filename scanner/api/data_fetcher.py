@@ -166,7 +166,7 @@ def fetch_stock_data(
     Fetch OHLCV data for an Indian NSE stock.
 
     Uses multi-source provider with automatic fallback:
-      jugaad-data -> yfinance -> nselib
+      yfinance -> jugaad-data -> nselib -> marketlens
 
     Args:
         ticker: NSE symbol (e.g., "RELIANCE", "TCS")
@@ -614,10 +614,10 @@ def _fetch_fallback_batch(
 ) -> dict:
     """
     Fetch OHLCV for tickers the yfinance batch pass missed, using the
-    DataProvider fallback chain restricted to NSE-native sources:
-    jugaad-data -> nselib. yfinance is deliberately skipped — it just
-    failed at batch level (rate limit / outage), so retrying it per
-    ticker would only slow recovery down.
+    DataProvider fallback chain restricted to NSE-native sources plus the
+    Market Lens safety net: jugaad-data -> nselib -> marketlens. yfinance
+    is deliberately skipped — it just failed at batch level (rate limit /
+    outage), so retrying it per ticker would only slow recovery down.
 
     Results are normalized and validated exactly like the batch path
     (>= 50 bars after optional resample), so callers can treat recovered
@@ -749,8 +749,8 @@ def fetch_batch_yfinance_stream(
 
     After the yfinance chunks are exhausted, any ticker the batch pass
     missed (Yahoo rate limit / no data on Yahoo) is retried through the
-    NSE-native providers (jugaad-data -> nselib) and, if anything was
-    recovered, yielded once more as a final batch.
+    NSE-native providers (jugaad-data -> nselib -> marketlens) and, if
+    anything was recovered, yielded once more as a final batch.
 
     Usage:
         for chunk_data in fetch_batch_yfinance_stream(tickers):
@@ -843,7 +843,9 @@ def fetch_batch_yfinance_stream(
                     progress=False,
                     threads=False,
                     timeout=15,
-                    repair=True,
+                    # repair=True runs DBSCAN/pandas repair per ticker — CPU
+                    # pegs 8 chunk threads, GIL starves the UI (chunks 10-50x
+                    # slower). Cosmetic Yahoo glitches go to the fallback chain.
                 )
             except Exception as e:
                 logger.warning("Chunk %d/%d download failed: %s", ci, len(chunks), e)

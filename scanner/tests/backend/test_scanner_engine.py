@@ -617,6 +617,7 @@ class TestPromoterProviderExtraction:
         "use_indian_market": False,
         "use_indian_fundamentals": True,
         "use_insider_data": False,
+        "use_market_lens": False,
     }
 
     @staticmethod
@@ -669,3 +670,182 @@ class TestPromoterProviderExtraction:
             None,
         )
         assert match == "use_indian_fundamentals"
+
+    def test_flag_prefix_gates_market_lens_keys(self):
+        from scanner.backend.scanner_engine import _PROVIDER_FLAG_PREFIXES
+
+        match = next(
+            (
+                flag
+                for prefixes, flag in _PROVIDER_FLAG_PREFIXES
+                if any(p.startswith("_ml_") for p in prefixes)
+            ),
+            None,
+        )
+        assert match == "use_market_lens"
+
+
+class TestMarketLensProviderExtraction:
+    """mlens branch: sector is new, promoter yields to trendlyne."""
+
+    _SETTINGS: ClassVar[dict] = {
+        "use_market_sentiment": False,
+        "use_social_sentiment": False,
+        "use_indian_market": False,
+        "use_indian_fundamentals": False,
+        "use_insider_data": False,
+        "use_market_lens": True,
+    }
+
+    @staticmethod
+    def _profile(promoter="55.0", sector="Banks"):
+        prof = {}
+        if sector:
+            prof["sector"] = sector
+        if promoter is not None:
+            prof["promoterHolding"] = promoter
+        return prof
+
+    def _run(self, monkeypatch, profile):
+        from scanner.api import market_lens
+
+        monkeypatch.setattr(market_lens, "get_stock", lambda t: profile)
+        with patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None):
+            return ScannerEngine()._enrich_with_providers("X", dict(self._SETTINGS), {})
+
+    def test_sector_and_promoter_surface(self, monkeypatch):
+        out = self._run(monkeypatch, self._profile())
+        assert out["_ml_sector"] == "Banks"
+        assert out["_promoter_holding"] == 55.0
+
+    def test_promoter_yields_to_trendlyne(self, monkeypatch):
+        from scanner.api import market_lens
+        from scanner.api.indian_fundamentals import TrendlyneFundamentals
+
+        monkeypatch.setattr(market_lens, "get_stock", lambda t: self._profile())
+        settings = {**self._SETTINGS, "use_indian_fundamentals": True}
+        with (
+            patch(
+                "scanner.api.indian_fundamentals.fetch_indian_fundamentals",
+                return_value={
+                    "trendlyne": TrendlyneFundamentals(
+                        ticker="X", promoter_holding=51.798
+                    ),
+                    "screener": None,
+                    "yahoo_valuation": None,
+                    "source": "trendlyne",
+                },
+            ),
+            patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None),
+        ):
+            out = ScannerEngine()._enrich_with_providers("X", dict(settings), {})
+        assert out["_promoter_holding"] == 51.8
+        assert out["_ml_sector"] == "Banks"
+
+    def test_flag_off_skips_fetch(self, monkeypatch):
+        from scanner.api import market_lens
+
+        def boom(t):
+            raise AssertionError("fetch must not run when flag is off")
+
+        monkeypatch.setattr(market_lens, "get_stock", boom)
+        settings = {**self._SETTINGS, "use_market_lens": False}
+        with patch("scanner.api.premium_finance.fetch_shariah_data", return_value=None):
+            out = ScannerEngine()._enrich_with_providers("X", dict(settings), {})
+        assert "_ml_sector" not in out
+
+    def test_missing_profile_is_quiet(self, monkeypatch):
+        out = self._run(monkeypatch, {})
+        assert "_ml_sector" not in out
+        assert "_promoter_holding" not in out
+
+
+class TestPrepareScanMarketLensFilter:
+    def test_settings_filter_narrows_universe(self, monkeypatch):
+        from scanner.api import market_lens
+        from scanner.backend import scanner_engine as eng_mod
+
+        monkeypatch.setattr(eng_mod, "get_universe", lambda u: ["AAA", "BBB", "CCC"])
+        monkeypatch.setattr(eng_mod, "fetch_index_data", lambda *a, **k: None)
+        monkeypatch.setattr(eng_mod, "strip_dead_members", lambda t: (t, []))
+        profiles = {"AAA": {"peRatio": 20}, "BBB": {"peRatio": 80}, "CCC": None}
+        monkeypatch.setattr(market_lens, "get_stock", lambda t: profiles[t])
+
+        engine = ScannerEngine()
+        logs = []
+        monkeypatch.setattr(engine, "_log", lambda m, *a, **k: logs.append(str(m)))
+        monkeypatch.setattr(engine, "_progress", lambda *a, **k: None)
+        monkeypatch.setattr(engine, "_fetch_global_enrichment", lambda s: {})
+
+        tickers, _index_df, _gd, _large = engine._prepare_scan(
+            "NIFTY 50",
+            {"use_market_lens": True, "ml_filter_pe_max": 40.0},
+            "1y",
+            "D",
+            "All",
+            "NSEI",
+        )
+        assert tickers == ["AAA"]
+        assert any("3 -> 1" in line for line in logs)
+
+    def test_bad_settings_value_skips_filter(self, monkeypatch):
+        from scanner.api import market_lens
+        from scanner.backend import scanner_engine as eng_mod
+
+        monkeypatch.setattr(eng_mod, "get_universe", lambda u: ["AAA", "BBB"])
+        monkeypatch.setattr(eng_mod, "fetch_index_data", lambda *a, **k: None)
+        monkeypatch.setattr(eng_mod, "strip_dead_members", lambda t: (t, []))
+
+        def boom(t):
+            raise AssertionError("filter must not run — float() fails first")
+
+        monkeypatch.setattr(market_lens, "get_stock", boom)
+
+        engine = ScannerEngine()
+        logs = []
+        monkeypatch.setattr(engine, "_log", lambda m, *a, **k: logs.append(str(m)))
+        monkeypatch.setattr(engine, "_progress", lambda *a, **k: None)
+        monkeypatch.setattr(engine, "_fetch_global_enrichment", lambda s: {})
+
+        tickers, *_ = engine._prepare_scan(
+            "NIFTY 50",
+            {"use_market_lens": True, "ml_filter_pe_max": "garbage"},
+            "1y",
+            "D",
+            "All",
+            "NSEI",
+        )
+        assert tickers == ["AAA", "BBB"]
+        assert any("filter skipped" in line for line in logs)
+
+    def test_flag_off_leaves_universe_untouched(self, monkeypatch):
+        from scanner.api import market_lens
+        from scanner.backend import scanner_engine as eng_mod
+
+        monkeypatch.setattr(eng_mod, "get_universe", lambda u: ["AAA", "BBB"])
+        monkeypatch.setattr(eng_mod, "fetch_index_data", lambda *a, **k: None)
+        monkeypatch.setattr(eng_mod, "strip_dead_members", lambda t: (t, []))
+
+        def boom(t):
+            raise AssertionError("filter must not run when flag is off")
+
+        monkeypatch.setattr(market_lens, "get_stock", boom)
+
+        engine = ScannerEngine()
+        monkeypatch.setattr(engine, "_log", lambda m, *a, **k: None)
+        monkeypatch.setattr(engine, "_progress", lambda *a, **k: None)
+        monkeypatch.setattr(engine, "_fetch_global_enrichment", lambda s: {})
+
+        tickers, *_ = engine._prepare_scan(
+            "NIFTY 50",
+            {
+                "use_market_lens": False,
+                "ml_filter_pe_max": 40.0,
+                "ml_filter_sectors": "Banks",
+            },
+            "1y",
+            "D",
+            "All",
+            "NSEI",
+        )
+        assert tickers == ["AAA", "BBB"]

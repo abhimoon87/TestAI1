@@ -221,7 +221,7 @@ class TestInstitutionalCardRender:
     def test_marker_only_row_renders_nse_net_tiles(self):
         """The FII/DII filter passes marker rows — their tiles must render too.
 
-        Screener shareholding AND moneycontrol flow both missing: the tile
+        Both shareholding sources AND moneycontrol flow missing: the tile
         falls back to the scan-time NSE net stamped on the row (the same
         markers ``_has_fii_dii`` keys off), instead of showing n/a.
         """

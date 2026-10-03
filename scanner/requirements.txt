@@ -7,6 +7,9 @@ pandas>=3.0.6
 numpy>=2.4.6
 pyarrow>=25.0.1
 yfinance>=1.7.0
+# yfinance's repair mode lazily imports sklearn — kept in case repair is
+# re-enabled (the batch downloader runs without repair: it starved the UI)
+scikit-learn>=1.5
 
 # Data providers (free, no auth needed)
 jugaad-data>=0.35.9

@@ -9,6 +9,11 @@ Usage:
 
 import sys
 
+# CPU-bound workers (yfinance, scoring, VACUUM) otherwise hold the GIL for
+# 5ms slices — the Flet event loop starves and the UI feels frozen. 1ms
+# slices keep clicks/navigation responsive while scans burn CPU.
+sys.setswitchinterval(0.001)
+
 
 def main():
     try:

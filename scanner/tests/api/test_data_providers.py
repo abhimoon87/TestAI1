@@ -242,23 +242,37 @@ class TestFetchFundamentalsYfinance:
 
 class TestDataProvider:
     def test_fetch_stock_uses_fallback(self):
-        """When jugaad fails, should fall back to yfinance."""
+        """When yfinance fails, should fall back to jugaad."""
         provider = DataProvider(use_cache=False)
 
-        mock_jugaad = MagicMock(return_value=None)
-        mock_yf_history = _make_yf_history(200)
-        mock_yf_ticker = MagicMock()
-        mock_yf_ticker.history.return_value = mock_yf_history
-        mock_yf = MagicMock()
-        mock_yf.Ticker.return_value = mock_yf_ticker
+        mock_jugaad = MagicMock(return_value=_make_ohlcv(200))
+        mock_yf = MagicMock(return_value=None)
 
-        with patch("scanner.api.data_providers._fetch_jugaad", mock_jugaad):
-            with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        with patch("scanner.api.data_providers._fetch_yfinance", mock_yf):
+            with patch("scanner.api.data_providers._fetch_jugaad", mock_jugaad):
                 result = provider.fetch_stock("RELIANCE", "1y")
 
         assert result is not None
-        assert provider.last_provider == "yfinance"
+        assert provider.last_provider == "jugaad"
         mock_jugaad.assert_called_once()
+
+    def test_fetch_stock_marketlens_last_resort(self):
+        """Market Lens serves only after yfinance, jugaad and nselib fail."""
+        provider = DataProvider(use_cache=False)
+
+        with patch("scanner.api.data_providers._fetch_yfinance", return_value=None):
+            with patch("scanner.api.data_providers._fetch_jugaad", return_value=None):
+                with patch(
+                    "scanner.api.data_providers._fetch_nselib", return_value=None
+                ):
+                    with patch(
+                        "scanner.api.data_providers._fetch_marketlens_price",
+                        return_value=_make_ohlcv(200),
+                    ):
+                        result = provider.fetch_stock("RELIANCE", "1y")
+
+        assert result is not None
+        assert provider.last_provider == "marketlens"
 
     def test_fetch_stock_returns_none_all_fail(self):
         """When all providers fail, should return None."""
@@ -269,7 +283,11 @@ class TestDataProvider:
                 with patch(
                     "scanner.api.data_providers._fetch_nselib", return_value=None
                 ):
-                    result = provider.fetch_stock("INVALID", "1y")
+                    with patch(
+                        "scanner.api.data_providers._fetch_marketlens_price",
+                        return_value=None,
+                    ):
+                        result = provider.fetch_stock("INVALID", "1y")
 
         assert result is None
         assert provider.last_provider is None
@@ -308,21 +326,39 @@ class TestDataProvider:
         mock_set.assert_called_once()
 
     def test_fetch_index_fallback(self):
-        """Index fetch should fall back through providers."""
+        """Index fetch falls to jugaad when yfinance fails, marketlens last."""
         provider = DataProvider(use_cache=False)
 
-        mock_yf_history = _make_yf_history(200)
-        mock_yf_ticker = MagicMock()
-        mock_yf_ticker.history.return_value = mock_yf_history
-        mock_yf = MagicMock()
-        mock_yf.Ticker.return_value = mock_yf_ticker
+        mock_jugaad = MagicMock(return_value=_make_ohlcv(200))
 
-        with patch("scanner.api.data_providers._fetch_jugaad_index", return_value=None):
-            with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        with patch(
+            "scanner.api.data_providers._fetch_yfinance_index", return_value=None
+        ):
+            with patch("scanner.api.data_providers._fetch_jugaad_index", mock_jugaad):
                 result = provider.fetch_index("^NSEI", "1y")
 
         assert result is not None
-        assert provider.last_provider == "yfinance"
+        assert provider.last_provider == "jugaad"
+        mock_jugaad.assert_called_once()
+
+    def test_fetch_index_marketlens_last(self):
+        """Market Lens index quote serves only when yfinance and jugaad fail."""
+        provider = DataProvider(use_cache=False)
+
+        with patch(
+            "scanner.api.data_providers._fetch_yfinance_index", return_value=None
+        ):
+            with patch(
+                "scanner.api.data_providers._fetch_jugaad_index", return_value=None
+            ):
+                with patch(
+                    "scanner.api.data_providers._fetch_marketlens_index",
+                    return_value=_make_ohlcv(2),
+                ):
+                    result = provider.fetch_index("^NSEI", "1y")
+
+        assert result is not None
+        assert provider.last_provider == "marketlens"
 
     def test_fetch_fundamentals_fallback(self):
         """Fundamentals fetch should fall back through providers."""
@@ -366,9 +402,66 @@ class TestDataProvider:
                         "scanner.api.data_providers._fetch_fundamentals_nselib",
                         return_value=None,
                     ):
-                        result = provider.fetch_fundamentals("INVALID")
+                        with patch(
+                            "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                            return_value=None,
+                        ):
+                            result = provider.fetch_fundamentals("INVALID")
 
         assert result is None
+
+    def test_fetch_fundamentals_marketlens_before_nselib(self):
+        """Market Lens outranks nselib (P/E only) as the yfinance fallback."""
+        provider = DataProvider(use_cache=False)
+
+        ml_mock = MagicMock(
+            return_value={"pe_ratio": 10.0, "eps_growth": 5.0, "rev_growth": 6.0}
+        )
+        nselib_mock = MagicMock(return_value={"pe_ratio": 99.0})
+
+        with patch(
+            "scanner.api.data_providers._fetch_fundamentals_finnhub", return_value=None
+        ):
+            with patch(
+                "scanner.api.data_providers._fetch_fundamentals_alpha_vantage",
+                return_value=None,
+            ):
+                with patch(
+                    "scanner.api.data_providers._fetch_fundamentals_yfinance",
+                    return_value=None,
+                ):
+                    with patch(
+                        "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                        ml_mock,
+                    ):
+                        with patch(
+                            "scanner.api.data_providers._fetch_fundamentals_nselib",
+                            nselib_mock,
+                        ):
+                            result = provider.fetch_fundamentals("RELIANCE")
+
+        assert result == {"pe_ratio": 10.0, "eps_growth": 5.0, "rev_growth": 6.0}
+        assert provider.last_provider == "marketlens"
+        nselib_mock.assert_not_called()
+
+    def test_fetch_fundamentals_result_cached(self):
+        """use_cache=True: the second fetch replays the TTL cache, no HTTP."""
+        from scanner.api.data_providers import _FUNDAMENTALS_CACHE
+
+        _FUNDAMENTALS_CACHE.clear()
+        provider = DataProvider(use_cache=True)
+        finnhub_mock = MagicMock(return_value={"pe_ratio": 12.0, "roe": 15.0})
+
+        with patch(
+            "scanner.api.data_providers._fetch_fundamentals_finnhub", finnhub_mock
+        ):
+            first = provider.fetch_fundamentals("CACHETEST")
+            second = provider.fetch_fundamentals("CACHETEST")
+
+        assert first == second == {"pe_ratio": 12.0, "roe": 15.0}
+        finnhub_mock.assert_called_once()
+        assert provider.last_provider == "cache"
+        _FUNDAMENTALS_CACHE.clear()
 
     def test_min_bars_filter(self):
         """Stocks with < 50 bars should be rejected."""
@@ -382,8 +475,11 @@ class TestDataProvider:
         mock_yf.Ticker.return_value = mock_yf_ticker
 
         with patch("scanner.api.data_providers._fetch_jugaad", return_value=None):
-            with patch.dict("sys.modules", {"yfinance": mock_yf}):
-                result = provider.fetch_stock("SHORT", "1y")
+            with patch(
+                "scanner.api.data_providers._fetch_marketlens_price", return_value=None
+            ):
+                with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                    result = provider.fetch_stock("SHORT", "1y")
 
         assert result is None
 
@@ -391,19 +487,16 @@ class TestDataProvider:
         """A provider exceeding provider_timeout is skipped for the next one."""
         provider = DataProvider(use_cache=False)
 
-        slow_jugaad = MagicMock(side_effect=lambda: time.sleep(0.5))
-        mock_yf_ticker = MagicMock()
-        mock_yf_ticker.history.return_value = _make_yf_history(200)
-        mock_yf = MagicMock()
-        mock_yf.Ticker.return_value = mock_yf_ticker
+        slow_yf = MagicMock(side_effect=lambda: time.sleep(0.5))
+        mock_jugaad = MagicMock(return_value=_make_ohlcv(200))
 
-        with patch("scanner.api.data_providers._fetch_jugaad", slow_jugaad):
-            with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        with patch("scanner.api.data_providers._fetch_yfinance", slow_yf):
+            with patch("scanner.api.data_providers._fetch_jugaad", mock_jugaad):
                 result = provider.fetch_stock("RELIANCE", "1y", provider_timeout=0.05)
 
         assert result is not None
-        assert provider.last_provider == "yfinance"
-        slow_jugaad.assert_called_once()
+        assert provider.last_provider == "jugaad"
+        slow_yf.assert_called_once()
 
     def test_fetch_stock_all_providers_timeout_is_bounded(self):
         """When every provider hangs, the call returns quickly instead of stalling."""
@@ -412,17 +505,23 @@ class TestDataProvider:
         def _slow():
             time.sleep(0.5)
 
-        with patch("scanner.api.data_providers._fetch_jugaad", side_effect=_slow):
-            with patch("scanner.api.data_providers._fetch_yfinance", side_effect=_slow):
+        with patch("scanner.api.data_providers._fetch_yfinance", side_effect=_slow):
+            with patch("scanner.api.data_providers._fetch_jugaad", side_effect=_slow):
                 with patch(
                     "scanner.api.data_providers._fetch_nselib", side_effect=_slow
                 ):
-                    start = time.time()
-                    result = provider.fetch_stock("SLOW", "1y", provider_timeout=0.03)
-                    elapsed = time.time() - start
+                    with patch(
+                        "scanner.api.data_providers._fetch_marketlens_price",
+                        side_effect=_slow,
+                    ):
+                        start = time.time()
+                        result = provider.fetch_stock(
+                            "SLOW", "1y", provider_timeout=0.03
+                        )
+                        elapsed = time.time() - start
 
         assert result is None
-        assert elapsed < 0.3  # bounded by 3 × 0.03s, not ~1.5s of sleeps
+        assert elapsed < 0.3  # bounded by 4 × 0.03s, not ~2.0s of sleeps
 
     def test_fetch_stock_skips_yfinance(self):
         """skip=('yfinance',) should exclude yfinance from the chain."""
@@ -430,8 +529,14 @@ class TestDataProvider:
 
         with patch("scanner.api.data_providers._fetch_jugaad", return_value=None):
             with patch("scanner.api.data_providers._fetch_nselib", return_value=None):
-                with patch("scanner.api.data_providers._fetch_yfinance") as mock_yf:
-                    result = provider.fetch_stock("RELIANCE", "1y", skip=("yfinance",))
+                with patch(
+                    "scanner.api.data_providers._fetch_marketlens_price",
+                    return_value=None,
+                ):
+                    with patch("scanner.api.data_providers._fetch_yfinance") as mock_yf:
+                        result = provider.fetch_stock(
+                            "RELIANCE", "1y", skip=("yfinance",)
+                        )
 
         assert result is None
         mock_yf.assert_not_called()

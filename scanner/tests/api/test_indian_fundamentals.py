@@ -138,6 +138,8 @@ def test_shareholding_parse_ignores_yearly_rows_and_missing_div():
 
 def test_shareholding_fetch_cache_only_and_network(monkeypatch):
     fund_mod._SHP_CACHE.clear()
+    import scanner.api.market_lens as ml_mod
+
     try:
         assert fund_mod.fetch_shareholding_pattern("X", cache_only=True) is None
 
@@ -151,6 +153,7 @@ def test_shareholding_fetch_cache_only_and_network(monkeypatch):
             "get",
             lambda *a, **k: calls.append(a) or _Resp(),
         )
+        monkeypatch.setattr(ml_mod, "get_shareholding", lambda t: None)
         out = fund_mod.fetch_shareholding_pattern("X")
         again = fund_mod.fetch_shareholding_pattern("X", cache_only=True)
         assert out == again and out["quarter"] == "Jun 2026"
@@ -159,8 +162,57 @@ def test_shareholding_fetch_cache_only_and_network(monkeypatch):
         fund_mod._SHP_CACHE.clear()
 
 
-def test_shareholding_fetch_404_returns_none(monkeypatch):
+def test_shareholding_merges_market_lens_promoters(monkeypatch):
     fund_mod._SHP_CACHE.clear()
+    import scanner.api.market_lens as ml_mod
+
+    try:
+
+        class _Resp:
+            status_code = 200
+            text = _SHP_HTML
+
+        monkeypatch.setattr(fund_mod.requests, "get", lambda *a, **k: _Resp())
+        monkeypatch.setattr(
+            ml_mod,
+            "get_shareholding",
+            lambda t: [
+                {
+                    "quarterEnd": "30-Jun-2026",
+                    "promoters": "61.5",
+                    "publicHolding": "9.2",
+                },
+                {
+                    "quarterEnd": "31-Mar-2026",
+                    "promoters": "60.0",
+                    "publicHolding": "9.5",
+                },
+                {
+                    "quarterEnd": "31-Dec-2025",
+                    "promoters": "59.0",
+                    "publicHolding": "9.9",
+                },
+            ],
+        )
+        out = fund_mod.fetch_shareholding_pattern("MERGE")
+        # Promoters from Market Lens (latest 61.5, total +2.5, recent +1.5)…
+        assert out["series"]["promoters"] == {
+            "latest": 61.5,
+            "total": 2.5,
+            "recent": 1.5,
+        }
+        # …FII/DII and the quarter label from Screener.in.
+        assert out["quarter"] == "Jun 2026"
+        assert out["series"]["foreign_institutions"]["latest"] == 17.19
+        assert out["series"]["domestic_institutions"]["latest"] == 21.1
+    finally:
+        fund_mod._SHP_CACHE.clear()
+
+
+def test_shareholding_market_lens_only_when_screener_down(monkeypatch):
+    fund_mod._SHP_CACHE.clear()
+    import scanner.api.market_lens as ml_mod
+
     try:
 
         class _Resp:
@@ -168,6 +220,42 @@ def test_shareholding_fetch_404_returns_none(monkeypatch):
             text = ""
 
         monkeypatch.setattr(fund_mod.requests, "get", lambda *a, **k: _Resp())
+        monkeypatch.setattr(
+            ml_mod,
+            "get_shareholding",
+            lambda t: [
+                {
+                    "quarterEnd": "30-Jun-2026",
+                    "promoters": "61.5",
+                    "publicHolding": "9.2",
+                },
+                {
+                    "quarterEnd": "31-Mar-2026",
+                    "promoters": "60.0",
+                    "publicHolding": "9.5",
+                },
+            ],
+        )
+        out = fund_mod.fetch_shareholding_pattern("LENS_ONLY")
+        assert out["quarter"] == "Jun 2026"
+        assert out["series"]["promoters"]["latest"] == 61.5
+        assert "foreign_institutions" not in out["series"]
+    finally:
+        fund_mod._SHP_CACHE.clear()
+
+
+def test_shareholding_fetch_404_returns_none(monkeypatch):
+    fund_mod._SHP_CACHE.clear()
+    import scanner.api.market_lens as ml_mod
+
+    try:
+
+        class _Resp:
+            status_code = 404
+            text = ""
+
+        monkeypatch.setattr(fund_mod.requests, "get", lambda *a, **k: _Resp())
+        monkeypatch.setattr(ml_mod, "get_shareholding", lambda t: None)
         assert fund_mod.fetch_shareholding_pattern("NOPE") is None
     finally:
         fund_mod._SHP_CACHE.clear()

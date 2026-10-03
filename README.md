@@ -80,8 +80,8 @@ Enrichment modules (all optional, all guarded, in `scanner/api/`): `market_senti
 ### Scan pipeline (end to end)
 
 1. **Resolve universe** — static list, or live NSE/BSE symbol fetch (falls back to static if offline).
-2. **Fetch index** — NIFTY via `jugaad-data → yfinance` for relative-strength comparison.
-3. **Batch download** — OHLCV for every ticker through `yfinance`, 200 symbols at a time, 8 parallel with throttling. Anything yfinance misses gets retried through **jugaad-data → nselib** (again 8 parallel, 10 s timeout per provider) — yfinance is skipped on the retry since it just failed at scale. When a scan misses a lot of tickers, the recovery pass first checks nselib's NSE mainboard list, so BSE-only symbols don't waste two failing calls each.
+2. **Fetch index** — NIFTY via `yfinance → jugaad-data` for relative-strength comparison.
+3. **Batch download** — OHLCV for every ticker through `yfinance`, 200 symbols at a time, 8 parallel with throttling. Anything yfinance misses gets retried through **jugaad-data → nselib → marketlens** (again 8 parallel, 10 s timeout per provider) — yfinance is skipped on the retry since it just failed at scale. When a scan misses a lot of tickers, the recovery pass first checks nselib's NSE mainboard list, so BSE-only symbols don't waste two failing calls each.
 4. **Global enrichment (once)** — macro regime, forex, crypto fear/greed, commodity.
 5. **Per-stock pipeline** — `check_filter()` (recent crossover) → direction → (optional) 5 parallel provider enrichments → `compute_scores()`.
 6. **Fast mode (>500 tickers)** — score the technicals first (volume-profile POC skipped), then enrich the top 200 by score with fundamentals and sentiment.
@@ -149,12 +149,39 @@ Every known key, its purpose, and its free tier is registered in `API_KEY_REGIST
 |---|---|
 | Finance | `FINNHUB_API_KEY`, `ALPHA_VANTAGE_API_KEY` |
 | News | `MARKETAUX_API_KEY`, `NEWS_API_KEY`, `GNEWS_API_KEY` |
-| Social | `TWITTER_API_KEY` |
+| Social | `TWITTER_API_KEY`, `TWITTER_AUTH_TOKEN`, `TWITTER_CT0` |
 | Insider | `ALETHEIA_API_KEY`, `CONGRESS_API_KEY` |
 | Macro | `FRED_API_KEY`, `ECONPULSE_API_KEY`, `ECONDB_API_KEY` |
 | Shariah | `HALAL_API_KEY` |
 
 Without keys, provider fetches return empty results and the scanner simply scores on technicals + yfinance fundamentals.
+
+### Optional internet channels (Agent-Reach)
+
+Three CLI-backed extras in `scanner/api/channels.py` — all off unless the tool exists. A missing tool or failed call logs and skips; a scan never depends on them.
+
+| Channel | Used for | One-time setup |
+|---|---|---|
+| twitter-cli | Twitter/X sentiment fallback when `TWITTER_API_KEY` is unset | `uv tool install twitter-cli`, then set `TWITTER_AUTH_TOKEN` + `TWITTER_CT0` (burner-account cookies) in `api_config.json` |
+| Jina Reader | "Read article →" on news cards (full text via `curl r.jina.ai`) | nothing — curl ships with Windows 10+ |
+| mcporter + Exa | "Web research" button in the stock detail panel (live search, free & keyless) | nothing — ad-hoc `npx mcporter call <url>.<tool>`, no config file |
+
+Per-ticker scans never shell out to these: the Twitter CLI only runs as the sentiment fallback, and Exa only on explicit button click (npx cold start ~1-3s). For the agent's own dev-time research (not the app), install the skill separately: `npx skills add Panniantong/agent-reach -g -a opencode -y`.
+
+### NSE Market Lens (free, no key)
+
+`scanner/api/market_lens.py` talks to NSE's official screener API (`marketlens.nseindia.com/api`) — browser-style headers, per-endpoint TTL caches, and every fetch degrading to `None`, so a scan never depends on it. Toggle with the `use_market_lens` setting (default on):
+
+| Feature | Where it shows up |
+|---|---|
+| Scan-time enrichment | Sector + promoter holding merged into each enriched row (Trendlyne still wins for promoters when present) |
+| Shareholding | Promoters from Market Lens merged with FII/DII from Screener.in every fetch-miss (`promoters`, `foreign_institutions`, `domestic_institutions` unchanged for consumers) |
+| Detail panel extras | Group button → sector peers; chart button → last 5 quarters (income, net profit, EPS ▲/▼) |
+| Universe pre-filter | Settings → "Market Lens universe filter": comma-separated sectors, max P/E, min market cap (₹ Cr) — blank/0 = off; applies to the full universe (profiles cache 24 h, unknown tickers negative-cache on 404) |
+| Price fallback | Last-resort daily close+volume frame when yfinance + jugaad-data + nselib all fail (`high`/`low` are NaN, so ATR/ADX-based signals can't fire on those frames) |
+| Index fallback | Last-resort 2-close quote for NIFTY 50 / NIFTY BANK when jugaad + Yahoo both fail (the RS scorer already ignores frames shorter than `rs_length + 5`, so scans still fall back to their proxy) |
+
+Field caveats: the list endpoint caps at 100 rows/page (page ≥ 2 is broken) and the 13 coarse sector lists cover only 688 stocks against a finer profile taxonomy, so bulk access is per-ticker profile fetches; `dma20`/`returnOnEquity`/`avgVolume`/`industryPe` are broken server-side and never read; shareholding carries promoters/public only — FII/DII stay on the Screener.in scrape.
 
 ---
 
@@ -195,6 +222,6 @@ Test files live in `scanner/tests/`; external APIs are mocked for the offline su
 ## Troubleshooting
 
 - **GUI fails to start** — check `AppLog/trace.log` for the import error.
-- **Scan returns few/no stocks** — check `AppLog/scan.log` and `AppLog/trace.log`. If Yahoo is rate-limiting, the batch fallback (jugaad-data/nselib) kicks in automatically; if all three providers fail, the ticker is skipped and reported.
+- **Scan returns few/no stocks** — check `AppLog/scan.log` and `AppLog/trace.log`. If Yahoo is rate-limiting, the batch fallback (jugaad-data/nselib/marketlens) kicks in automatically; if every provider fails, the ticker is skipped and reported.
 - **No data for a specific stock** — BSE-only symbols without NSE listings may be unavailable from the free providers.
 - **Reset everything** — Settings: delete `scanner/settings.json`. Cache: Settings → "Clear Cache" in the GUI, or delete `scanner/.cache/`.

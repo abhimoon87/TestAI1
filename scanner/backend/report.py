@@ -9,9 +9,14 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
+from ..shared.cache import TTLCache
 from ..shared.detail_specs import SCORE_CATS, fmt_pct, signal_specs
 
 logger = logging.getLogger(__name__)
+
+# Reports regenerate on demand — keep each ticker's yfinance news for 4h so
+# repeated report/detail renders don't re-hit Yahoo per ticker.
+_NEWS_CACHE: TTLCache = TTLCache(ttl=4 * 3600, namespace="stock_news")
 
 
 def _sparkline_svg(closes: list, width: int = 100, height: int = 22) -> str:
@@ -198,8 +203,13 @@ def fetch_stock_news(ticker: str, max_items: int = 10, months_back: int = 2) -> 
         months_back: Only include news from the last N months
 
     Returns:
-        List of dicts with 'title', 'summary', 'date', 'publisher', 'sentiment'
+        List of dicts with 'title', 'summary', 'date', 'publisher',
+        'url', 'sentiment'
     """
+    cache_k = _NEWS_CACHE.make_key(ticker, str(max_items), str(months_back))
+    cached = _NEWS_CACHE.get(cache_k)
+    if cached is not None:
+        return cached
     try:
         import yfinance as yf
 
@@ -228,11 +238,18 @@ def fetch_stock_news(ticker: str, max_items: int = 10, months_back: int = 2) -> 
                     "summary": summary,
                     "date": dt.strftime("%Y-%m-%d") if dt else "—",
                     "publisher": provider,
+                    "url": (
+                        (content.get("canonicalUrl") or {}).get("url")
+                        or (content.get("clickThroughUrl") or {}).get("url")
+                        or item.get("link")
+                        or ""
+                    ),
                     "sentiment": _sentiment(title, summary),
                 }
             )
             if len(results) >= max_items:
                 break
+        _NEWS_CACHE.set(cache_k, results)  # failures skip the try → uncached
         return results
     except Exception as e:
         logger.info("News fetch failed for %s: %s", ticker, e)
@@ -1169,7 +1186,7 @@ def _institutional_html(r: dict, flow: list | None) -> str:
         + _tile("DII", "domestic_institutions", flow_key="dii", marker_key="_dii_net")
         + _tile("Promoters", "promoters", snap=r.get("_promoter_holding"))
     )
-    hint = "Screener shareholding"
+    hint = "Shareholding"
     if shp.get("quarter"):
         hint += f" · {shp['quarter']}"
     return (

@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scanner.backend.report import (
+    _NEWS_CACHE,
     _REPORT_COLS,
     SENTIMENT_BAD,
     SENTIMENT_GOOD,
@@ -35,6 +36,14 @@ from scanner.backend.report import (
 )
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _news_cache_reset():
+    """The in-memory TTLCache outlives the per-test sqlite db — reset it."""
+    _NEWS_CACHE.clear()
+    yield
+    _NEWS_CACHE.clear()
 
 
 def _make_score_result(ticker="RELIANCE", total=65.0, **overrides):
@@ -524,6 +533,40 @@ class TestFetchStockNews:
         assert result[0]["title"] == "Stock surges on profit growth"
         assert result[0]["publisher"] == "Reuters"
         assert result[0]["sentiment"] == "Good"
+        assert result[0]["url"] == ""
+
+    def test_extracts_url(self):
+        now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        mock_news = [
+            {
+                "content": {
+                    "title": "New format",
+                    "summary": "",
+                    "pubDate": now,
+                    "provider": {"displayName": "Reuters"},
+                    "canonicalUrl": {"url": "https://example.com/new"},
+                }
+            },
+            {
+                "content": {
+                    "title": "Old format",
+                    "summary": "",
+                    "pubDate": now,
+                    "provider": {"displayName": "Bloomberg"},
+                },
+                "link": "https://example.com/old",
+            },
+        ]
+        mock_yf = MagicMock()
+        mock_ticker = MagicMock()
+        mock_ticker.news = mock_news
+        mock_yf.Ticker.return_value = mock_ticker
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = fetch_stock_news("RELIANCE")
+
+        assert result[0]["url"] == "https://example.com/new"
+        assert result[1]["url"] == "https://example.com/old"
 
     def test_filters_old_news(self):
         old_date = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -582,6 +625,20 @@ class TestFetchStockNews:
     def test_import_error_returns_empty(self):
         with patch.dict("sys.modules", {"yfinance": None}):
             fetch_stock_news("RELIANCE")  # must not raise when yfinance is absent
+
+    def test_news_cached_between_calls(self):
+        """Second call for the same ticker replays the cache (no yfinance hit)."""
+        mock_yf = MagicMock()
+        mock_ticker = MagicMock()
+        mock_ticker.news = []
+        mock_yf.Ticker.return_value = mock_ticker
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            first = fetch_stock_news("CACHEDNEWS")
+            second = fetch_stock_news("CACHEDNEWS")
+
+        assert first == second == []
+        mock_yf.Ticker.assert_called_once_with("CACHEDNEWS.NS")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -712,7 +769,7 @@ class TestDetailPanelParity:
             "Key Signals",
             "Score Breakdown",
             "Institutional Positioning",
-            "Screener shareholding · Jun 2026",
+            "Shareholding · Jun 2026",
             "Stoch",  # breakdown category the table row lacks
             "Volatility",
             "Fundamental",

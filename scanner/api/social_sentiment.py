@@ -276,30 +276,96 @@ class TwitterSentiment:
     cached: bool = False
 
 
+def _score_tweets(
+    ticker: str, tweets: list, cache_k: str, max_results: int
+) -> TwitterSentiment:
+    """Score a tweet list into TwitterSentiment; cache when non-empty."""
+    sentiments = []
+    total_retweets = 0
+    total_likes = 0
+    top_tweets = []
+
+    for tweet in tweets[:max_results]:
+        if not isinstance(tweet, dict):
+            continue
+        text = tweet.get("text") or tweet.get("full_text") or ""
+        if not isinstance(text, str):
+            text = str(text)
+        if not text:
+            continue
+        sentiments.append(_social_sentiment(text))
+        try:
+            retweets = int(tweet.get("retweet_count") or tweet.get("retweets") or 0)
+            likes = int(
+                tweet.get("favorite_count")
+                or tweet.get("like_count")
+                or tweet.get("likes")
+                or 0
+            )
+        except (TypeError, ValueError):
+            retweets = likes = 0
+        total_retweets += retweets
+        total_likes += likes
+        top_tweets.append(
+            {
+                "text": text[:200],
+                "retweets": retweets,
+                "likes": likes,
+                "sentiment": round(sentiments[-1], 3),
+            }
+        )
+
+    if not sentiments:
+        return TwitterSentiment(
+            ticker=ticker,
+            mention_count=0,
+            sentiment_score=0.0,
+            avg_retweets=0,
+            avg_likes=0,
+            top_tweets=[],
+            cached=False,
+        )
+
+    n = len(sentiments)
+    top_tweets.sort(key=lambda x: x["retweets"] + x["likes"], reverse=True)
+    result = TwitterSentiment(
+        ticker=ticker,
+        mention_count=n,
+        sentiment_score=round(sum(sentiments) / n, 3),
+        avg_retweets=round(total_retweets / n, 1),
+        avg_likes=round(total_likes / n, 1),
+        top_tweets=top_tweets[:5],
+        cached=False,
+    )
+    _SOCIAL_CACHE.set(
+        cache_k,
+        {
+            "ticker": ticker,
+            "mention_count": result.mention_count,
+            "sentiment_score": result.sentiment_score,
+            "avg_retweets": result.avg_retweets,
+            "avg_likes": result.avg_likes,
+            "top_tweets": result.top_tweets,
+        },
+    )
+    return result
+
+
 def fetch_twitter_sentiment(
     ticker: str,
     api_key: str | None = None,
     max_results: int = 20,
+    cookies: tuple | None = None,
 ) -> TwitterSentiment | None:
     """
     Fetch Twitter/X sentiment for a ticker.
-    Uses GetXAPI or TweetAPI (third-party Twitter data providers).
-
-    Args:
-        ticker: Stock ticker
-        api_key: API key for GetXAPI/TweetAPI (or env TWITTER_API_KEY)
-        max_results: Max tweets to analyze
+    Primary: GetXAPI/TweetAPI (api_key or env TWITTER_API_KEY).
+    Fallback: local ``twitter-cli`` (cookies = env TWITTER_AUTH_TOKEN/CT0).
 
     Returns:
-        TwitterSentiment or None
+        TwitterSentiment or None when no source produced data
     """
-    api_key = api_key or os.environ.get("TWITTER_API_KEY")
-    if not api_key:
-        logger.debug("Twitter: no API key, skipping")
-        return None
-
     symbol = ticker.replace(".NS", "").replace(".BO", "")
-
     cache_k = hashlib.md5(
         f"twitter:{symbol}".encode(), usedforsecurity=False
     ).hexdigest()
@@ -307,90 +373,35 @@ def fetch_twitter_sentiment(
     if cached:
         return TwitterSentiment(**cached, cached=True)
 
-    try:
-        # Try GetXAPI first
-        url = "https://api.getxapi.com/v2/tweets/search"
-        headers = {"Authorization": f"Bearer {api_key}"}
-        params = {
-            "query": f"${symbol} OR #{symbol} stock",
-            "max_results": max_results,
-            "sort": "recent",
-        }
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+    tweets = None
+    api_key = api_key or os.environ.get("TWITTER_API_KEY")
+    if api_key:
+        try:
+            url = "https://api.getxapi.com/v2/tweets/search"
+            headers = {"Authorization": f"Bearer {api_key}"}
+            params = {
+                "query": f"${symbol} OR #{symbol} stock",
+                "max_results": max_results,
+                "sort": "recent",
+            }
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            resp.raise_for_status()
+            body = resp.json()
+            tweets = body.get("data", body.get("tweets", []))
+        except (requests.RequestException, KeyError, ValueError) as e:
+            logger.warning("Twitter API failed for %s, trying CLI: %s", ticker, e)
 
-        tweets = data.get("data", data.get("tweets", []))
-        if not tweets:
-            return TwitterSentiment(
-                ticker=ticker,
-                mention_count=0,
-                sentiment_score=0.0,
-                avg_retweets=0,
-                avg_likes=0,
-                top_tweets=[],
-                cached=False,
-            )
+    if tweets is None:
+        from . import channels
 
-        sentiments = []
-        total_retweets = 0
-        total_likes = 0
-        top_tweets = []
-
-        for tweet in tweets[:max_results]:
-            text = tweet.get("text", tweet.get("full_text", ""))
-            score = _social_sentiment(text)
-            sentiments.append(score)
-
-            retweets = tweet.get("retweet_count", 0)
-            likes = tweet.get("favorite_count", tweet.get("like_count", 0))
-            total_retweets += retweets
-            total_likes += likes
-
-            top_tweets.append(
-                {
-                    "text": text[:200],
-                    "retweets": retweets,
-                    "likes": likes,
-                    "sentiment": round(score, 3),
-                }
-            )
-
-        n = len(sentiments) or 1
-        avg_sentiment = sum(sentiments) / n
-
-        # Sort by engagement
-        top_tweets.sort(
-            key=lambda x: x.get("retweets", 0) + x.get("likes", 0), reverse=True
+        tweets = channels.twitter_search(
+            f"${symbol} OR #{symbol} stock", max_results, cookies
         )
 
-        result = TwitterSentiment(
-            ticker=ticker,
-            mention_count=len(sentiments),
-            sentiment_score=round(avg_sentiment, 3),
-            avg_retweets=round(total_retweets / n, 1),
-            avg_likes=round(total_likes / n, 1),
-            top_tweets=top_tweets[:5],
-            cached=False,
-        )
-
-        _SOCIAL_CACHE.set(
-            cache_k,
-            {
-                "ticker": ticker,
-                "mention_count": result.mention_count,
-                "sentiment_score": result.sentiment_score,
-                "avg_retweets": result.avg_retweets,
-                "avg_likes": result.avg_likes,
-                "top_tweets": result.top_tweets,
-            },
-        )
-
-        return result
-
-    except (requests.RequestException, KeyError, ValueError) as e:
-        logger.warning("Twitter sentiment failed for %s: %s", ticker, e)
+    if tweets is None:
+        logger.debug("Twitter: no API key / CLI unavailable, skipping")
         return None
+    return _score_tweets(ticker, tweets, cache_k, max_results)
 
 
 # ── Unified Social Sentiment ───────────────────────────────────────────────
@@ -400,6 +411,7 @@ def fetch_social_sentiment(
     ticker: str,
     twitter_api_key: str | None = None,
     subreddits: list[str] | None = None,
+    twitter_cookies: tuple | None = None,
 ) -> dict:
     """
     Fetch social sentiment from Reddit + Twitter with fallback.
@@ -414,7 +426,7 @@ def fetch_social_sentiment(
         }
     """
     reddit = fetch_reddit_sentiment(ticker, subreddits)
-    twitter = fetch_twitter_sentiment(ticker, twitter_api_key)
+    twitter = fetch_twitter_sentiment(ticker, twitter_api_key, cookies=twitter_cookies)
 
     # Weight Reddit more heavily (more relevant for Indian stocks)
     scores = []

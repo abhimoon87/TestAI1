@@ -222,6 +222,7 @@ _PROVIDER_FLAG_PREFIXES = (
         "use_indian_fundamentals",
     ),
     (("_insider",), "use_insider_data"),
+    (("_ml_",), "use_market_lens"),
 )
 
 # Defaults live enrichment sets unconditionally for these keys (mirrors
@@ -645,6 +646,25 @@ class ScannerEngine:
                 + ", ".join(f"{t} ({SUSPENDED_OR_DELISTED[t]})" for t in dead_members),
             )
 
+        if settings.get("use_market_lens", True):
+            try:
+                from ..api.market_lens import filter_universe
+
+                kept = filter_universe(
+                    tickers,
+                    sectors=str(settings.get("ml_filter_sectors", "") or ""),
+                    pe_max=float(settings.get("ml_filter_pe_max", 0) or 0),
+                    mcap_min_cr=float(settings.get("ml_filter_mcap_min_cr", 0) or 0),
+                )
+            except Exception as e:
+                self._log(f"Market Lens universe filter skipped ({e})")
+            else:
+                if len(kept) != len(tickers):
+                    self._log(
+                        f"Market Lens universe filter: {len(tickers)} -> {len(kept)} stocks"
+                    )
+                tickers = kept
+
         tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
 
         self._log("\n" + "=" * 50)
@@ -718,7 +738,7 @@ class ScannerEngine:
             if missing_final:
                 self._log(
                     f"  \u26a0 {len(missing_final)} tickers unavailable on all providers "
-                    "(yfinance, jugaad-data, nselib)"
+                    "(yfinance, jugaad-data, nselib, marketlens)"
                 )
         else:
             self._log(f"  Total stocks:  {len(tickers)}")
@@ -836,7 +856,7 @@ class ScannerEngine:
     ) -> dict:
         """
         Enrich settings with data from provider modules.
-        Runs all 5 per-ticker providers in parallel via ThreadPoolExecutor.
+        Runs all 6 per-ticker providers in parallel via ThreadPoolExecutor.
         If an executor is provided, reuses it; otherwise creates a temporary one.
         """
         from concurrent.futures import as_completed
@@ -867,6 +887,10 @@ class ScannerEngine:
             return fetch_social_sentiment(
                 ticker,
                 twitter_api_key=get_api_key("TWITTER_API_KEY", api_config),
+                twitter_cookies=(
+                    get_api_key("TWITTER_AUTH_TOKEN", api_config),
+                    get_api_key("TWITTER_CT0", api_config),
+                ),
             )
 
         def _fetch_indian_market():
@@ -879,6 +903,21 @@ class ScannerEngine:
 
             return fetch_indian_fundamentals(ticker)
 
+        def _fetch_market_lens():
+            from ..api.market_lens import get_stock
+
+            prof = get_stock(ticker)
+            if not prof:
+                return {}
+            out = {}
+            if prof.get("sector"):
+                out["sector"] = prof["sector"]
+            try:
+                out["promoter_holding"] = float(prof.get("promoterHolding"))
+            except (TypeError, ValueError):
+                pass
+            return out
+
         def _fetch_insider():
             from ..api.insider_data import fetch_insider_data
 
@@ -888,7 +927,7 @@ class ScannerEngine:
                 congress_key=get_api_key("CONGRESS_API_KEY", api_config),
             )
 
-        # Launch all 5 providers in parallel
+        # Launch all 6 providers in parallel
         futures = {}
         _own_executor = executor is None
         if _own_executor:
@@ -902,6 +941,8 @@ class ScannerEngine:
                 futures[executor.submit(_fetch_indian_market)] = "india"
             if settings.get("use_indian_fundamentals", True):
                 futures[executor.submit(_fetch_indian_fundamentals)] = "india_fund"
+            if settings.get("use_market_lens", True):
+                futures[executor.submit(_fetch_market_lens)] = "mlens"
             if settings.get("use_insider_data", True):
                 futures[executor.submit(_fetch_insider)] = "insider"
 
@@ -957,6 +998,15 @@ class ScannerEngine:
                                 enriched["_is_quality_stock"] = screener.is_quality
                                 enriched["_valuation_source"] = result.get(
                                     "source", "none"
+                                )
+                        elif category == "mlens":
+                            if result.get("sector"):
+                                enriched["_ml_sector"] = result["sector"]
+                            if result.get("promoter_holding") is not None:
+                                # setdefault: trendlyne (india_fund) wins when present
+                                enriched.setdefault(
+                                    "_promoter_holding",
+                                    round(float(result["promoter_holding"]), 2),
                                 )
                         elif category == "insider":
                             enriched["_insider_score"] = result.get(
@@ -1058,7 +1108,8 @@ class ScannerEngine:
             # fallback pass (jugaad-data/nselib) for anything yfinance missed.
             self._progress(0.05, f"Batch downloading {len(tickers)} stocks...")
             self._log(
-                f"Batch downloading {len(tickers)} stocks via yfinance (fallback: jugaad-data/nselib)..."
+                f"Batch downloading {len(tickers)} stocks via yfinance "
+                "(fallback: jugaad-data/nselib/marketlens)..."
             )
             reset_negative_skips()
             batch_data = fetch_batch_yfinance(
@@ -1068,7 +1119,7 @@ class ScannerEngine:
                 cancel_event=self._cancel_event,
                 on_fallback_progress=lambda done, total: self._progress(
                     0.05 + 0.05 * (done / max(total, 1)),
-                    f"Fallback fetch {done}/{total} (jugaad/nselib)",
+                    f"Fallback fetch {done}/{total} (jugaad/nselib/marketlens)",
                 ),
             )
             if len(batch_data) < len(tickers):
@@ -1367,7 +1418,7 @@ class ScannerEngine:
                 cancel_event=self._cancel_event,
                 on_fallback_progress=lambda done, total: self._progress(
                     0.05 + 0.05 * (done / max(total, 1)),
-                    f"Fallback fetch {done}/{total} (jugaad/nselib)",
+                    f"Fallback fetch {done}/{total} (jugaad/nselib/marketlens)",
                 ),
             ):
                 if self._cancel_event.is_set():

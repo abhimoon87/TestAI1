@@ -158,8 +158,15 @@ class LayoutViewMixin:
 
     def _styled_dropdown(self, options, value, on_select=None) -> ft.Dropdown:
         """Full-width modern dropdown matching the app theme."""
-        dd = themed_dropdown(options, value, self.theme_colors, on_select=on_select)
-        dd.expand = True
+        # Fixed 160px truncated values ("NSE ALL (Live ~2,200)") and wrapped
+        # menu options — stretch to the sidebar field width instead.
+        dd = themed_dropdown(
+            options,
+            value,
+            self.theme_colors,
+            width=SIDE_W - 32,
+            on_select=on_select,
+        )
         dd.height = 46
         dd.content_padding = _padding_only(left=12, right=8, top=8, bottom=8)
         dd.menu_height = 260

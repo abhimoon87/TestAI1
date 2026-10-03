@@ -131,6 +131,32 @@ class SettingsViewMixin:
                 ),
             ],
         ),
+        (
+            "Market Lens universe filter (off when blank/0)",
+            [
+                (
+                    "ml_filter_sectors",
+                    "Sectors (comma-separated, e.g. Banks, IT)",
+                    "str",
+                    None,
+                    None,
+                ),
+                (
+                    "ml_filter_pe_max",
+                    "Max P/E (0 = off)",
+                    "float",
+                    0,
+                    1000,
+                ),
+                (
+                    "ml_filter_mcap_min_cr",
+                    "Min market cap (₹ Cr, 0 = off)",
+                    "float",
+                    0,
+                    10000000,
+                ),
+            ],
+        ),
     ]
 
     def _settings_input(self, key, label, kind, lo, hi):
@@ -329,6 +355,8 @@ class SettingsViewMixin:
                 if val not in ok_opts:
                     bad.append(key)
                     continue
+            elif kind == "str":
+                val = (ctrl.value or "").strip()
             else:
                 raw = (ctrl.value or "").strip()
                 try:

@@ -79,6 +79,11 @@ class ScannerSettings(TypedDict, total=False):
     use_indian_fundamentals: bool
     use_insider_data: bool
     use_macro_data: bool
+    use_market_lens: bool
+    # Market Lens universe pre-filter (0/blank = off)
+    ml_filter_sectors: str
+    ml_filter_pe_max: float
+    ml_filter_mcap_min_cr: float
     # Entry mode: "classic" (original), "high_probability" (optimized), "custom"
     entry_mode: str
     hp_counter_signal_penalty: bool
@@ -140,6 +145,10 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "use_indian_fundamentals": True,
     "use_insider_data": True,
     "use_macro_data": True,
+    "use_market_lens": True,
+    "ml_filter_sectors": "",
+    "ml_filter_pe_max": 0.0,
+    "ml_filter_mcap_min_cr": 0.0,
     # Entry mode: "classic" (original), "high_probability" (optimized), "custom"
     "entry_mode": "classic",
     "hp_counter_signal_penalty": True,
@@ -159,6 +168,9 @@ API_KEY_NAMES = (
     "NEWS_API_KEY",
     "GNEWS_API_KEY",
     "TWITTER_API_KEY",
+    # twitter-cli session cookies (Agent-Reach fallback)
+    "TWITTER_AUTH_TOKEN",
+    "TWITTER_CT0",
     "ALETHEIA_API_KEY",
     "CONGRESS_API_KEY",
     "FRED_API_KEY",

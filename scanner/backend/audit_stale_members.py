@@ -207,11 +207,11 @@ def audit_stale_members(
     missing = sorted(t for t in tickers if t not in raw)
 
     # 1) Live-probe: re-attempt genuinely-missing names through the per-ticker
-    # provider chain (jugaad -> yfinance -> nselib), which bypasses the
-    # negative-cache skip that gates the batch fallback — a symbol wrongly
-    # marked dead gets a second chance before being reported missing.  Each
-    # probe can burn provider timeouts, so run them on a bounded pool
-    # (mirrors FALLBACK_WORKERS in data_fetcher).
+    # provider chain (yfinance -> jugaad -> nselib -> marketlens), which
+    # bypasses the negative-cache skip that gates the batch fallback — a
+    # symbol wrongly marked dead gets a second chance before being reported
+    # missing.  Each probe can burn provider timeouts, so run them on a
+    # bounded pool (mirrors FALLBACK_WORKERS in data_fetcher).
     if probe_missing and missing:
         from concurrent.futures import ThreadPoolExecutor
 

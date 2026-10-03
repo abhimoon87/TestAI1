@@ -2,15 +2,17 @@
 Multi-source data provider with fallback chain for Indian stock market.
 
 Provider priority for OHLCV:
-  1. jugaad-data — NSE official API, no auth needed
-  2. yfinance — Yahoo Finance, no auth needed
+  1. yfinance — Yahoo Finance, no auth needed
+  2. jugaad-data — NSE official API, no auth needed
   3. nselib — NSE library, no auth needed
+  4. Market Lens — close+volume only (NaN high/low), last resort
 
 Provider priority for Fundamentals:
   1. Finnhub — Institutional-grade data (free tier)
   2. Alpha Vantage — Technical indicators + fundamentals (free API key)
   3. yfinance .info — Detailed financial data
-  4. nselib pe_ratio — Bulk P/E ratio for all stocks
+  4. Market Lens — NSE profile + quarterly financials (no ROE)
+  5. nselib pe_ratio — Bulk P/E ratio for all stocks
 
 All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
@@ -30,6 +32,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..shared import db
+from ..shared.cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,10 @@ PRICE_CACHE_MAX_ROWS = 6000
 # Only VACUUM when the db has at least this much reclaimable slack, so the
 # routine no-op prune (nothing expired, under the cap) stays free.
 VACUUM_SLACK_MB = 8.0
+
+# Fundamentals change quarterly — persist each provider chain's result so
+# single-ticker fetches (fallback, detail) and scans share one disk-backed read.
+_FUNDAMENTALS_CACHE: TTLCache = TTLCache(ttl=6 * 3600, namespace="fundamentals")
 
 
 from ..shared._index_utils import _normalize_daily_index
@@ -489,6 +496,50 @@ def _fetch_jugaad_index(ticker: str, period: str) -> pd.DataFrame | None:
         return None
 
 
+def _fetch_marketlens_index(ticker: str, period: str) -> pd.DataFrame | None:
+    """Last-resort index quote from Market Lens (today + derived prev close).
+
+    Only NIFTY 50 / NIFTY BANK exist there. The 2-row frame is enough for
+    the hero quote; the RS scorer already rejects frames shorter than
+    rs_length + 5 bars, so a scan falls back to its proxy exactly as when
+    the index is missing entirely.
+    """
+    del period  # single-day snapshot — period is irrelevant here
+    try:
+        from .market_lens import get_indices
+
+        name = {"^NSEI": "NIFTY_50", "^NSEBANK": "BANKNIFTY"}.get(ticker)
+        if name is None:
+            return None
+        rows = get_indices() or []
+        row = next((r for r in rows if r.get("ticker") == name), None)
+        if not row:
+            return None
+        value = float(row.get("value"))
+        change = float(row.get("change") or 0.0)
+        if not value or change <= -100:
+            return None
+        prev = value / (1 + change / 100.0)
+        if not prev:
+            return None
+        today = pd.Timestamp.now().normalize()
+        df = pd.DataFrame(
+            {
+                "open": [prev, value],
+                "high": [value, value],
+                "low": [prev, value],
+                "close": [prev, value],
+                "volume": [0.0, 0.0],
+            },
+            index=pd.DatetimeIndex([today - pd.Timedelta(days=1), today]),
+        )
+        df.index.name = None
+        return df
+    except Exception as e:
+        logger.info("Market Lens index failed for %s: %s", ticker, e)
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PROVIDER: yfinance (Yahoo Finance)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -593,6 +644,66 @@ def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
         return None
     except Exception as e:
         logger.info("nselib failed for %s: %s", ticker, e)
+        return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PROVIDER: Market Lens (price history — last resort)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _fetch_marketlens_price(ticker: str, period: str) -> pd.DataFrame | None:
+    """Daily close+volume from Market Lens — last-resort fallback frame.
+
+    ponytail: close-only source — open=close and high/low stay NaN, so ATR/
+    ADX/stochastic read NaN (every consumer isnan-guards them) and the ADX
+    entry gate cannot fire on these frames. Reached only after yfinance,
+    jugaad-data and nselib have all failed, so it converts a dead ticker
+    into a degraded one instead of replacing better OHLC data.
+    """
+    try:
+        from .market_lens import get_price_history
+
+        ml_period = {"6mo": "6M", "1y": "1Y", "2y": "5Y", "3y": "5Y", "5y": "5Y"}.get(
+            period, "1Y"
+        )
+        rows = get_price_history(ticker, ml_period)
+        if not rows:
+            return None
+        dates, closes, volumes = [], [], []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            try:
+                d = pd.Timestamp(r.get("date"))
+                c = float(r.get("price"))
+            except (TypeError, ValueError):
+                continue
+            if pd.isna(d) or pd.isna(c) or c <= 0:
+                continue
+            try:
+                v = float(r.get("volume") or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            dates.append(d)
+            closes.append(c)
+            volumes.append(v)
+        if not dates:
+            return None
+        df = pd.DataFrame(
+            {
+                "open": closes,
+                "high": float("nan"),
+                "low": float("nan"),
+                "close": closes,
+                "volume": volumes,
+            },
+            index=pd.DatetimeIndex(dates),
+        ).sort_index()
+        df.index.name = None
+        return df
+    except Exception as e:
+        logger.info("Market Lens price history failed for %s: %s", ticker, e)
         return None
 
 
@@ -792,6 +903,31 @@ def _fetch_fundamentals_nselib(ticker: str) -> dict | None:
         return None
 
 
+def _fetch_fundamentals_marketlens(ticker: str) -> dict | None:
+    """Market Lens profile + quarterly financials — P/E + YoY, no ROE."""
+    try:
+        from .market_lens import get_quarterly, get_stock, yoy_growth
+
+        prof = get_stock(ticker)
+        if not prof:
+            return None
+        try:
+            pe = float(prof.get("peRatio"))
+        except (TypeError, ValueError):
+            pe = None
+        quarterly = get_quarterly(ticker)
+        fund = {
+            "pe_ratio": pe,
+            "eps_growth": yoy_growth(quarterly, "eps"),
+            "rev_growth": yoy_growth(quarterly, "totalIncome"),
+            "roe": None,
+        }
+        return fund if any(v is not None for v in fund.values()) else None
+    except Exception as e:
+        logger.info("Market Lens fundamentals failed for %s: %s", ticker, e)
+        return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PROVIDER CLASS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -837,9 +973,10 @@ class DataProvider:
 
         Priority:
           1. Cache (if enabled)
-          2. jugaad-data
-          3. yfinance
+          2. yfinance
+          3. jugaad-data
           4. nselib
+          5. Market Lens (close+volume only — degraded frame)
 
         Args:
             skip: Provider names to exclude from the chain. Used by the
@@ -864,11 +1001,13 @@ class DataProvider:
                     self.last_provider = "cache"
                 return cached
 
-        # Provider chain
+        # Provider chain — full OHLC first; Market Lens last because it is
+        # close-only and must never shadow a working OHLC source.
         providers = [
-            ("jugaad", lambda: _fetch_jugaad(ticker, period)),
             ("yfinance", lambda: _fetch_yfinance(ticker, period)),
+            ("jugaad", lambda: _fetch_jugaad(ticker, period)),
             ("nselib", lambda: _fetch_nselib(ticker, period)),
+            ("marketlens", lambda: _fetch_marketlens_price(ticker, period)),
         ]
 
         for name, fetch_fn in providers:
@@ -922,8 +1061,9 @@ class DataProvider:
                 return cached
 
         providers = [
-            ("jugaad", lambda: _fetch_jugaad_index(ticker, period)),
             ("yfinance", lambda: _fetch_yfinance_index(ticker, period)),
+            ("jugaad", lambda: _fetch_jugaad_index(ticker, period)),
+            ("marketlens", lambda: _fetch_marketlens_index(ticker, period)),
         ]
 
         for name, fetch_fn in providers:
@@ -956,8 +1096,9 @@ class DataProvider:
         Priority:
           1. Finnhub (institutional-grade, free tier)
           2. Alpha Vantage (technical indicators + fundamentals)
-          3. yfinance (detailed financial data)
-          4. nselib (bulk P/E ratio)
+          3. yfinance (detailed financial data, has ROE)
+          4. Market Lens (NSE profile + quarterly financials, no ROE)
+          5. nselib (bulk P/E ratio only)
 
         Args:
             provider_timeout: When set, each provider call is capped at this
@@ -967,10 +1108,18 @@ class DataProvider:
         with self._meta_lock:
             self.last_provider = None
 
+        if self.use_cache:
+            cached = _FUNDAMENTALS_CACHE.get(_FUNDAMENTALS_CACHE.make_key(ticker))
+            if cached is not None:
+                with self._meta_lock:
+                    self.last_provider = "cache"
+                return cached
+
         providers = [
             ("finnhub", lambda: _fetch_fundamentals_finnhub(ticker)),
             ("alpha_vantage", lambda: _fetch_fundamentals_alpha_vantage(ticker)),
             ("yfinance", lambda: _fetch_fundamentals_yfinance(ticker)),
+            ("marketlens", lambda: _fetch_fundamentals_marketlens(ticker)),
             ("nselib", lambda: _fetch_fundamentals_nselib(ticker)),
         ]
 
@@ -988,6 +1137,10 @@ class DataProvider:
                 if fund is not None:
                     with self._meta_lock:
                         self.last_provider = name
+                    if self.use_cache:
+                        _FUNDAMENTALS_CACHE.set(
+                            _FUNDAMENTALS_CACHE.make_key(ticker), fund
+                        )
                     return fund
             except Exception as e:
                 logger.info(
