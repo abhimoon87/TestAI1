@@ -293,10 +293,42 @@ class TestFiiDiiCheckboxFilter:
         app.scanning = False
         app.sort_col = None
 
-        app._on_inst_filter_change(None)
+        app._on_filter_toggled(None)
 
         assert [r["ticker"] for r in app.filtered_results] == ["STK000"]
         assert "FII/DII data" in app.result_count_label.value
+
+
+class TestPriceAndFundCheckboxFilters:
+    """Hide sub-₹100 / zero-fundamental rows — checkbox predicates."""
+
+    def test_price_checkbox_hides_only_sub_100(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 0})()
+        cheap = _result(0, score=70.0)
+        cheap["close"] = 50.0
+        unpriced = _result(1, score=70.0)
+        unpriced["close"] = None
+        assert app._is_filter_active() is False
+
+        app.price_filter_cb = ft.Checkbox(label="cb", value=True)
+
+        assert app._is_filter_active() is True
+        assert app._row_matches_filters(cheap) is False
+        assert app._row_matches_filters(_result(2, score=70.0)) is True  # close=102
+        assert app._row_matches_filters(unpriced) is True
+
+    def test_fund_checkbox_hides_only_zero(self):
+        app = _make_app()
+        app.threshold_slider = type("S", (), {"value": 0})()
+        zero = _result(0, score=70.0)
+        zero["fundamentals"] = 0
+
+        app.fund_filter_cb = ft.Checkbox(label="cb", value=True)
+
+        assert app._is_filter_active() is True
+        assert app._row_matches_filters(zero) is False
+        assert app._row_matches_filters(_result(1, score=70.0)) is True  # fund=12
 
 
 class TestKeyboardNav:

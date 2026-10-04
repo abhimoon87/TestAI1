@@ -366,11 +366,11 @@ class ResultsViewMixin:
             thr = self._score_threshold()
             if thr > 0:
                 filter_parts.append(f"score ≥ {thr:.0f}")
-            if self._inst_filter_on():
+            if self._checkbox_on("inst_filter_cb"):
                 filter_parts.append("FII/DII data")
-            if self._price_filter_on():
+            if self._checkbox_on("price_filter_cb"):
                 filter_parts.append("close < ₹100")
-            if self._fund_filter_on():
+            if self._checkbox_on("fund_filter_cb"):
                 filter_parts.append("fund 0")
             suffix = (
                 f"  |  filter: {', '.join(filter_parts)} ({len(shown)})"
@@ -500,15 +500,7 @@ class ResultsViewMixin:
         if self.all_results:
             self._display_results(self.all_results)
 
-    def _on_inst_filter_change(self, _e):
-        if self.all_results:
-            self._display_results(self.all_results)
-
-    def _on_price_filter_change(self, _e):
-        if self.all_results:
-            self._display_results(self.all_results)
-
-    def _on_fund_filter_change(self, _e):
+    def _on_filter_toggled(self, _e):
         if self.all_results:
             self._display_results(self.all_results)
 

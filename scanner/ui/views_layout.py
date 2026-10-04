@@ -655,7 +655,7 @@ class LayoutViewMixin:
             active_color=c["green"],
             check_color=c["on_accent"],
             tooltip="Only rows carrying per-stock FII/DII data (NSE activity or screener shareholding)",
-            on_change=self._on_inst_filter_change,
+            on_change=self._on_filter_toggled,
         )
         self.price_filter_cb = ft.Checkbox(
             label="Hide stocks below ₹100",
@@ -664,7 +664,7 @@ class LayoutViewMixin:
             active_color=c["green"],
             check_color=c["on_accent"],
             tooltip="Hide rows whose last close price is under ₹100",
-            on_change=self._on_price_filter_change,
+            on_change=self._on_filter_toggled,
         )
         self.fund_filter_cb = ft.Checkbox(
             label="Hide zero fundamental score",
@@ -673,7 +673,7 @@ class LayoutViewMixin:
             active_color=c["green"],
             check_color=c["on_accent"],
             tooltip="Hide rows whose fundamental score is 0 (no fundamentals data)",
-            on_change=self._on_fund_filter_change,
+            on_change=self._on_filter_toggled,
         )
         self.filter_chips_row = ft.Row(
             [], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER
