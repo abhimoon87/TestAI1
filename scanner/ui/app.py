@@ -669,6 +669,14 @@ class ScannerApp(
         cb = getattr(self, "inst_filter_cb", None)
         return bool(cb is not None and cb.value)
 
+    def _price_filter_on(self) -> bool:
+        cb = getattr(self, "price_filter_cb", None)
+        return bool(cb is not None and cb.value)
+
+    def _fund_filter_on(self) -> bool:
+        cb = getattr(self, "fund_filter_cb", None)
+        return bool(cb is not None and cb.value)
+
     @staticmethod
     def _has_fii_dii(r: dict) -> bool:
         """Per-stock FII/DII markers: NSE activity booleans or screener shareholding."""
@@ -683,6 +691,8 @@ class ScannerApp(
             or self._rating_filter() != "ALL"
             or self._score_threshold() > 0
             or self._inst_filter_on()
+            or self._price_filter_on()
+            or self._fund_filter_on()
         )
 
     def _visible_results(self) -> list:
@@ -708,6 +718,12 @@ class ScannerApp(
             return False
         if self._inst_filter_on() and not self._has_fii_dii(r):
             return False
+        if self._price_filter_on():
+            price = self._extra_num(r.get("close")) or 0
+            if 0 < price < 100:  # unpriced rows (0/None) stay visible
+                return False
+        if self._fund_filter_on() and not (self._extra_num(r.get("fundamentals")) or 0):
+            return False  # 0/None shows as "0" in the grid — hide it
         return True
 
     def _on_rating_change(self, _e):
