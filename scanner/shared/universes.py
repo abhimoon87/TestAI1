@@ -757,10 +757,10 @@ HIGH_MOMENTUM_STOCKS = [
 # These are resolved lazily in get_universe() to avoid import-time network calls.
 # Initialized with NIFTY_BROAD so len>0 for tests/UI before live fetch replaces them.
 _NSE_ALL_PLACEHOLDER: list = list(NIFTY_BROAD)  # ~2,200 NSE mainboard (live → 2,567)
-_BSE_ALL_PLACEHOLDER: list = list(NIFTY_BROAD)  # ~4,500 BSE active (live → 2,567/4,500)
+_BSE_ALL_PLACEHOLDER: list = list(NIFTY_BROAD)  # ~4,500 BSE active (live → 4,789)
 _FULL_MARKET_PLACEHOLDER: list = list(
     NIFTY_BROAD
-)  # ~5,900 unique NSE+BSE (live → 3,136)
+)  # ~5,900 unique NSE+BSE (live → ~5,470)
 
 # ── Universe Map ────────────────────────────────────────────────────────────
 UNIVERSES = {

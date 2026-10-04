@@ -747,10 +747,12 @@ def fetch_batch_yfinance_stream(
     slowest of eight (~60s+ under Yahoo rate limits). Caller can render
     incrementally instead of waiting for all ~5900.
 
-    After the yfinance chunks are exhausted, any ticker the batch pass
-    missed (Yahoo rate limit / no data on Yahoo) is retried through the
-    NSE-native providers (jugaad-data -> nselib -> marketlens) and, if
-    anything was recovered, yielded once more as a final batch.
+    After the yfinance chunks are exhausted, tickers the .NS pass missed
+    are retried with Yahoo's BSE suffix (.BO — BSE-only names never resolve
+    on .NS), then any remaining ticker the batch pass missed (Yahoo rate
+    limit / no data on Yahoo) is retried through the NSE-native providers
+    (jugaad-data -> nselib -> marketlens) and, if anything was recovered,
+    yielded once more as a final batch.
 
     Usage:
         for chunk_data in fetch_batch_yfinance_stream(tickers):
@@ -790,7 +792,7 @@ def fetch_batch_yfinance_stream(
             MAX_PARALLEL_CHUNKS,
         )
 
-        def _fetch_chunk(chunk: list, ci: int) -> dict:
+        def _fetch_chunk(chunk: list, ci: int, suffix: str = ".NS") -> dict:
             # Cache-first: replay fresh daily bars from the per-ticker disk
             # cache and download only what's missing/expired — repeat scans
             # (within the price-cache TTL) skip re-downloading unchanged
@@ -832,8 +834,8 @@ def fetch_batch_yfinance_stream(
                     len(to_download),
                 )
 
-            yf_tickers = [f"{t}.NS" for t in to_download]
-            ticker_map = {f"{t}.NS": t for t in to_download}
+            yf_tickers = [f"{t}{suffix}" for t in to_download]
+            ticker_map = {f"{t}{suffix}": t for t in to_download}
             try:
                 data = yf.download(
                     yf_tickers,
@@ -955,6 +957,43 @@ def fetch_batch_yfinance_stream(
             )
             if batch_start + MAX_PARALLEL_CHUNKS < len(chunks):
                 time.sleep(SLEEP_BETWEEN_BATCH)
+
+        # ── BSE .BO pass: names the .NS pass missed get one retry via
+        # Yahoo's BSE suffix — BSE-only listings never resolve on .NS, and
+        # the NSE-native fallback below skips them anyway (jugaad/nselib are
+        # mainboard-only). No membership consult here: small missing sets
+        # must not trigger an NSE list fetch (watchlists work even when
+        # nselib is down); a wasted .BO attempt on a dead NSE name is one
+        # cheap no-data download.
+        # Sequential chunks: smaller diff than cloning the parallel machinery
+        # above; parallelise like the .NS pass if scan timings show.
+        # ponytail: one yf attempt per 200 unrecovered names per scan —
+        # mark-negative after repeated failures if BSE ALL latency matters.
+        bo_targets: list = (
+            []
+            if (cancel_event is not None and cancel_event.is_set())
+            else [t for t in tickers if t not in seen_tickers]
+        )
+        if bo_targets:
+            chunks = [
+                bo_targets[i : i + CHUNK] for i in range(0, len(bo_targets), CHUNK)
+            ]
+            total = len(bo_targets)
+            logger.info(
+                "BSE .BO pass: %d non-NSE tickers still missing — retrying with .BO in %d chunk(s)",
+                total,
+                len(chunks),
+            )
+            for ci, chunk in enumerate(chunks, 1):
+                if cancel_event is not None and cancel_event.is_set():
+                    logger.info("BSE .BO pass cancelled")
+                    break
+                bo_res = _fetch_chunk(chunk, ci, suffix=".BO")
+                if bo_res:
+                    seen_tickers.update(bo_res)
+                    yield dict(bo_res)
+                if ci < len(chunks):
+                    time.sleep(SLEEP_BETWEEN_BATCH)
 
         # ── Fallback: recover tickers the yfinance pass missed ───────────
         missing = [t for t in tickers if t not in seen_tickers]

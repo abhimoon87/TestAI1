@@ -302,60 +302,93 @@ def _get_static_fallback(key: str) -> list:
 
 
 # ── BSE Support — Full Market (~5,900 unique) ───────────────────────────────
-# BSE blocks scraping, but we can fetch via:
-#   1. BSE India API (with browser headers)
-#   2. GitHub mirrors of BSE/NSE lists (fallback)
-#   3. Static universes (last resort)
+# BSE sits behind an Akamai WAF, so we fetch via:
+#   1. Official equity-master CSV (api.bseindia.com) — needs a browser TLS
+#      fingerprint (curl_cffi); plain requests gets 403 / soft-200 homepage
+#   2. GitHub mirrors of the BSE scrip list (fallback, can be stale)
+#   3. NSE CSV as proxy for dual-listed names (degraded)
+#   4. Static universes (last resort)
+
+# Gate above the NSE-proxy degraded count (~2,600) but below real BSE stock
+# lists (official ~4,800, mirror ~3,900) so partial sources can't masquerade.
+_BSE_FULL_LIST_MIN = 3500
+
+# (sic) LitsOfScripCSVDownload is BSE's actual spelling.
+_BSE_MASTER_URL = "https://api.bseindia.com/BseIndiaAPI/api/LitsOfScripCSVDownload/w"
+_BSE_MASTER_HEADERS = {
+    "Referer": "https://www.bseindia.com/",
+    "Origin": "https://www.bseindia.com",
+    "Accept": "text/csv,application/json,text/plain,*/*",
+    "sec-fetch-site": "same-site",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+}
 
 BSE_CSV_MIRRORS = [
-    # GitHub mirrors — raw CSVs with BSE symbols (Security Code / Symbol)
-    "https://raw.githubusercontent.com/pushkar-anand/bse-nse/master/bse.csv",
-    "https://raw.githubusercontent.com/jignesh91/nse-bse-list/master/bse.csv",
+    # Full BSE scrip master (Security Code / Security Id / Status / ISIN).
+    # Active 5xxxxx codes = mainboard+SME equities (~5,800); we filter those.
+    # NOTE: this snapshot goes stale (misses recent IPOs) — backup only.
+    "https://raw.githubusercontent.com/riyaz-ali/bhav-copy/master/pipeline/bse_listed_companies.csv",
 ]
 
 NSE_CSV_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
 
-def _fetch_bse_via_api() -> list[str]:
-    """Try BSE India JSON API (requires browser-like headers)."""
-    import requests
+def _is_equity_row(status: str, isin: str) -> bool:
+    """Active + INE-ISIN: drops delisted/suspended rows plus ETFs/fund
+    segments (INF), sovereigns (IN9) and placeholders — the same stock-only
+    scope NSE's EQUITY_L CSV has."""
+    return status.strip().lower() == "active" and isin.strip().startswith("INE")
 
-    url = "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w"
-    params = {
-        "Group": "",
-        "Scripcode": "",
-        "industry": "",
-        "segment": "Equity",
-        "status": "Active",
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.bseindia.com/",
-        "Accept": "application/json",
-    }
-    resp = requests.get(url, params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
-    # API returns {"Table": [{"SCRIP_CD": "...", "Scrip_Name": "...", "SYMBOL": "..."}]}
+
+def _parse_bse_master_csv(text: str) -> list[str]:
+    """Official BSE equity-master CSV -> Active equity symbols.
+
+    Preference shares / '-' instruments (non-Equity rows) are dropped
+    too; the scanner wants names Yahoo can serve as <id>.BO.
+    """
+    import csv
+    import io
+
+    if not text.lstrip().startswith("Security Code"):
+        raise ValueError(f"unexpected BSE master body: {text[:80]!r}")
     symbols: list[str] = []
-    table = data.get("Table") or data.get("table") or []
-    if isinstance(table, list):
-        for row in table:
-            # Prefer SYMBOL / Scrip_Name / SCRIP_CD
-            sym = (
-                (
-                    row.get("SYMBOL")
-                    or row.get("Scrip_Name")
-                    or row.get("SCRIP_CD")
-                    or ""
-                )
-                .strip()
-                .upper()
-            )
-            # SYMBOL may be like "RELIANCE" or empty; SCRIP_CD is numeric code, skip if numeric
-            if sym and not sym.isdigit() and len(sym) <= 20 and " " not in sym:
-                symbols.append(sym)
+    for row in csv.DictReader(io.StringIO(text)):
+        if row.get("Instrument", "").strip().lower() != "equity":
+            continue
+        if not _is_equity_row(row.get("Status", ""), row.get("ISIN No", "")):
+            continue
+        sym = row.get("Security Id", "").strip().upper().strip("*")
+        if sym and not sym.isdigit() and len(sym) <= 20 and " " not in sym:
+            symbols.append(sym)
+    if not symbols:
+        raise ValueError("BSE master parsed to zero active equities")
     return sorted(set(symbols))
+
+
+def _fetch_bse_via_api() -> list[str]:
+    """Official BSE equity master (live, ~5,000 Active equities).
+
+    Akamai blocks plain-requests fingerprints (403 / soft-200 homepage);
+    a curl_cffi Chrome impersonation plus one warm-up hit on the www
+    homepage passes. Missing curl_cffi or a blocked body degrades to
+    the mirror chain downstream.
+    """
+    try:
+        from curl_cffi import requests as crequests
+    except ImportError:
+        logger.info("curl_cffi unavailable — skipping official BSE master")
+        return []
+    s = crequests.Session(impersonate="chrome")
+    s.get("https://www.bseindia.com/", timeout=15)
+    resp = s.get(
+        _BSE_MASTER_URL,
+        params={"segment": "Equity", "status": "", "Group": "", "Scripcode": ""},
+        headers=_BSE_MASTER_HEADERS,
+        timeout=25,
+    )
+    resp.raise_for_status()
+    return _parse_bse_master_csv(resp.text)
 
 
 def _fetch_bse_via_csv_mirror() -> list[str]:
@@ -375,6 +408,7 @@ def _fetch_bse_via_csv_mirror() -> list[str]:
             col = None
             if reader.fieldnames:
                 for cand in [
+                    "Security Id",  # BSE scrip short symbol (riyaz-ali CSV)
                     "SYMBOL",
                     "Symbol",
                     "symbol",
@@ -391,14 +425,30 @@ def _fetch_bse_via_csv_mirror() -> list[str]:
             # Need to re-read after sniffing header
             reader = csv.DictReader(io.StringIO(text))
             for row in reader:
-                sym = str(row.get(col, "")).strip().upper()
+                # Full scrip masters carry debt/fund/delisted rows; keep only
+                # Active equities with an INE ISIN (BSE equity codes 5xxxxx).
+                if not _is_equity_row(
+                    str(row.get("Status", "")), str(row.get("ISIN No", ""))
+                ):
+                    continue
+                code = str(row.get("Security Code", "")).strip()
+                if code and not code.startswith("5"):
+                    continue
+                sym = str(row.get(col, "")).strip().upper().strip("*")
                 if sym and not sym.isdigit() and len(sym) <= 20 and " " not in sym:
                     # Some CSVs include .BO suffix or extra spaces
                     sym = sym.replace(".BO", "").replace(".NS", "").strip()
                     if sym:
                         symbols.append(sym)
-            if len(symbols) > 1000:
+            if len(symbols) >= _BSE_FULL_LIST_MIN:
                 return sorted(set(symbols))
+            if symbols:
+                logger.info(
+                    "BSE CSV mirror %s returned only %d symbols (<%d) — rejecting partial list",
+                    url,
+                    len(symbols),
+                    _BSE_FULL_LIST_MIN,
+                )
         except Exception as e:
             logger.info("BSE CSV mirror failed %s: %s", url, e)
             continue
@@ -441,23 +491,26 @@ def fetch_bse_all_live() -> list[str]:
     """Fetch all BSE Active Equity symbols (~4,000-5,500). Cached 4h."""
 
     def _do():
-        # Try live API first
+        # Try live API first (Akamai often 403s — degrade gracefully)
         try:
             syms = _fetch_bse_via_api()
-            if len(syms) > 1000:
+            if len(syms) >= _BSE_FULL_LIST_MIN:
                 logger.info("BSE API returned %d symbols", len(syms))
                 return syms
         except Exception as e:
             logger.info("BSE API failed: %s", e)
-        # Try CSV mirrors
+        # Try CSV mirrors (rejects partial lists internally)
         syms = _fetch_bse_via_csv_mirror()
-        if len(syms) > 1000:
+        if len(syms) >= _BSE_FULL_LIST_MIN:
             logger.info("BSE CSV mirror returned %d symbols", len(syms))
             return syms
-        # Try NSE CSV as proxy (covers many BSE dual-listed)
+        # NSE CSV as proxy — covers only dual-listed names, BSE-only lost
         syms = _fetch_nse_via_csv()
         if syms:
-            logger.info("BSE fallback via NSE CSV: %d symbols", len(syms))
+            logger.warning(
+                "DEGRADED: BSE sources unavailable — falling back to NSE CSV proxy (%d dual-listed symbols only, BSE-only names missing)",
+                len(syms),
+            )
             return syms
         return []
 

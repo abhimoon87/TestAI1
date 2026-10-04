@@ -17,3 +17,7 @@ nselib>=2.5.1
 
 # HTTP requests (for API calls and news fetching)
 requests>=2.34.2
+
+# Browser-TLS fingerprinting — the official BSE symbol master (Akamai WAF)
+# rejects plain-requests fingerprints; curl_cffi's Chrome impersonation passes
+curl_cffi>=0.13

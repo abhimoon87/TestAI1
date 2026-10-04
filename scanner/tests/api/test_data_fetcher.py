@@ -1376,3 +1376,54 @@ class TestNormalizeDailyIndex:
         assert data_fetcher._normalize_daily_index(None) is None
         empty = data_fetcher._normalize_daily_index(pd.DataFrame())
         assert empty is not None and empty.empty
+
+
+class TestBseBoPass:
+    """BSE-only names missed by the .NS pass are retried with Yahoo's .BO suffix.
+
+    A .NS fetch of a BSE-only listing always comes back empty -- without this
+    pass those names are dead on arrival (they are skipped by the NSE-native
+    fallback chain too, since jugaad/nselib only serve NSE mainboard).
+    """
+
+    @staticmethod
+    def _bo_calls(mock_yf):
+        return [
+            c.args[0]
+            for c in mock_yf.download.call_args_list
+            if c.args and all(str(t).endswith(".BO") for t in c.args[0])
+        ]
+
+    def test_missing_recovered_via_bo_without_membership_consult(self):
+        """Missing tickers get one .BO retry and recover — without any NSE
+        list consult (small misses must never trigger that fetch)."""
+
+        def fake_download(ticker_list, **kw):
+            if any(str(t).endswith(".NS") for t in ticker_list):
+                # .NS pass: only the NSE symbol resolves, BSE-only comes back missing
+                return _make_yf_download_result(["NSETEST.NS"], n=60, force_multi=True)
+            assert all(str(t).endswith(".BO") for t in ticker_list), ticker_list
+            return _make_yf_download_result(list(ticker_list), n=60, force_multi=True)
+
+        mock_yf = MagicMock()
+        mock_yf.download.side_effect = fake_download
+        with (
+            patch.dict("sys.modules", {"yfinance": mock_yf}),
+            patch("scanner.api.data_fetcher._get_cached", return_value=None),
+            patch("scanner.api.data_fetcher._set_cached"),
+            patch("scanner.api.data_fetcher._nse_membership_set") as mock_membership,
+            patch("scanner.api.data_fetcher.time.sleep"),
+            patch("scanner.api.data_fetcher._get_provider", return_value=MagicMock()),
+            patch(
+                "scanner.api.data_fetcher._fetch_fallback_batch", return_value={}
+            ) as mock_fb,
+        ):
+            yields = list(
+                fetch_batch_yfinance_stream(["NSETEST", "BSETST"], period="1y")
+            )
+
+        got = {t for chunk in yields for t in chunk}
+        assert got == {"NSETEST", "BSETST"}
+        assert self._bo_calls(mock_yf) == [["BSETST.BO"]]
+        mock_membership.assert_not_called()
+        mock_fb.assert_not_called()  # full recovery — NSE fallback not needed
