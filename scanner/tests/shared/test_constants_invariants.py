@@ -14,8 +14,8 @@ from scanner.shared.constants import (
 
 
 def test_result_cols_exact_count():
-    """RESULT_COLS must have exactly 19 columns (grid alignment)."""
-    assert len(RESULT_COLS) == 19
+    """RESULT_COLS must have exactly 23 columns (grid alignment)."""
+    assert len(RESULT_COLS) == 23
 
 
 def test_poor_ratings_are_tuple_of_str():

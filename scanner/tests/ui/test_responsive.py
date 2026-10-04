@@ -53,16 +53,16 @@ def test_hidden_cols_are_tail_only_and_nested():
 def test_specs_and_header_follow_tier():
     app = make_app()
     c = app.theme_colors
-    assert len(app._row_specs(_ROW, 1, c, 50)) == 18
-    assert len(app._make_header_row(c).content.controls) == 19
+    assert len(app._row_specs(_ROW, 1, c, 50)) == 22
+    assert len(app._make_header_row(c).content.controls) == 23
 
     app.width_tier = TIER_STANDARD
-    assert len(app._row_specs(_ROW, 1, c, 50)) == 15
-    assert len(app._make_header_row(c).content.controls) == 16
+    assert len(app._row_specs(_ROW, 1, c, 50)) == 19
+    assert len(app._make_header_row(c).content.controls) == 20
 
     app.width_tier = TIER_COMPACT
-    assert len(app._row_specs(_ROW, 1, c, 50)) == 12
-    assert len(app._make_header_row(c).content.controls) == 13
+    assert len(app._row_specs(_ROW, 1, c, 50)) == 16
+    assert len(app._make_header_row(c).content.controls) == 17
 
 
 def test_created_row_cells_match_filtered_header():
@@ -70,8 +70,29 @@ def test_created_row_cells_match_filtered_header():
     c = app.theme_colors
     app.width_tier = TIER_COMPACT
     row = app._create_row_controls(_ROW, 1, c, c["card"], 50)
-    assert len(app._row_cells["TCS"]) == 12  # filtered spec pairs
-    assert len(row.content.controls) == 13  # + sparkline cell
+    assert len(app._row_cells["TCS"]) == 16  # filtered spec pairs
+    assert len(row.content.controls) == 17  # + sparkline cell
+
+
+def test_report_parity_columns_in_row_specs():
+    """POC / Both MA / RSI Val / Volatility mirror the HTML report columns."""
+    app = make_app()
+    c = app.theme_colors
+    row = {
+        **_ROW,
+        "above_poc": True,
+        "close_above_both_ma": False,
+        "rsi_val": 55.0,
+        "volat_stat": "High",
+    }
+    specs = app._row_specs(row, 1, c, 50)
+    assert RESULT_COLS[7:9] == ["POC", "Both MA"]
+    assert RESULT_COLS[16] == "RSI Val"
+    assert RESULT_COLS[20] == "Volatility"
+    assert specs[7] == ("Above", c["green"])
+    assert specs[8] == ("NO", c["text_dim"])
+    assert specs[16] == ("55.0", c["green"])  # 40-70 band
+    assert specs[20] == ("High", c["text"])
 
 
 # ── Pane reflow plumbing ────────────────────────────────────────────

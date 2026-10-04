@@ -19,7 +19,7 @@ from datetime import datetime
 
 import flet as ft
 
-from ..shared.constants import LOG_MAX_LINES, score_of
+from ..shared.constants import LOG_MAX_LINES, has_fii_dii, score_of
 from ..shared.trace import setup_trace
 
 try:
@@ -669,14 +669,6 @@ class ScannerApp(
         cb = getattr(self, name, None)
         return bool(cb is not None and cb.value)
 
-    @staticmethod
-    def _has_fii_dii(r: dict) -> bool:
-        """Per-stock FII/DII markers: NSE activity booleans or screener shareholding."""
-        if r.get("_fii_is_buying") is not None or r.get("_dii_is_buying") is not None:
-            return True
-        series = (r.get("_shareholding") or {}).get("series") or {}
-        return "foreign_institutions" in series or "domestic_institutions" in series
-
     def _is_filter_active(self) -> bool:
         return (
             bool(self.filter_text)
@@ -708,7 +700,7 @@ class ScannerApp(
                 return False
         if score_of(r) < self._score_threshold():
             return False
-        if self._checkbox_on("inst_filter_cb") and not self._has_fii_dii(r):
+        if self._checkbox_on("inst_filter_cb") and not has_fii_dii(r):
             return False
         if (
             self._checkbox_on("price_filter_cb")
@@ -1361,14 +1353,34 @@ class ScannerApp(
         threshold = self.settings.get("min_score", 50)
         tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
         tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
-        results_snapshot = list(self.results)
+        # Export the full scan: the report re-applies the grid filter state
+        # client-side, so its checkboxes/chips stay interactive like the app.
+        # Counts/status track the full scan; news prefetch stays scoped to
+        # what the grid shows so export time doesn't grow with the universe.
+        all_src = self.all_results or self.results
+        results_snapshot = list(all_src)
+        news_targets = (
+            self._visible_results()
+            if getattr(self, "all_results", None)
+            else list(self.results)
+        )
         universe_name = self.universe_dd.value or "NIFTY 50"
         safe_title = "HMAxEMA Scanner"
+        filters = {
+            "search": self.filter_text or "",
+            "rating": self._rating_filter(),
+            "score": self._score_threshold(),
+            "fii_dii": self._checkbox_on("inst_filter_cb"),
+            "price100": self._checkbox_on("price_filter_cb"),
+            "fund0": self._checkbox_on("fund_filter_cb"),
+            "scanned": len(all_src),
+            "above": sum(1 for r in all_src if score_of(r) >= threshold),
+        }
 
         def _bg():
             try:
                 os.makedirs(REPORTS_DIR, exist_ok=True)
-                if any("_news_items" not in r for r in results_snapshot):
+                if any("_news_items" not in r for r in news_targets):
                     self._log("Fetching news sentiment for exported stocks...")
                 else:
                     self._log("Exporting report (news already prefetched)...")
@@ -1378,6 +1390,8 @@ class ScannerApp(
                     threshold=threshold,
                     fetch_news=True,
                     meta=[f"🌐 {universe_name}", f"📊 {tf_label}"],
+                    filters=filters,
+                    news_targets=news_targets,
                 )
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"scanner_report_{timestamp}.html"

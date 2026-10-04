@@ -64,16 +64,24 @@ _ROW_STYLE = (
     (11, False),
     (11, False),
     (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
+    (11, False),
 )
 
 
 def _row_specs(r, rank, c, threshold):
-    """Shared 18-cell (text, color) pairs for create and update."""
+    """Shared 22-cell (text, color) pairs for create and update."""
     total = _score_of(r)
     is_above = total >= threshold
     trend_dir = r.get("trend_dir") or ""
     rating = r.get("combined_rating", "POOR")
     entry = bool(r.get("entry_signal"))
+    above = bool(r.get("above_poc"))
+    both_ma = bool(r.get("close_above_both_ma"))
+    rsi_val = r.get("rsi_val")
     return [
         (str(rank), c["text_dim"]),
         (r.get("ticker", "?"), c["green"] if is_above else c["text"]),
@@ -82,6 +90,11 @@ def _row_specs(r, rank, c, threshold):
         ("YES" if entry else "--", c["green"] if entry else c["text_dim"]),
         (f"₹{r.get('close', 0) or 0:.0f}", c["text"]),
         (None, None),  # MA cell — caller patches via _ma_text/_ma_color
+        ("Above" if above else "Below", c["green"] if above else c["red"]),
+        (
+            "YES" if both_ma else "NO",
+            c["green"] if both_ma else c["text_dim"],
+        ),
         (f"{r.get('trend', 0) or 0:.0f}", c["green"]),
         (f"{r.get('momentum', 0) or 0:.0f}", c["cyan"]),
         (f"{r.get('rsi', 0) or 0:.0f}", c["blue"]),
@@ -89,6 +102,12 @@ def _row_specs(r, rank, c, threshold):
         (f"{r.get('volume', 0) or 0:.0f}", c["orange"]),
         (f"{r.get('rel_str', 0) or 0:.0f}", c["lime"]),
         (f"{r.get('fundamentals', 0) or 0:.0f}", c.get("fund", c["yellow"])),
+        (
+            "—" if rsi_val is None else f"{rsi_val:.1f}",
+            c["text_dim"]
+            if rsi_val is None
+            else (c["green"] if 40 <= rsi_val <= 70 else c["orange"]),
+        ),
         (
             f"{r.get('pc1m', 0) or 0:+.1f}%",
             c["green"] if (r.get("pc1m", 0) or 0) > 0 else c["red"],
@@ -98,6 +117,7 @@ def _row_specs(r, rank, c, threshold):
             c["green"] if trend_dir == "Bull" else c["red"],
         ),
         (f"{r.get('adx_val', 0) or 0:.0f}", c["text"]),
+        (r.get("volat_stat") or "—", c["text"]),
         (
             "Chop" if r.get("is_sideways") else "OK",
             c["orange"] if r.get("is_sideways") else c["green"],
@@ -119,7 +139,7 @@ class ResultsViewMixin:
     # row already exists in the pool we only patch the ft.Text.value
     # properties inside it, avoiding a full control-tree rebuild.
     _row_pool: dict[str, ft.Container]
-    # Maps ticker → list[ft.Text] (the 19 text cells in column order).
+    # Maps ticker → list[ft.Text] (the 22 text cells in column order).
     _row_cells: dict[str, list[ft.Text]]
 
     def _hidden_cols(self) -> frozenset:
@@ -900,19 +920,23 @@ class ResultsViewMixin:
             4: lambda r: 1 if r.get("entry_signal") else 0,
             5: lambda r: r.get("close", 0) or 0,
             6: lambda r: _ma_rank(r),
-            7: lambda r: r.get("trend", 0) or 0,
-            8: lambda r: r.get("momentum", 0) or 0,
-            9: lambda r: r.get("rsi", 0) or 0,
-            10: lambda r: r.get("macd", 0) or 0,
-            11: lambda r: r.get("volume", 0) or 0,
-            12: lambda r: r.get("rel_str", 0) or 0,
-            13: lambda r: r.get("fundamentals", 0) or 0,
-            14: lambda r: r.get("pc1m", 0) or 0,
-            15: lambda r: 1 if r.get("trend_dir") == "Bull" else 0,
-            16: lambda r: r.get("adx_val", 0) or 0,
-            17: lambda r: 1 if r.get("is_sideways") else 0,
+            7: lambda r: 1 if r.get("above_poc") else 0,
+            8: lambda r: 1 if r.get("close_above_both_ma") else 0,
+            9: lambda r: r.get("trend", 0) or 0,
+            10: lambda r: r.get("momentum", 0) or 0,
+            11: lambda r: r.get("rsi", 0) or 0,
+            12: lambda r: r.get("macd", 0) or 0,
+            13: lambda r: r.get("volume", 0) or 0,
+            14: lambda r: r.get("rel_str", 0) or 0,
+            15: lambda r: r.get("fundamentals", 0) or 0,
+            16: lambda r: r.get("rsi_val", 0) or 0,
+            17: lambda r: r.get("pc1m", 0) or 0,
+            18: lambda r: 1 if r.get("trend_dir") == "Bull" else 0,
+            19: lambda r: r.get("adx_val", 0) or 0,
+            20: lambda r: r.get("volat_stat") or "",
+            21: lambda r: 1 if r.get("is_sideways") else 0,
             # Sparkline column sorts by the move it draws (last vs first close).
-            18: lambda r: _spark_move(r),
+            22: lambda r: _spark_move(r),
         }
         return sort_keys.get(col_idx, lambda r: r.get("total", 0))
 

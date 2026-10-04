@@ -223,7 +223,8 @@ class TestGenerateHtmlReport:
     def test_contains_score(self):
         results = [_make_score_result(total=72.5)]
         html = generate_html_report(results, fetch_news=False)
-        assert "72.5" in html
+        # Grid parity: score renders `:.0f` (72.5 → 72, banker's like the app).
+        assert '<td class="score s-excellent">72</td>' in html
 
     def test_contains_threshold(self):
         results = [_make_score_result()]
@@ -274,17 +275,17 @@ class TestGenerateHtmlReport:
     def test_bull_trend_icon(self):
         results = [_make_score_result(trend_dir="Bull")]
         html = generate_html_report(results, fetch_news=False)
-        assert "▲" in html
+        assert "^ Bull" in html  # Dir cell text, grid parity
 
     def test_bear_trend_icon(self):
         results = [_make_score_result(trend_dir="Bear", trend_color="bear")]
         html = generate_html_report(results, fetch_news=False)
-        assert "▼" in html
+        assert "v Bear" in html
 
     def test_ma_cross_signal(self):
         results = [_make_score_result(ma_crossed_above=True, crossover_bars_ago=2)]
         html = generate_html_report(results, fetch_news=False)
-        assert "CROSS" in html
+        assert "^ X2" in html  # shared ma_chip text, not the old "^ CROSS" pill
 
     def test_sideways_label(self):
         results = [
@@ -346,6 +347,16 @@ class TestGenerateHtmlReport:
             generate_html_report(results, fetch_news=True)
         assert m.call_args[0][0] == ["MISS"]
 
+    def test_row_trend_bar_and_price_match_grid(self):
+        """Trend/price cells render grid-style bare values (no bars, ₹ price)."""
+        html = generate_html_report(
+            [_make_score_result(fundamentals=13.0)], fetch_news=False
+        )
+        assert '<td class="num sc-green">10</td>' in html
+        assert '<td class="num sc-fund c-t2">13</td>' in html
+        assert "bar-val" not in html and "bar-container" not in html
+        assert '<td class="num price">₹2500</td>' in html
+
 
 class TestReportPolish:
     def test_meta_chips_rendered(self):
@@ -370,11 +381,12 @@ class TestReportPolish:
 
     def test_direction_header_replaces_duplicate_trend(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
-        assert ">Direction<" in html
-        # Score column only — scope to the table head so the filter chip
+        assert ">Dir<" in html
+        # Score columns only — scope to the table head so the filter chip
         # label ("Trend") doesn't count as a column.
         thead = html.split("<thead>")[1].split("</thead>")[0]
-        assert thead.count(">Trend<") == 1
+        assert thead.count(">Trend<") == 0
+        assert ">T/15<" in thead  # grid score-component label
 
     def test_sticky_header_and_print_css(self):
         css = _css_block()
@@ -387,6 +399,17 @@ class TestReportPolish:
         assert "position: static" not in head
         assert "#fff" in print_block
         assert ":root {" in print_block  # light vars need their own scope
+
+    def test_modern_polish_surface(self):
+        """Frozen identity columns, tabular numbers, staged motion, no CDN."""
+        css = _css_block()
+        assert "td.ticker { position: sticky" in css  # rank+ticker stay on h-scroll
+        assert "td.rank, td.ticker { position: static; }" in css  # released on paper
+        assert "font-variant-numeric: tabular-nums" in css
+        assert "color-scheme: dark" in css
+        assert "@keyframes rise" in css and "@keyframes fadeIn" in css
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert "googleapis" not in html  # offline-first: no font CDN request
 
     def test_news_panel_links_to_yahoo(self):
         results = [
@@ -856,22 +879,16 @@ class TestResponsiveReport:
     """Report mirrors the GUI responsive tiers (ui_kit.width_tier)."""
 
     def test_tier_order_mirrors_gui_hide_order(self):
+        from scanner.shared.constants import RESULT_COLS
         from scanner.ui.ui_kit import COL_HIDE_ORDER
 
-        # Report label ↔ GUI label for the six hidden columns.
-        app_to_report = {
-            "Chop": "Sideways",
-            "Dir": "Direction",
-            "ADX": "ADX",
-            "F/20": "Fund",
-            "RS/10": "RS",
-            "Vol/10": "Volume",
-        }
+        # Report labels are RESULT_COLS verbatim — mapping is the identity.
+        assert [lbl for lbl, _ in _REPORT_COLS] == RESULT_COLS
         t1 = {lbl for lbl, tier in _REPORT_COLS if tier == 1}
         t2 = {lbl for lbl, tier in _REPORT_COLS if tier == 2}
-        assert t1 == {"Sideways", "Direction", "ADX"}
-        assert t2 == {"Volume", "RS", "Fund"}
-        assert t1 | t2 == {app_to_report[l] for l in COL_HIDE_ORDER}
+        assert t1 == {"Chop", "Dir", "ADX"}
+        assert t2 == {"Vol/10", "RS/10", "F/20"}
+        assert t1 | t2 == set(COL_HIDE_ORDER)
 
     def test_header_tier_classes_keep_sort_indexes(self):
         head = _table_head_html()
@@ -888,10 +905,10 @@ class TestResponsiveReport:
     def test_row_cells_carry_tier_classes(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
         assert html.count('<td class="num c-t1">') == 1  # ADX
-        assert html.count('<td class="c-t1">') == 2  # Direction + Sideways
-        assert html.count('<td class="num bar-cell c-t2">') == 3  # Volume/RS/Fund
+        assert html.count('<td class="c-t1 ') == 2  # Dir + Chop (extra class each)
+        assert len(re.findall(r'<td class="[^"]*c-t2', html)) == 3  # Vol/RS/Fund
         # Kept columns never get a drop class.
-        assert 'class="num bar-cell">' in html
+        assert '<td class="num sc-green">' in html
 
     def test_media_queries_use_gui_breakpoints(self):
         css = _css_block()
@@ -953,7 +970,8 @@ class TestResponsiveReport:
     def test_modern_grid_rows(self):
         css = _css_block()
         assert "tbody tr:not(.news-row) td { white-space: nowrap; }" in css
-        assert ".bothma-yes { display: inline-block;" in css  # YES chips
+        assert "tbody tr:not(.news-row).row-alt" in css  # odd-rank zebra band
+        assert "td.rank::before" in css  # rating accent rail
         # Compact rows keep news panels wrappable.
         assert "tbody tr:not(.news-row)" in css
 
@@ -966,8 +984,10 @@ class TestReportElegance:
             [_make_score_result()], fetch_news=False, meta=["NSE ALL", "Daily"]
         )
         assert 'class="hero"' in html
-        assert 'class="hero-brand"' in html
-        assert 'class="hero-stamp"' in html
+        assert 'class="hero-pill"' in html
+        assert 'class="market-box"' in html
+        assert "Find Your Next Swing Trade" in html  # app hero title
+        assert "ENTRY signals" in html  # app status line
         assert "<span>NSE ALL</span>" in html
         assert "<span>Daily</span>" in html
         assert "Generated locally" in html
@@ -982,6 +1002,102 @@ class TestReportElegance:
         assert "function setFilter" in js
         assert 'classList.add("active")' in js
 
+    def test_results_head_shows_app_filter_context(self):
+        html = generate_html_report(
+            [_make_score_result(_fii_is_buying=True)],
+            fetch_news=False,
+            threshold=50.0,
+            filters={
+                "search": "",
+                "rating": "GOOD",
+                "score": 50.0,
+                "fii_dii": True,
+                "price100": False,
+                "fund0": False,
+                "scanned": 153,
+                "above": 84,
+            },
+        )
+        assert '<span class="results-title">Scan Results</span>' in html
+        # Native checkboxes (interactive like the app): only FII/DII checked.
+        assert html.count('type="checkbox"') == 3
+        assert (
+            '<input type="checkbox" id="f-fii" checked onchange="filterTable()">'
+            in html
+        )
+        assert ">Show stocks with FII/DII data</label>" in html
+        assert ">Hide stocks below ₹100</label>" in html
+        assert ">Hide zero fundamental score</label>" in html
+        # Chips are clearable buttons wired to clearFilter().
+        assert 'id="chip-rating" data-rating="GOOD"' in html
+        assert ">rating Good  ✕</button>" in html
+        assert ">score ≥ 50</button>" in html
+        assert "clearFilter('rating')" in html and "clearFilter('score')" in html
+        # Status line: app spacing + dataset the live recount reads back.
+        assert (
+            'id="countLabel" data-scanned="153" data-above="84" data-threshold="50"'
+        ) in html
+        assert (
+            ">153 scanned  |  84 above 50+  |  "
+            "filter: rating Good, score ≥ 50, FII/DII data (1)</span>"
+        ) in html
+
+    def test_results_head_without_filters_has_no_suffix(self):
+        html = generate_html_report(
+            [_make_score_result()], fetch_news=False, threshold=50.0
+        )
+        assert 'id="f-fii" checked' not in html  # boxes start unchecked
+        assert "| filter: " not in html
+        assert ">1 scanned  |  1 above 50+</span>" in html
+
+    def test_filter_controls_drive_client_side_filtering(self):
+        """JS re-applies the app filter state: row data attrs + recount."""
+        js = _js_block()
+        assert "function clearFilter(" in js
+        assert "function syncResultsHead(" in js
+        assert 'getElementById("f-fii")' in js
+        # Score-clear targets a stable id, not a string-matched onclick.
+        assert 'getElementById("chip-score-all")' in js
+        for attr in (
+            "data-score",
+            "data-rating",
+            "data-price",
+            "data-fund",
+            "data-fii",
+        ):
+            assert attr in js
+        assert "syncResultsHead(shown)" in js
+        assert "filterTable();  // apply export-time filters" in js
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert 'id="chip-score-all"' in html
+        # attrs ride the row's opening tag, after data-ticker
+        row = html.split('data-ticker="RELIANCE"', 1)[1].split("</tr>", 1)[0]
+        assert 'data-score="65"' in row  # raw score, not the rounded display
+        assert 'data-rating="GOOD"' in row
+        assert 'data-price="2500"' in row
+        assert 'data-fund="10"' in row
+        assert 'data-fii="0"' in row
+
+    def test_search_filter_displays_uppercase_like_app(self):
+        html = generate_html_report(
+            [_make_score_result()],
+            fetch_news=False,
+            threshold=50.0,
+            filters={"search": "tata"},
+        )
+        assert ">1 scanned  |  1 above 50+  |  filter: 'TATA' (0)</span>" in html
+        assert "'TATA'  ✕</button>" in html
+
+    def test_ticker_cell_has_copy_button(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert (
+            'class="copy-t" onclick="copyTicker(event,this)" title="Copy ticker">'
+            in html
+        )
+        js = _js_block()
+        assert "function copyTicker(" in js
+        assert "dataset.ticker" in js
+
     def test_default_score_chip_matches_threshold(self):
         for threshold, value in ((70, "70"), (50, "50"), (45, "0")):
             html = generate_html_report(
@@ -989,10 +1105,10 @@ class TestReportElegance:
             )
             assert f'<input type="hidden" id="minScore" value="{value}">' in html
 
-    def test_score_and_entry_pills(self):
+    def test_score_and_entry_cells(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
-        assert 'class="score-pill p-good"' in html  # total 65 → GOOD
-        assert "pill-yes" in html  # entry_signal True
+        assert '<td class="score s-good">65</td>' in html  # total 65 → GOOD
+        assert '<td class="entry yes">YES</td>' in html  # entry_signal True
         assert "score-excellent" not in html  # glow classes gone
 
     def test_overview_band_and_histogram_caption(self):

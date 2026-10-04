@@ -223,7 +223,7 @@ class TestInstitutionalCardRender:
 
         Both shareholding sources AND moneycontrol flow missing: the tile
         falls back to the scan-time NSE net stamped on the row (the same
-        markers ``_has_fii_dii`` keys off), instead of showing n/a.
+        markers ``has_fii_dii`` keys off), instead of showing n/a.
         """
         app = _make_app()
         row = _row()

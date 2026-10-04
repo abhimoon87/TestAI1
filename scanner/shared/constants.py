@@ -7,6 +7,9 @@ comment explaining its origin or purpose.
 """
 
 # ── Results grid columns ─────────────────────────────────────────────────────
+# POC / Both MA / RSI Val / Volatility mirror the always-visible columns of
+# the HTML report (backend/report.py _REPORT_COLS) so the grid and the export
+# carry the same entry-decision information.
 # The trailing "1M" column draws a mini sparkline of the last ~20 closes
 # (see px_tail on each result row); "1M%" stays the numeric one-month change.
 RESULT_COLS = [
@@ -17,6 +20,8 @@ RESULT_COLS = [
     "ENTRY",
     "Price",
     "MA",
+    "POC",
+    "Both MA",
     "T/15",
     "M/15",
     "R/8",
@@ -24,9 +29,11 @@ RESULT_COLS = [
     "Vol/10",
     "RS/10",
     "F/20",
+    "RSI Val",
     "1M%",
     "Dir",
     "ADX",
+    "Volatility",
     "Chop",
     "1M",
 ]
@@ -71,3 +78,11 @@ LOG_MAX_LINES = 200
 def score_of(r: dict) -> float:
     """Total score of a result row, tolerant of missing/None values."""
     return r.get("total", 0) or 0
+
+
+def has_fii_dii(r: dict) -> bool:
+    """Per-stock FII/DII markers: NSE activity booleans or screener shareholding."""
+    if r.get("_fii_is_buying") is not None or r.get("_dii_is_buying") is not None:
+        return True
+    series = (r.get("_shareholding") or {}).get("series") or {}
+    return "foreign_institutions" in series or "domestic_institutions" in series
