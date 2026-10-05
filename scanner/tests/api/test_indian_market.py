@@ -12,6 +12,7 @@ from scanner.api.indian_market import (
     _INDIA_CACHE,
     _delivery_from_df,
     _pct_change,
+    fetch_52week_data,
     fetch_fii_dii_activity,
     fetch_fii_dii_history,
     flow_window_pcts,
@@ -265,3 +266,28 @@ class TestDeliveryFromDf:
         assert _delivery_from_df(None, "X") is None
         bad = _nse_df([{"Date": "25-Sep-2026"}])  # all-zero quantities
         assert _delivery_from_df(bad, "X") is None
+
+
+def test_week52_retries_bo_after_ns_miss():
+    calls = []
+    mock_yf = MagicMock()
+
+    def _ticker(sym):
+        calls.append(sym)
+        t = MagicMock()
+        t.info = (
+            {}
+            if sym.endswith(".NS")
+            else {
+                "currentPrice": 500.0,
+                "fiftyTwoWeekHigh": 550.0,
+                "fiftyTwoWeekLow": 400.0,
+            }
+        )
+        return t
+
+    mock_yf.Ticker.side_effect = _ticker
+    with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        week = fetch_52week_data("ZQW52")
+    assert calls == ["ZQW52.NS", "ZQW52.BO"]
+    assert week is not None and week.week52_high == 550.0

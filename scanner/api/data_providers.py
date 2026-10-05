@@ -33,6 +33,7 @@ import pandas as pd
 
 from ..shared import db
 from ..shared.cache import TTLCache
+from .yahoo_symbol import yf_quote_variants
 
 logger = logging.getLogger(__name__)
 
@@ -832,8 +833,11 @@ def _fetch_fundamentals_yfinance(ticker: str) -> dict | None:
     try:
         import yfinance as yf
 
-        nse_ticker = f"{ticker}.NS"
-        info = yf.Ticker(nse_ticker).info
+        info = {}
+        for yf_ticker in yf_quote_variants(ticker):
+            info = yf.Ticker(yf_ticker).info or {}
+            if info:
+                break
 
         if not info:
             return None

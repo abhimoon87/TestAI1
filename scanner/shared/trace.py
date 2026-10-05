@@ -92,6 +92,11 @@ def setup_trace(
     root = logging.getLogger()
     root.setLevel(min(level, TRACE_LEVEL))
 
+    # yfinance logs every missing symbol as ERROR -- a full-market scan is
+    # thousands of expected misses. Its child loggers inherit this level;
+    # scanner's own deduped warnings still log.
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
     # ── Rotating file handler ─────────────────────────────────────────────
     fh = logging.handlers.RotatingFileHandler(
         str(_trace_path),

@@ -234,6 +234,35 @@ class TestFetchFundamentalsYfinance:
         assert result["rev_growth"] is None
         assert result["roe"] is None
 
+    def test_retries_bo_after_ns_miss(self):
+        calls = []
+        mock_yf = MagicMock()
+
+        def _ticker(sym):
+            calls.append(sym)
+            t = MagicMock()
+            t.info = {} if sym.endswith(".NS") else {"trailingPE": 18.0}
+            return t
+
+        mock_yf.Ticker.side_effect = _ticker
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            result = _fetch_fundamentals_yfinance("ZQDP")
+
+        assert calls == ["ZQDP.NS", "ZQDP.BO"]
+        assert result["pe_ratio"] == 18.0
+
+    def test_suffixed_ticker_not_double_suffixed(self):
+        mock_yf = MagicMock()
+        mock_ticker = MagicMock()
+        mock_ticker.info = {"trailingPE": 20.5}
+        mock_yf.Ticker.return_value = mock_ticker
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            _fetch_fundamentals_yfinance("RELIANCE.NS")
+
+        mock_yf.Ticker.assert_called_once_with("RELIANCE.NS")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DataProvider class

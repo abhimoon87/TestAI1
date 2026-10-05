@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import requests
 
 from ..shared.cache import TTLCache
+from .yahoo_symbol import yf_quote_variants
 
 logger = logging.getLogger(__name__)
 
@@ -535,9 +536,11 @@ def fetch_yfinance_news_sentiment(ticker: str) -> YFinanceNewsSentiment | None:
     try:
         import yfinance as yf
 
-        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-        stock = yf.Ticker(nse_ticker)
-        news = stock.news  # Returns list of dicts with title, publisher, link, etc.
+        news = []
+        for yf_ticker in yf_quote_variants(ticker):
+            news = yf.Ticker(yf_ticker).news or []
+            if news:
+                break
 
         if not news:
             return YFinanceNewsSentiment(

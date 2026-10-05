@@ -887,6 +887,9 @@ class ResultsViewMixin:
             logger.info("Row hover update failed", exc_info=True)
 
     def _on_sort(self, col_idx):
+        # Entry timestamp: the gap to the next _render_current_page log is
+        # _save_ui_prefs() time; a stall before this line is event delivery.
+        logger.info("_on_sort: click col=%s (prev=%s)", col_idx, self.sort_col)
         if self.sort_col == col_idx:
             self.sort_reverse = not self.sort_reverse
         else:
@@ -1050,19 +1053,28 @@ class ResultsViewMixin:
             logger.info("UI prefs restore failed", exc_info=True)
 
     def _save_ui_prefs(self):
-        """Persist current table view to settings.json (sort, size, filter)."""
-        try:
-            s = self.settings
-            s["ui_sort_col"] = self.sort_col
-            s["ui_sort_reverse"] = self.sort_reverse
-            s["ui_page_size"] = self.page_size
-            s["ui_rating_filter"] = self._rating_filter()
-            # Late import: scanner.app imports this mixin at module load.
-            from ..backend.settings_store import save_settings
+        """Persist current table view to settings (sort, size, filter).
 
-            save_settings(s)
-        except Exception:
-            logger.info("UI prefs save failed", exc_info=True)
+        Debounced on the page loop: column-header clicks fire a sort per
+        click, and each save is a db write — coalesce bursts into one.
+        Falls back to an immediate write when no loop is running (tests).
+        """
+
+        def _save():
+            try:
+                s = self.settings
+                s["ui_sort_col"] = self.sort_col
+                s["ui_sort_reverse"] = self.sort_reverse
+                s["ui_page_size"] = self.page_size
+                s["ui_rating_filter"] = self._rating_filter()
+                # Late import: scanner.app imports this mixin at module load.
+                from ..backend.settings_store import save_settings
+
+                save_settings(s)
+            except Exception:
+                logger.info("UI prefs save failed", exc_info=True)
+
+        self._debounce("ui_prefs", 0.3, _save)
 
     def _toggle_stock_news(self, ticker):
         ctrls = self.table_column.controls
@@ -1474,7 +1486,14 @@ class ResultsViewMixin:
         """Run ``load`` off-thread; deliver its result to ``done`` on the UI thread."""
 
         def _worker():
-            self._safe_update(lambda: done(load()))
+            # load() does network/CLI I/O — it must NOT run on the UI
+            # thread (done(load()) did, stalling every click for seconds).
+            try:
+                result = load()
+            except Exception:
+                logger.info("Panel load failed", exc_info=True)
+                result = None
+            self._safe_update(lambda: done(result))
 
         threading.Thread(target=_worker, daemon=True).start()
 

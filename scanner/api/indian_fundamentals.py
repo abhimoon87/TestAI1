@@ -17,6 +17,7 @@ import requests
 
 from ..shared import db
 from ..shared.cache import TTLCache
+from .yahoo_symbol import yf_quote_variants
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,12 @@ def fetch_trendlyne_fundamentals(ticker: str) -> TrendlyneFundamentals | None:
     try:
         import yfinance as yf
 
-        # Add .NS suffix for NSE stocks if not present
-        yf_ticker = ticker if ticker.endswith(".NS") else f"{ticker}.NS"
-        stock = yf.Ticker(yf_ticker)
-        info = stock.info
+        # .NS first, then one .BO retry -- BSE-only names never resolve on .NS
+        info = {}
+        for yf_ticker in yf_quote_variants(ticker):
+            info = yf.Ticker(yf_ticker).info or {}
+            if info and info.get("regularMarketPrice") is not None:
+                break
 
         if not info or info.get("regularMarketPrice") is None:
             logger.debug("Yahoo Finance: no data for %s", ticker)
@@ -418,9 +421,11 @@ def fetch_yahoo_valuation(ticker: str) -> YahooValuation | None:
     try:
         import yfinance as yf
 
-        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-        stock = yf.Ticker(nse_ticker)
-        info = stock.info
+        info = {}
+        for yf_ticker in yf_quote_variants(ticker):
+            info = yf.Ticker(yf_ticker).info or {}
+            if info:
+                break
 
         if not info:
             return None

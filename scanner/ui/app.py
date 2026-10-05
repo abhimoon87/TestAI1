@@ -12,7 +12,9 @@ Usage:
 import asyncio
 import logging
 import os
+import queue
 import threading
+import time
 import webbrowser
 from collections.abc import Callable
 from datetime import datetime
@@ -67,6 +69,20 @@ LOG_FILE = os.path.join(APPLOG_DIR, "scan.log")
 _UI_LOCK_FACTORY = threading.RLock
 
 _log_lock = threading.Lock()
+_log_q: queue.Queue = queue.Queue()
+_log_writer_running = False
+
+
+def _log_writer():
+    """Single background writer for scan.log — file I/O never blocks a caller."""
+    while True:
+        line = _log_q.get()
+        try:
+            os.makedirs(APPLOG_DIR, exist_ok=True)
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            logger.info("Failed to write to log file", exc_info=True)
 
 
 class ScannerApp(
@@ -142,10 +158,6 @@ class ScannerApp(
         self.page.on_resize = self._on_page_resize
         self._load_settings_to_ui()
         self._load_ui_prefs()
-        self._restore_saved_results()
-        self._refresh_neg_cache_ui()
-        self._refresh_enrich_cache_ui()
-        self._refresh_price_cache_ui()
         self._log("Scanner ready — pick a universe and hit RUN SCAN")
 
         def _warm_symbols():
@@ -158,8 +170,23 @@ class ScannerApp(
             except Exception:
                 logger.info("Symbol warm-up failed", exc_info=True)
 
+        def _startup_load():
+            """Saved results + cache status off the main thread — first paint
+            must not wait on a disk/db read or a 100-row rebuild."""
+            try:
+                from ..backend.settings_store import load_results
+
+                rows = load_results()
+            except Exception:
+                logger.info("Failed to load saved results", exc_info=True)
+                rows = None
+            if rows:
+                self._safe_update(lambda: self._restore_saved_results(rows))
+            self._refresh_cache_ui_bg()
+
         threading.Thread(target=_warm_symbols, daemon=True).start()
         threading.Thread(target=self._warm_market, daemon=True).start()
+        threading.Thread(target=_startup_load, daemon=True).start()
 
         # News prefetcher — runs in background after each scan completes
         from ..backend.news_prefetch import NewsPrefetcher
@@ -183,12 +210,17 @@ class ScannerApp(
         except Exception:
             logger.info("Failed to apply cache TTL settings", exc_info=True)
 
-    def _restore_saved_results(self):
-        """Repopulate the grid from last_results.json after a relaunch."""
-        try:
-            from ..backend.settings_store import load_results
+    def _restore_saved_results(self, rows: list | None = None):
+        """Repopulate the grid from last_results.json after a relaunch.
 
-            rows = load_results()
+        ``rows`` may be pre-loaded by a caller that did the disk read on a
+        worker thread (the startup path).
+        """
+        try:
+            if rows is None:
+                from ..backend.settings_store import load_results
+
+                rows = load_results()
             if not rows:
                 return
             self.results = rows
@@ -355,6 +387,7 @@ class ScannerApp(
         pool clear + full rebuild under a live stream would repaint all
         rows on the UI thread mid-scan. The queue drains at scan teardown.
         """
+        t0 = time.monotonic()
         try:
             tier = width_tier(getattr(self.page, "width", None))
             if tier == getattr(self, "width_tier", TIER_WIDE):
@@ -370,6 +403,9 @@ class ScannerApp(
             self._apply_width_tier(tier)
         except Exception:
             logger.info("Resize handling failed", exc_info=True)
+        ms = (time.monotonic() - t0) * 1000.0
+        if ms > 200.0:
+            logger.info("SLOW _on_page_resize: %.0fms tier=%s", ms, self.width_tier)
 
     def _apply_width_tier(self, tier, render=True):
         """Pane + column reflow for a new width tier."""
@@ -650,7 +686,10 @@ class ScannerApp(
             self.search_entry.value.strip().upper() if self.search_entry.value else ""
         )
         if self.all_results:
-            self._display_results(self.all_results)
+            # Debounced: a keystroke burst must refilter+rebuild once, not per key.
+            self._debounce(
+                "search", 0.2, lambda: self._display_results(self.all_results)
+            )
 
     def _rating_filter(self) -> str:
         return str(self.rating_filter_dd.value or "ALL").upper()
@@ -824,10 +863,15 @@ class ScannerApp(
     def _on_threshold_change(self, _e):
         val = self.threshold_slider.value
         self.threshold_label.value = f"{int(val)}+"
-        # min-score is a live grid filter too — refilter visible rows
-        if self.all_results:
-            self._display_results(self.all_results)
+        # Label repaint now (cheap); the full refilter+rebuild is debounced so
+        # a slider drag doesn't sort/render the grid on every tick. The old
+        # code also called page.update() after _display_results — one update
+        # per event is plenty.
         self.page.update()
+        if self.all_results:
+            self._debounce(
+                "threshold", 0.15, lambda: self._display_results(self.all_results)
+            )
 
     def _load_settings_to_ui(self):
         try:
@@ -891,6 +935,7 @@ class ScannerApp(
         """
 
         def _apply():
+            t0 = time.monotonic()
             with self._ui_lock:
                 try:
                     fn()
@@ -900,14 +945,26 @@ class ScannerApp(
                         getattr(fn, "__name__", fn),
                         exc_info=True,
                     )
+            fn_ms = (time.monotonic() - t0) * 1000.0
             # page.update() MUST run outside _ui_lock — a slow send
             # (large control tree) would hold the lock and block all
             # subsequent _safe_update calls (including _scan_complete),
             # freezing the UI at "Finalizing scan…".
+            t1 = time.monotonic()
             try:
                 self.page.update()
             except Exception:  # pragma: no cover
                 logger.info("page.update() failed in _safe_update", exc_info=True)
+            upd_ms = (time.monotonic() - t1) * 1000.0
+            if fn_ms > 200.0 or upd_ms > 200.0:
+                # UI stall evidence: a slow callback or a slow full-page
+                # send delays every queued click (sort, hover, resize).
+                logger.info(
+                    "SLOW _safe_update: fn=%s fn=%.0fms update=%.0fms",
+                    getattr(fn, "__name__", fn),
+                    fn_ms,
+                    upd_ms,
+                )
 
         self._run_on_ui_thread(_apply)
 
@@ -968,91 +1025,167 @@ class ScannerApp(
             return None
         return loop
 
+    def _debounce(self, key: str, delay: float, fn: Callable[[], None]) -> None:
+        """Run ``fn`` once on the page loop after ``delay`` seconds.
+
+        Rapid events (search keystrokes, slider ticks) coalesce: a new call
+        under the same ``key`` cancels the pending one. Without a live page
+        loop (unit tests) ``fn`` runs inline so callers stay synchronous.
+        """
+        timers = getattr(self, "_debounce_timers", None)
+        if timers is None:
+            timers = {}
+            self._debounce_timers = timers
+        loop = self._page_event_loop()
+        if loop is None:
+            old = timers.pop(key, None)
+            if old is not None:
+                old.cancel()
+            fn()
+            return
+
+        def _arm():
+            old = timers.pop(key, None)
+            if old is not None:
+                old.cancel()
+            timers[key] = loop.call_later(delay, lambda: (timers.pop(key, None), fn()))
+
+        try:
+            loop.call_soon_threadsafe(_arm)
+        except Exception:  # pragma: no cover — loop closed mid-call
+            fn()
+
     # ── Results rendering ───────────────────────────────────────────────
 
     # ── Cache management ───────────────────────────────────────────────
 
-    def _refresh_cache_ui(self, kind: str):
-        """Shared status/clear wiring for the three cache cards."""
-        loaders = {
-            "neg": (
-                "cache_status_lbl",
-                "cache_clear_btn",
-                "Dead-symbol cache",
-                lambda: (
-                    len(cache_manager.negative_load()),
-                    cache_manager.negative_ttl_hours(),
-                ),
-            ),
-            "enrich": (
-                "enrich_cache_status_lbl",
-                "enrich_cache_clear_btn",
-                "Enrichment cache",
-                lambda: (
-                    cache_manager.enrichment_size(),
-                    cache_manager.ENRICHMENT_CACHE_TTL_HOURS,
-                ),
-            ),
-        }
-        if kind in loaders:
-            lbl_name, btn_name, title, load = loaders[kind]
-            lbl = getattr(self, lbl_name, None)
-            if lbl is None:
-                return
-            try:
-                from ..api import cache_manager
+    def _cache_ui_controls(self, kind: str):
+        """(label, clear-button) for a cache card; None before the sidebar exists."""
+        if kind == "neg":
+            lbl = getattr(self, "cache_status_lbl", None)
+            btn = getattr(self, "cache_clear_btn", None)
+        elif kind == "enrich":
+            lbl = getattr(self, "enrich_cache_status_lbl", None)
+            btn = getattr(self, "enrich_cache_clear_btn", None)
+        else:
+            lbl = getattr(self, "price_cache_status_lbl", None)
+            btn = getattr(self, "price_cache_prune_btn", None)
+        if lbl is None:
+            return None
+        return lbl, btn
 
-                n, ttl_h = load()
+    def _cache_ui_snapshot(self, kind: str):
+        """Compute (label text, button visible) for a cache card.
+
+        Touches only caches — no controls — so it is safe off the UI thread.
+        """
+        if self._cache_ui_controls(kind) is None:
+            return None
+        from ..api import cache_manager
+
+        if kind in ("neg", "enrich"):
+            title = "Dead-symbol cache" if kind == "neg" else "Enrichment cache"
+            try:
+                if kind == "neg":
+                    n = len(cache_manager.negative_load())
+                    ttl_h = cache_manager.negative_ttl_hours()
+                else:
+                    n = cache_manager.enrichment_size()
+                    ttl_h = cache_manager.ENRICHMENT_CACHE_TTL_HOURS
             except Exception:
                 logger.info("Failed to load %s info", title, exc_info=True)
                 n, ttl_h = 0, 24
-            lbl.value = (
-                f"{title}: {n} (auto-resets ~{ttl_h}h)" if n else f"{title}: empty"
-            )
-            getattr(self, btn_name).visible = bool(n)
-            return
+            text = f"{title}: {n} (auto-resets ~{ttl_h}h)" if n else f"{title}: empty"
+            return text, bool(n)
 
         # price cache has a different shape (stale count)
-        lbl = getattr(self, "price_cache_status_lbl", None)
-        if lbl is None:
-            return
         try:
-            from ..api import cache_manager
-
             h = cache_manager.cache_health()
             n, stale = h["price_entries"], h["stale_entries"]
         except Exception:
             logger.info("Failed to load price cache health", exc_info=True)
             n, stale = 0, 0
         if not n:
-            lbl.value = "Price cache: empty"
+            text = "Price cache: empty"
         elif stale:
-            lbl.value = f"Price cache: {n} ({stale} stale — auto-prunes on next scan)"
+            text = f"Price cache: {n} ({stale} stale — auto-prunes on next scan)"
         else:
-            lbl.value = f"Price cache: {n} (clean)"
-        self.price_cache_prune_btn.visible = bool(stale)
+            text = f"Price cache: {n} (clean)"
+        return text, bool(stale)
+
+    def _apply_cache_ui(self, kind: str, text: str, visible: bool) -> None:
+        """Push a computed snapshot onto the cache card controls (UI thread)."""
+        controls = self._cache_ui_controls(kind)
+        if controls is None:
+            return
+        lbl, btn = controls
+        lbl.value = text
+        if btn is not None:
+            btn.visible = visible
+
+    def _refresh_cache_ui(self, kind: str):
+        """Shared status/clear wiring for the three cache cards (UI thread)."""
+        snap = self._cache_ui_snapshot(kind)
+        if snap is not None:
+            self._apply_cache_ui(kind, *snap)
+
+    def _refresh_cache_ui_bg(self, *kinds: str) -> None:
+        """Compute cache-card status off-thread, then apply on the UI thread."""
+        kinds = kinds or ("neg", "enrich", "price")
+
+        def _bg():
+            snaps = {k: self._cache_ui_snapshot(k) for k in kinds}
+
+            def _apply():
+                for k, snap in snaps.items():
+                    if snap is not None:
+                        self._apply_cache_ui(k, *snap)
+
+            self._safe_update(_apply)
+
+        t = threading.Thread(target=_bg, daemon=True)
+        # Joinable handle: the snapshot reads sqlite/parquet, and a test
+        # teardown that closes db conns under a still-running reader crashes
+        # natively — tests join this before the db fixture tears down.
+        self._cache_refresh_thread = t
+        t.start()
 
     def _refresh_neg_cache_ui(self):
         if not hasattr(self, "cache_status_lbl"):
             return
         self._refresh_cache_ui("neg")
 
-    def _clear_negative_cache(self, e=None):
-        try:
-            from ..api import cache_manager
-
-            cache_manager.negative_update(
-                clears=list(cache_manager.negative_load().keys())
-            )
-            self._log(
-                "Cleared dead-symbol cache — fallback will re-attempt all symbols"
-            )
-            self._toast("Dead-symbol cache cleared", "success")
-        except Exception as ex:
-            self._log(f"Could not clear dead-symbol cache: {ex}")
-            self._toast(f"Could not clear dead-symbol cache: {ex}", "error")
-        self._refresh_neg_cache_ui()
+    def _finish_cache_action(self, refresh, log_msg, toast_msg, is_error=False):
+        """Log + toast + re-read a cache card — shared by the card actions."""
+        self._log(log_msg)
+        if toast_msg is not None:
+            self._toast(toast_msg, "error" if is_error else "success")
+        refresh()
         self.page.update()
+
+    def _clear_negative_cache(self, e=None):
+        def _bg():
+            try:
+                from ..api import cache_manager
+
+                cache_manager.negative_update(
+                    clears=list(cache_manager.negative_load().keys())
+                )
+                msg = "Cleared dead-symbol cache — fallback will re-attempt all symbols"
+                self._safe_update(
+                    lambda: self._finish_cache_action(
+                        self._refresh_neg_cache_ui, msg, "Dead-symbol cache cleared"
+                    )
+                )
+            except Exception as ex:
+                err = f"Could not clear dead-symbol cache: {ex}"
+                self._safe_update(
+                    lambda: self._finish_cache_action(
+                        self._refresh_neg_cache_ui, err, err, True
+                    )
+                )
+
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _refresh_enrich_cache_ui(self):
         if not hasattr(self, "enrich_cache_status_lbl"):
@@ -1060,17 +1193,26 @@ class ScannerApp(
         self._refresh_cache_ui("enrich")
 
     def _clear_enrichment_cache(self, e=None):
-        try:
-            from ..api import cache_manager
+        def _bg():
+            try:
+                from ..api import cache_manager
 
-            cache_manager.enrichment_clear()
-            self._log("Cleared enrichment cache — next scan will re-fetch phase-2 data")
-            self._toast("Enrichment cache cleared", "success")
-        except Exception as ex:
-            self._log(f"Could not clear enrichment cache: {ex}")
-            self._toast(f"Could not clear enrichment cache: {ex}", "error")
-        self._refresh_enrich_cache_ui()
-        self.page.update()
+                cache_manager.enrichment_clear()
+                msg = "Cleared enrichment cache — next scan will re-fetch phase-2 data"
+                self._safe_update(
+                    lambda: self._finish_cache_action(
+                        self._refresh_enrich_cache_ui, msg, "Enrichment cache cleared"
+                    )
+                )
+            except Exception as ex:
+                err = f"Could not clear enrichment cache: {ex}"
+                self._safe_update(
+                    lambda: self._finish_cache_action(
+                        self._refresh_enrich_cache_ui, err, err, True
+                    )
+                )
+
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _refresh_price_cache_ui(self):
         if not hasattr(self, "price_cache_status_lbl"):
@@ -1078,22 +1220,31 @@ class ScannerApp(
         self._refresh_cache_ui("price")
 
     def _prune_price_cache(self, e=None):
-        try:
-            from ..api import cache_manager
+        def _bg():
+            try:
+                from ..api import cache_manager
 
-            removed = cache_manager.prune_stale_cache(force=True)
-            self._log(
-                f"Pruned {removed} price-cache entrie(s) (expired + over cap)"
-                if removed
-                else "Price cache clean — nothing to prune"
-            )
-            if removed:
-                self._toast(f"Pruned {removed} price-cache entries", "success")
-        except Exception as ex:
-            self._log(f"Could not prune price cache: {ex}")
-            self._toast(f"Could not prune price cache: {ex}", "error")
-        self._refresh_price_cache_ui()
-        self.page.update()
+                removed = cache_manager.prune_stale_cache(force=True)
+                if removed:
+                    msg = f"Pruned {removed} price-cache entrie(s) (expired + over cap)"
+                    toast = f"Pruned {removed} price-cache entries"
+                else:
+                    msg = "Price cache clean — nothing to prune"
+                    toast = None
+                self._safe_update(
+                    lambda: self._finish_cache_action(
+                        self._refresh_price_cache_ui, msg, toast
+                    )
+                )
+            except Exception as ex:
+                err = f"Could not prune price cache: {ex}"
+                self._safe_update(
+                    lambda: self._finish_cache_action(
+                        self._refresh_price_cache_ui, err, err, True
+                    )
+                )
+
+        threading.Thread(target=_bg, daemon=True).start()
 
     def _audit_report(self, universe: str):
         """Sync core of the stale-member audit button (threaded in the GUI)."""
@@ -1516,6 +1667,22 @@ class ScannerApp(
 
     # ── Utilities ───────────────────────────────────────────────────────
 
+    def _persist_results_bg(self, rows: list) -> None:
+        """save_results is a heavy db+file write — never on the UI thread."""
+
+        def _bg():
+            try:
+                from ..backend.settings_store import save_results
+
+                save_results(rows)
+            except Exception:
+                logger.info("Failed to persist results", exc_info=True)
+
+        t = threading.Thread(target=_bg, daemon=True)
+        # Joinable handle so tests (and post-mortems) can wait for the write.
+        self._persist_thread = t
+        t.start()
+
     def _clear_results(self, e=None):
         with self._results_lock:
             self.results = []
@@ -1555,12 +1722,7 @@ class ScannerApp(
         self.csv_btn.disabled = True
         self.clear_btn.disabled = True
         self._log("Results cleared")
-        try:
-            from ..backend.settings_store import save_results
-
-            save_results([])
-        except Exception:
-            logger.info("Failed to clear persisted results", exc_info=True)
+        self._persist_results_bg([])
         self.page.update()
 
     def _clear_log(self, e=None):
@@ -1610,13 +1772,15 @@ class ScannerApp(
     def _log(self, msg):
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {msg}\n"
-        try:
-            os.makedirs(APPLOG_DIR, exist_ok=True)
-            with _log_lock:
-                with open(LOG_FILE, "a", encoding="utf-8") as f:
-                    f.write(line)
-        except Exception:
-            logger.info("Failed to write to log file", exc_info=True)
+        # File append goes to a single writer thread — when _log is called on
+        # the UI thread (engine messages route through _safe_update) a sync
+        # write would stall the loop on every progress tick.
+        global _log_writer_running
+        with _log_lock:
+            if not _log_writer_running:
+                _log_writer_running = True
+                threading.Thread(target=_log_writer, daemon=True).start()
+            _log_q.put(line)
 
         def _append_to_panel():
             try:

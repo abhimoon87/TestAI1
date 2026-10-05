@@ -19,6 +19,16 @@ def _populated_text(n):
     )
 
 
+def _wait_for(cond, timeout=5.0):
+    """Poll until cond() holds — the clear/prune handlers run in workers."""
+    import time
+
+    deadline = time.time() + timeout
+    while not cond() and time.time() < deadline:
+        time.sleep(0.01)
+    return cond()
+
+
 def test_refresh_populated_shows_count_and_reveals_clear(monkeypatch):
     monkeypatch.setattr(cache_manager, "enrichment_size", lambda: 3)
     app = _make_app()
@@ -86,6 +96,7 @@ def test_clear_wipes_real_cache_and_refreshes(tmp_path, monkeypatch):
     assert app.enrich_cache_clear_btn.visible is True
 
     app._clear_enrichment_cache()
+    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
 
     assert data_fetcher.enrichment_cache_size() == 0
     assert app.logged == [
@@ -106,6 +117,7 @@ def test_clear_error_is_logged_and_ui_still_refreshes(monkeypatch):
     app = _make_app()
 
     app._clear_enrichment_cache()  # must not raise
+    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
 
     assert len(app.logged) == 1
     assert app.logged[0].startswith("Could not clear enrichment cache: disk full")
@@ -192,6 +204,7 @@ def test_manual_prune_forces_sweep_logs_and_refreshes(monkeypatch):
     app = _make_app()
 
     app._prune_price_cache()
+    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
 
     assert calls.get("force") is True
     assert app.logged == ["Pruned 12 price-cache entrie(s) (expired + over cap)"]
@@ -207,6 +220,7 @@ def test_manual_prune_error_is_logged_and_ui_still_refreshes(monkeypatch):
     app = _make_app()
 
     app._prune_price_cache()  # must not raise
+    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
 
     assert app.logged[0].startswith("Could not prune price cache: permission denied")
     assert (

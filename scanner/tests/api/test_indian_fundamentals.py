@@ -2,6 +2,7 @@
 
 import datetime
 import json
+from unittest.mock import MagicMock, patch
 
 import scanner.api.indian_fundamentals as fund_mod
 
@@ -259,3 +260,50 @@ def test_shareholding_fetch_404_returns_none(monkeypatch):
         assert fund_mod.fetch_shareholding_pattern("NOPE") is None
     finally:
         fund_mod._SHP_CACHE.clear()
+
+
+# ── yfinance .NS → .BO quote fallback ───────────────────────────────────────
+
+
+def _fake_yf(calls, info_by_sym):
+    """yfinance stand-in: Ticker(sym) records sym, info per lookup dict."""
+    mock_yf = MagicMock()
+
+    def _ticker(sym):
+        calls.append(sym)
+        t = MagicMock()
+        t.info = info_by_sym.get(sym, {})
+        return t
+
+    mock_yf.Ticker.side_effect = _ticker
+    return mock_yf
+
+
+def test_trendlyne_retries_bo_after_ns_miss():
+    calls = []
+    mock_yf = _fake_yf(
+        calls, {"ZQTL.BO": {"regularMarketPrice": 110.5, "trailingPE": 12.0}}
+    )
+    with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        fund = fund_mod.fetch_trendlyne_fundamentals("ZQTL")
+    assert calls == ["ZQTL.NS", "ZQTL.BO"]
+    assert fund is not None and fund.pe_ratio == 12.0
+
+
+def test_trendlyne_ns_hit_skips_bo():
+    calls = []
+    mock_yf = _fake_yf(
+        calls, {"ZQNS.NS": {"regularMarketPrice": 100.0, "trailingPE": 15.0}}
+    )
+    with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        fund = fund_mod.fetch_trendlyne_fundamentals("ZQNS")
+    assert calls == ["ZQNS.NS"]
+    assert fund is not None
+
+
+def test_yahoo_valuation_both_miss_returns_none():
+    calls = []
+    mock_yf = _fake_yf(calls, {})
+    with patch.dict("sys.modules", {"yfinance": mock_yf}):
+        assert fund_mod.fetch_yahoo_valuation("ZQVAL") is None
+    assert calls == ["ZQVAL.NS", "ZQVAL.BO"]

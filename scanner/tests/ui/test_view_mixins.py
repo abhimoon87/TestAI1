@@ -973,6 +973,8 @@ class TestErrorPaths:
 
     def test_prune_price_cache_failure_is_logged(self, monkeypatch):
         """A failing prune logs the error (direct log path, no deferral)."""
+        import time
+
         import scanner.api.cache_manager as cm_mod
 
         app = self._deferred_app()
@@ -983,11 +985,18 @@ class TestErrorPaths:
         monkeypatch.setattr(cm_mod, "prune_stale_cache", _boom)
 
         app._prune_price_cache()
+        # Disk op runs in a worker thread — wait for it to defer the finish.
+        deadline = time.time() + 5
+        while not app._deferred and time.time() < deadline:
+            time.sleep(0.01)
+        self._flush(app)
 
         assert any("Could not prune price cache: prune boom" in m for m in app.logged)
 
     def test_clear_negative_cache_failure_is_logged(self, monkeypatch):
         """A failing dead-symbol-cache clear logs the error."""
+        import time
+
         import scanner.api.cache_manager as cm_mod
 
         app = self._deferred_app()
@@ -999,6 +1008,10 @@ class TestErrorPaths:
         monkeypatch.setattr(cm_mod, "negative_update", _boom)
 
         app._clear_negative_cache()
+        deadline = time.time() + 5
+        while not app._deferred and time.time() < deadline:
+            time.sleep(0.01)
+        self._flush(app)
 
         assert any(
             "Could not clear dead-symbol cache: neg boom" in m for m in app.logged
@@ -1006,6 +1019,8 @@ class TestErrorPaths:
 
     def test_clear_enrichment_cache_failure_is_logged(self, monkeypatch):
         """A failing enrichment-cache clear logs the error."""
+        import time
+
         import scanner.api.cache_manager as cm_mod
 
         app = self._deferred_app()
@@ -1016,6 +1031,10 @@ class TestErrorPaths:
         monkeypatch.setattr(cm_mod, "enrichment_clear", _boom)
 
         app._clear_enrichment_cache()
+        deadline = time.time() + 5
+        while not app._deferred and time.time() < deadline:
+            time.sleep(0.01)
+        self._flush(app)
 
         assert any(
             "Could not clear enrichment cache: enrich boom" in m for m in app.logged
@@ -1492,7 +1511,17 @@ class TestResultsPersistence:
         app._restore_saved_results()  # must not raise
         assert app.all_results == []
 
+    def test_restore_saved_results_uses_preloaded_rows(self):
+        """Startup loads rows on a worker thread and hands them over."""
+        app = _make_app()
+        app.active_view = "dashboard"
+        app._restore_saved_results(self._rows())
+        assert len(app.all_results) == 3
+        assert len(app.filtered_results) == 3
+
     def test_clear_results_persists_empty(self, monkeypatch):
+        import time
+
         import scanner.backend.settings_store as store_mod
 
         saved = []
@@ -1503,6 +1532,12 @@ class TestResultsPersistence:
         app.filtered_results = list(app.all_results)
         app.results = app.all_results
         app._clear_results()
+        # Persist runs on a background thread — wait for it (and join so the
+        # monkeypatch is still active when it fires).
+        deadline = time.time() + 5
+        while not saved and time.time() < deadline:
+            time.sleep(0.01)
+        app._persist_thread.join(timeout=5)
 
         assert saved == [[]]
         assert app.all_results == []

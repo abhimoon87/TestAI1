@@ -180,3 +180,104 @@ class TestNestedSafeUpdateReentrancy:
         finally:
             loop.call_soon_threadsafe(loop.stop)
             t.join(timeout=5)
+
+
+class TestStartPanelRunsLoadOffThread:
+    """``_start_panel`` must not run ``load()`` on the UI thread.
+
+    ``done(load())`` inside the ``_safe_update`` lambda executed the
+    network/CLI fetch on the page's event loop — every header click (sort)
+    then queued behind it for seconds while data loaded.
+    """
+
+    def test_load_runs_on_worker_thread_done_on_loop_thread(self):
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+        try:
+            _wait_until(loop.is_running)
+            app, _ = _make_app(loop)
+            seen = {}
+
+            def load():
+                seen["load_tid"] = threading.get_ident()
+                return 42
+
+            def done(result):
+                seen["done"] = (result, threading.get_ident())
+
+            app._start_panel(load, done)
+
+            assert _wait_until(lambda: "done" in seen)
+            assert seen["done"] == (42, loop._thread_id)
+            assert seen["load_tid"] != loop._thread_id  # I/O off the loop
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(timeout=5)
+
+    def test_load_failure_still_delivers_none(self):
+        app, _ = _make_app(None)
+        app.page.session = SimpleNamespace(connection=SimpleNamespace(loop=None))
+        seen = {}
+
+        def load():
+            raise RuntimeError("boom")
+
+        app._start_panel(load, lambda v: seen.setdefault("v", v))
+        assert _wait_until(lambda: "v" in seen)
+        assert seen["v"] is None
+
+
+class TestDebounce:
+    """_debounce coalesces rapid events (search keystrokes, slider ticks)."""
+
+    def test_inline_without_page_loop(self):
+        from scanner.tests.ui.conftest import make_app
+
+        app = make_app()
+        ran = []
+        app._debounce("k", 0.1, lambda: ran.append(1))
+        app._debounce("k", 0.1, lambda: ran.append(2))
+        # No live loop → runs inline so unit tests stay synchronous.
+        assert ran == [1, 2]
+
+    def test_rapid_calls_coalesce_on_running_loop(self):
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+        try:
+            _wait_until(loop.is_running)
+            app, calls = _make_app(loop)
+            app._debounce("k", 0.05, lambda: calls["fn"].append(1))
+            app._debounce("k", 0.05, lambda: calls["fn"].append(2))
+            time.sleep(0.3)
+            # The second call cancelled the first pending timer.
+            assert calls["fn"] == [2]
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(timeout=5)
+
+
+class TestLogFileBackgroundWriter:
+    """_log must never append to scan.log on the calling (UI) thread."""
+
+    def test_line_reaches_file_via_writer_thread(self, tmp_path, monkeypatch):
+        import scanner.ui.app as app_mod
+        from scanner.tests.ui.conftest import make_app
+
+        monkeypatch.setattr(app_mod, "APPLOG_DIR", str(tmp_path))
+        monkeypatch.setattr(app_mod, "LOG_FILE", str(tmp_path / "scan.log"))
+
+        app = make_app()
+        app.__dict__.pop("_log")  # conftest replaced it with logged.append
+        app._log("queued-line-marker")
+
+        target = tmp_path / "scan.log"
+
+        def _has_line():
+            try:
+                return "queued-line-marker" in target.read_text(encoding="utf-8")
+            except OSError:
+                return False
+
+        assert _wait_until(_has_line), "scan.log line never reached the writer"

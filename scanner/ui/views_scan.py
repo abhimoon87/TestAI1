@@ -230,9 +230,9 @@ class ScanOrchestrationMixin:
         if lbl is not None:
             lbl.value = ""
             lbl.visible = False
-        self._refresh_neg_cache_ui()
-        self._refresh_enrich_cache_ui()
-        self._refresh_price_cache_ui()
+        # Cache status = disk/db reads — compute off-thread, apply via
+        # _safe_update (running these inline held the UI thread after every scan).
+        self._refresh_cache_ui_bg()
         if self.results:
             self.html_btn.disabled = False
             self.csv_btn.disabled = False
@@ -263,12 +263,10 @@ class ScanOrchestrationMixin:
             self._render_current_page()
         except Exception:
             logger.info("_scan_complete: _render_current_page FAILED", exc_info=True)
-        try:
-            from ..backend.settings_store import save_results
-
-            save_results(self.all_results)
-        except Exception:
-            logger.info("Failed to persist results", exc_info=True)
+        # save_results is a heavy db transaction + file write — background it.
+        with self._results_lock:
+            snapshot = list(self.all_results)
+        self._persist_results_bg(snapshot)
         # The scan just re-fetched NIFTY through the provider chain — refresh
         # the hero readout from that cache (fast, mostly disk reads).
         threading.Thread(target=self._warm_market, daemon=True).start()

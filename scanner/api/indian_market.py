@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from ..shared.cache import TTLCache
+from .yahoo_symbol import yf_quote_variants
 
 logger = logging.getLogger(__name__)
 
@@ -320,9 +321,11 @@ def fetch_52week_data(ticker: str) -> Week52Data | None:
     try:
         import yfinance as yf
 
-        nse_ticker = f"{ticker}.NS" if not ticker.endswith(".NS") else ticker
-        stock = yf.Ticker(nse_ticker)
-        info = stock.info
+        info = {}
+        for yf_ticker in yf_quote_variants(ticker):
+            info = yf.Ticker(yf_ticker).info or {}
+            if info:
+                break
 
         if not info:
             return None

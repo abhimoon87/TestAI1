@@ -14,6 +14,8 @@ Covers:
 
 from __future__ import annotations
 
+import time
+
 import flet as ft
 import pytest
 
@@ -194,6 +196,10 @@ class TestFullRebuildRendersRows:
         app._row_cells = {"STK000": []}
 
         app._scan_complete()
+        # Persist + cache-status refresh run on worker threads that touch the
+        # db — join both so the db fixture can't tear down under them.
+        app._persist_thread.join(timeout=5)
+        app._cache_refresh_thread.join(timeout=5)
 
         assert app.scanning is False
         # pool was cleared then repopulated by the full rebuild
@@ -218,6 +224,11 @@ class TestFullRebuildRendersRows:
 
         app._scan_complete()
 
+        # _persist_results_bg hands the rows to a worker thread.
+        deadline = time.time() + 5
+        while not saved and time.time() < deadline:
+            time.sleep(0.01)
+        app._cache_refresh_thread.join(timeout=5)
         assert len(saved) == 1
         assert [r["ticker"] for r in saved[0]] == ["STK000", "STK001", "STK002"]
 
