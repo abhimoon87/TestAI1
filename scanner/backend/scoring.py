@@ -60,6 +60,7 @@ Refactored into composable helpers:
 from __future__ import annotations
 
 __all__ = [
+    "bullish_candle",
     "bullish_candle_pattern",
     "check_filter",
     "check_hp_freshness",
@@ -375,12 +376,17 @@ def get_direction(filter_result: dict | None) -> str | None:
 
 def bullish_candle_pattern(df: pd.DataFrame) -> str | None:
     """
-    Candlestick confirmation on the latest completed bar.
+    Bullish candlestick confirmation on the latest bar(s).
 
-    Returns "engulfing" for a bullish engulfing candle (prior bar red,
-    latest green, body covering the prior body), "hammer" for a hammer
-    (lower shadow >= 2x body, upper shadow <= body), else None.
-    Degenerate bars (doji, NaN, fewer than 2 rows) return None.
+    Single-bar: "doji" (body <= 10% of the bar's range), "hammer"
+    (lower shadow >= 2x body, upper shadow <= body).
+    Multi-bar: "engulfing" (prior red, latest green covering its body),
+    "piercing" (prior red, latest green opening below prior close and
+    closing above the prior body's midpoint), "morning_star" (red bar,
+    small-body star, green close above the red bar's midpoint),
+    "three_white_soldiers" (three rising green bars, each opening inside
+    the prior body). Degenerate bars (NaN, h<=l, fewer than 2 rows)
+    return None.
     """
     if df is None or len(df) < 2:
         return None
@@ -393,12 +399,24 @@ def bullish_candle_pattern(df: pd.DataFrame) -> str | None:
         return None
 
     body = abs(cl - o)
-    if body <= 0 or h <= l:
+    if h <= l:
         return None
 
+    # Doji: negligible body relative to range — indecision / reversal hint.
+    if body <= 0.10 * (h - l):
+        return "doji"
+
+    prev_red = prev_c < prev_o
+    green = cl > o
+
     # Bullish engulfing: prior red bar, latest green bar covering its body.
-    if prev_c < prev_o and cl > o and o <= prev_c and cl >= prev_o:
+    if prev_red and green and o <= prev_c and cl >= prev_o:
         return "engulfing"
+
+    # Piercing: prior red, latest green opens below prior close, closes
+    # above the prior body's midpoint but below its open.
+    if prev_red and green and o < prev_c and cl > (prev_o + prev_c) / 2 and cl < prev_o:
+        return "piercing"
 
     # Hammer: long lower shadow, small/no upper shadow.
     lower = min(o, cl) - l
@@ -406,7 +424,55 @@ def bullish_candle_pattern(df: pd.DataFrame) -> str | None:
     if lower >= 2 * body and upper <= body:
         return "hammer"
 
+    if len(df) < 3:
+        return None
+    try:
+        o_a, c_a = float(df["open"].iloc[-3]), float(df["close"].iloc[-3])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    if math.isnan(o_a) or math.isnan(c_a):
+        return None
+
+    # Morning star: red bar, small-body star, latest green closing above
+    # the red bar's midpoint.
+    if (
+        c_a < o_a
+        and abs(prev_o - prev_c) <= 0.5 * abs(o_a - c_a)
+        and green
+        and cl > (o_a + c_a) / 2
+    ):
+        return "morning_star"
+
+    # Three white soldiers: three rising green bars, each opening inside
+    # the prior bar's body.
+    if (
+        c_a > o_a
+        and prev_c > prev_o
+        and green
+        and o_a < prev_o < c_a
+        and prev_o < o < prev_c
+        and c_a < prev_c < cl
+    ):
+        return "three_white_soldiers"
+
     return None
+
+
+def bullish_candle(df: pd.DataFrame) -> bool:
+    """Latest-bar bullish confirmation for the "Bullish + Candle" filter.
+
+    True for any green candle (close > open) OR a recognized bullish
+    pattern — the pattern branch covers what plain-green misses: a
+    red-bodied hammer or a doji. Degenerate/NaN bars are False.
+    """
+    if bullish_candle_pattern(df) is not None:
+        return True
+    if df is None or len(df) < 1:
+        return False
+    try:
+        return float(df["close"].iloc[-1]) > float(df["open"].iloc[-1])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════

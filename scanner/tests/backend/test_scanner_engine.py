@@ -81,7 +81,7 @@ class TestTrendFilterRating:
 
 
 class TestBullishCandleFilterGate:
-    """_score_ticker's "Bullish + Candle" gate: Bull direction + latest-bar pattern."""
+    """_score_ticker's "Bullish + Candle" gate: Bull direction + green bar or pattern."""
 
     @staticmethod
     def _score(df, trend_filter, monkeypatch):
@@ -115,11 +115,25 @@ class TestBullishCandleFilterGate:
         assert out is not None
         assert reason == "Bull"
 
-    def test_filters_missing_pattern(self, monkeypatch):
-        """Bull direction but no engulfing/hammer on the last bar → filtered."""
+    def test_passes_with_plain_green_candle(self, monkeypatch):
+        """Bull direction + green last bar with no pattern → scored."""
         df = _last2_df(100.0, 110.0, 99.0, 102.0)
         out, reason = self._score(df, "Bullish + Candle", monkeypatch)
+        assert out is not None
+        assert reason == "Bull"
+
+    def test_filters_red_bar_without_pattern(self, monkeypatch):
+        """Bull direction but red last bar, no hammer → filtered."""
+        df = _last2_df(105.0, 106.0, 100.0, 101.0)
+        out, reason = self._score(df, "Bullish + Candle", monkeypatch)
         assert (out, reason) == (None, "filtered")
+
+    def test_passes_with_red_bodied_hammer(self, monkeypatch):
+        """Red last bar but hammer shape → passes via the pattern branch."""
+        df = _last2_df(101.0, 102.0, 90.0, 98.0)
+        out, reason = self._score(df, "Bullish + Candle", monkeypatch)
+        assert out is not None
+        assert reason == "Bull"
 
     def test_filters_non_bullish_direction(self, monkeypatch):
         """Bear direction never reaches the pattern check → filtered."""

@@ -269,8 +269,15 @@ class TestGetDirection:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# bullish_candle_pattern — latest-bar candlestick confirmation
+# bullish_candle_pattern — bullish candlestick patterns (1-3 bar)
 # ══════════════════════════════════════════════════════════════════════════════
+
+
+def _bars(*rows):
+    """(open, high, low, close) rows → pattern-test frame."""
+    return pd.DataFrame(
+        [{"open": o, "high": h, "low": l, "close": c} for o, h, l, c in rows]
+    )
 
 
 class TestBullishCandlePattern:
@@ -287,8 +294,29 @@ class TestBullishCandlePattern:
         # green but body doesn't cover the prior red body; wicks no hammer
         assert bullish_candle_pattern(_last2_df(100.0, 110.0, 99.0, 102.0)) is None
 
-    def test_doji_is_none(self):
-        assert bullish_candle_pattern(_last2_df(100.0, 101.0, 99.0, 100.0)) is None
+    def test_doji(self):
+        # body 0 within a 2-wide range
+        assert bullish_candle_pattern(_last2_df(100.0, 101.0, 99.0, 100.0)) == "doji"
+
+    def test_piercing(self):
+        # opens below prior close (100), closes 104 > mid 102.5, below 105
+        assert bullish_candle_pattern(_last2_df(99.0, 105.0, 98.0, 104.0)) == "piercing"
+
+    def test_morning_star(self):
+        df = _bars(
+            (110.0, 111.0, 99.0, 100.0),  # red bar
+            (99.0, 102.0, 98.0, 101.0),  # small-body star
+            (101.0, 107.0, 100.0, 106.0),  # green closes above mid 105
+        )
+        assert bullish_candle_pattern(df) == "morning_star"
+
+    def test_three_white_soldiers(self):
+        df = _bars(
+            (100.0, 105.0, 99.0, 104.0),
+            (102.0, 107.0, 101.0, 106.0),  # opens in prior body, closes higher
+            (104.5, 110.0, 104.0, 109.0),
+        )
+        assert bullish_candle_pattern(df) == "three_white_soldiers"
 
     def test_red_bar_is_none(self):
         assert bullish_candle_pattern(_last2_df(104.0, 105.0, 97.0, 101.0)) is None

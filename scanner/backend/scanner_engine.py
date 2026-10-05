@@ -51,7 +51,7 @@ from ..shared.universes import (
     strip_dead_members,
 )
 from .scoring import (
-    bullish_candle_pattern,
+    bullish_candle,
     check_filter,
     compute_scores,
     get_direction,
@@ -162,7 +162,7 @@ def _score_ticker(
             return None, "filtered"
         if trend_filter == "Bearish Only" and direction != "Bear":
             return None, "filtered"
-        if trend_filter == "Bullish + Candle" and bullish_candle_pattern(df) is None:
+        if trend_filter == "Bullish + Candle" and not bullish_candle(df):
             return None, "filtered"
         # Skip fundamentals/enrichment in fast mode phase 1 (large universes
         # attach them later in the top-200 pass and re-score there).
@@ -1071,9 +1071,10 @@ class ScannerEngine:
             period: Data period (e.g., "1y", "3y")
             timeframe: "D" (daily), "W" (weekly), "M" (monthly)
             trend_filter: "All", "Bullish Only", "Bearish Only",
-                  "Bullish + Candle" (bullish crossover + latest-bar
-                  bullish-engulfing/hammer). Directional views also hide
-                  POOR/WEAK-rated stocks.
+                  "Bullish + Candle" (bullish crossover + latest bar green
+                  or a bullish pattern — doji, hammer, engulfing, piercing,
+                  morning star, three white soldiers). Directional
+                  views also hide POOR/WEAK-rated stocks.
             index_symbol: Index symbol for relative strength (e.g., "NSEI")
 
         Returns:
