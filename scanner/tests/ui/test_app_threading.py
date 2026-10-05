@@ -18,6 +18,8 @@ from types import SimpleNamespace
 
 from scanner.ui.app import _UI_LOCK_FACTORY, ScannerApp
 
+from .conftest import wait_until
+
 
 def _make_app(loop):
     """A ScannerApp shell with a fake page bound to a real asyncio loop."""
@@ -36,22 +38,13 @@ def _make_app(loop):
     return app, calls
 
 
-def _wait_until(predicate, timeout=5.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return False
-
-
 class TestSafeUpdateThreadMarshalling:
     def test_worker_thread_work_runs_on_loop_thread(self):
         loop = asyncio.new_event_loop()
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            _wait_until(loop.is_running)
+            wait_until(loop.is_running)
             app, calls = _make_app(loop)
             loop_tid = loop._thread_id
 
@@ -59,7 +52,7 @@ class TestSafeUpdateThreadMarshalling:
 
             # The callback must have been marshalled onto the loop thread —
             # never run (or half-run) on the calling worker thread.
-            assert _wait_until(lambda: calls["fn"] and calls["updates"])
+            assert wait_until(lambda: calls["fn"] and calls["updates"])
             assert calls["fn"] == [loop_tid]
             assert calls["updates"] == [loop_tid]
         finally:
@@ -72,7 +65,7 @@ class TestSafeUpdateThreadMarshalling:
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            _wait_until(loop.is_running)
+            wait_until(loop.is_running)
             app, calls = _make_app(loop)
 
             # A slow fn must NOT run on the calling thread (that would make
@@ -85,7 +78,7 @@ class TestSafeUpdateThreadMarshalling:
             app._safe_update(slow_fn)
             assert time.time() - start < 0.1  # queued, not executed inline
             assert calls["fn"] == []  # not run yet on the caller thread
-            assert _wait_until(lambda: calls["fn"])  # ...but runs on the loop
+            assert wait_until(lambda: calls["fn"])  # ...but runs on the loop
             assert calls["fn"] == [loop._thread_id]
         finally:
             loop.call_soon_threadsafe(loop.stop)
@@ -105,7 +98,7 @@ class TestSafeUpdateThreadMarshalling:
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            _wait_until(loop.is_running)
+            wait_until(loop.is_running)
             app, calls = _make_app(loop)
             done = {"ran": False}
 
@@ -114,8 +107,8 @@ class TestSafeUpdateThreadMarshalling:
                 done["ran"] = True
 
             loop.call_soon_threadsafe(on_loop_thread)
-            assert _wait_until(lambda: done["ran"])
-            assert _wait_until(lambda: calls["fn"])
+            assert wait_until(lambda: done["ran"])
+            assert wait_until(lambda: calls["fn"])
             assert calls["fn"] == [loop._thread_id]
             assert calls["updates"] == [loop._thread_id]
         finally:
@@ -153,7 +146,7 @@ class TestNestedSafeUpdateReentrancy:
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            _wait_until(loop.is_running)
+            wait_until(loop.is_running)
             app, calls = _make_app(loop)
             done = {"outer": False, "inner": False}
 
@@ -170,7 +163,7 @@ class TestNestedSafeUpdateReentrancy:
 
             app._safe_update(outer)  # worker-thread call, marshalled to loop
 
-            assert _wait_until(lambda: done["outer"] and done["inner"]), (
+            assert wait_until(lambda: done["outer"] and done["inner"]), (
                 "nested _safe_update deadlocked the UI loop thread"
             )
             assert calls["fn"] == ["outer", "inner"]
@@ -195,7 +188,7 @@ class TestStartPanelRunsLoadOffThread:
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            _wait_until(loop.is_running)
+            wait_until(loop.is_running)
             app, _ = _make_app(loop)
             seen = {}
 
@@ -208,7 +201,7 @@ class TestStartPanelRunsLoadOffThread:
 
             app._start_panel(load, done)
 
-            assert _wait_until(lambda: "done" in seen)
+            assert wait_until(lambda: "done" in seen)
             assert seen["done"] == (42, loop._thread_id)
             assert seen["load_tid"] != loop._thread_id  # I/O off the loop
         finally:
@@ -224,7 +217,7 @@ class TestStartPanelRunsLoadOffThread:
             raise RuntimeError("boom")
 
         app._start_panel(load, lambda v: seen.setdefault("v", v))
-        assert _wait_until(lambda: "v" in seen)
+        assert wait_until(lambda: "v" in seen)
         assert seen["v"] is None
 
 
@@ -246,7 +239,7 @@ class TestDebounce:
         t = threading.Thread(target=loop.run_forever, daemon=True)
         t.start()
         try:
-            _wait_until(loop.is_running)
+            wait_until(loop.is_running)
             app, calls = _make_app(loop)
             app._debounce("k", 0.05, lambda: calls["fn"].append(1))
             app._debounce("k", 0.05, lambda: calls["fn"].append(2))
@@ -269,8 +262,7 @@ class TestLogFileBackgroundWriter:
         monkeypatch.setattr(app_mod, "LOG_FILE", str(tmp_path / "scan.log"))
 
         app = make_app()
-        app.__dict__.pop("_log")  # conftest replaced it with logged.append
-        app._log("queued-line-marker")
+        ScannerApp._log(app, "queued-line-marker")  # unbound: real method, no pop
 
         target = tmp_path / "scan.log"
 
@@ -280,4 +272,4 @@ class TestLogFileBackgroundWriter:
             except OSError:
                 return False
 
-        assert _wait_until(_has_line), "scan.log line never reached the writer"
+        assert wait_until(_has_line), "scan.log line never reached the writer"

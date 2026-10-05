@@ -14,12 +14,11 @@ Covers:
 
 from __future__ import annotations
 
-import time
-
 import flet as ft
 import pytest
 
 from scanner.tests.ui.conftest import make_app as _make_app
+from scanner.tests.ui.conftest import wait_until
 
 
 @pytest.fixture(autouse=True)
@@ -225,9 +224,7 @@ class TestFullRebuildRendersRows:
         app._scan_complete()
 
         # _persist_results_bg hands the rows to a worker thread.
-        deadline = time.time() + 5
-        while not saved and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: saved)
         app._cache_refresh_thread.join(timeout=5)
         assert len(saved) == 1
         assert [r["ticker"] for r in saved[0]] == ["STK000", "STK001", "STK002"]

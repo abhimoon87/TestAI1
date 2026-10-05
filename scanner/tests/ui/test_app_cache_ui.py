@@ -4,12 +4,12 @@ Harness lives in ``tests/ui/conftest.py`` (``make_app`` / ``FakeLabel`` / …).
 """
 
 from scanner.api import cache_manager, data_fetcher
-from scanner.ui.app import ScannerApp
 
 from .conftest import FakeButton as _FakeButton  # noqa: F401
 from .conftest import FakeLabel as _FakeLabel  # noqa: F401
 from .conftest import FakePage as _FakePage  # noqa: F401
 from .conftest import make_app as _make_app
+from .conftest import wait_until
 
 
 def _populated_text(n):
@@ -17,16 +17,6 @@ def _populated_text(n):
         f"Enrichment cache: {n} "
         f"(auto-resets ~{data_fetcher.ENRICHMENT_CACHE_TTL_HOURS}h)"
     )
-
-
-def _wait_for(cond, timeout=5.0):
-    """Poll until cond() holds — the clear/prune handlers run in workers."""
-    import time
-
-    deadline = time.time() + timeout
-    while not cond() and time.time() < deadline:
-        time.sleep(0.01)
-    return cond()
 
 
 def test_refresh_populated_shows_count_and_reveals_clear(monkeypatch):
@@ -57,10 +47,9 @@ def test_refresh_before_sidebar_built_is_noop(monkeypatch):
 
     monkeypatch.setattr(cache_manager, "enrichment_size", boom)
 
-    class _NoSidebarYet:
-        pass
-
-    ScannerApp._refresh_enrich_cache_ui(_NoSidebarYet())  # guard returns first
+    app = _make_app()
+    del app.enrich_cache_status_lbl  # sidebar not built yet
+    app._refresh_enrich_cache_ui()  # controls lookup bails before cache_manager
 
 
 def test_refresh_falls_back_to_empty_when_cache_unreadable(monkeypatch):
@@ -96,7 +85,7 @@ def test_clear_wipes_real_cache_and_refreshes(tmp_path, monkeypatch):
     assert app.enrich_cache_clear_btn.visible is True
 
     app._clear_enrichment_cache()
-    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
+    assert wait_until(lambda: app.logged and app.page.update_calls >= 1)
 
     assert data_fetcher.enrichment_cache_size() == 0
     assert app.logged == [
@@ -117,7 +106,7 @@ def test_clear_error_is_logged_and_ui_still_refreshes(monkeypatch):
     app = _make_app()
 
     app._clear_enrichment_cache()  # must not raise
-    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
+    assert wait_until(lambda: app.logged and app.page.update_calls >= 1)
 
     assert len(app.logged) == 1
     assert app.logged[0].startswith("Could not clear enrichment cache: disk full")
@@ -173,10 +162,9 @@ def test_price_refresh_before_sidebar_built_is_noop(monkeypatch):
 
     monkeypatch.setattr(cache_manager, "cache_health", boom)
 
-    class _NoSidebarYet:
-        pass
-
-    ScannerApp._refresh_price_cache_ui(_NoSidebarYet())  # guard returns first
+    app = _make_app()
+    del app.price_cache_status_lbl  # sidebar not built yet
+    app._refresh_price_cache_ui()  # controls lookup bails before cache_manager
 
 
 def test_price_refresh_falls_back_to_empty_when_cache_unreadable(monkeypatch):
@@ -204,7 +192,7 @@ def test_manual_prune_forces_sweep_logs_and_refreshes(monkeypatch):
     app = _make_app()
 
     app._prune_price_cache()
-    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
+    assert wait_until(lambda: app.logged and app.page.update_calls >= 1)
 
     assert calls.get("force") is True
     assert app.logged == ["Pruned 12 price-cache entrie(s) (expired + over cap)"]
@@ -220,7 +208,7 @@ def test_manual_prune_error_is_logged_and_ui_still_refreshes(monkeypatch):
     app = _make_app()
 
     app._prune_price_cache()  # must not raise
-    assert _wait_for(lambda: app.logged and app.page.update_calls >= 1)
+    assert wait_until(lambda: app.logged and app.page.update_calls >= 1)
 
     assert app.logged[0].startswith("Could not prune price cache: permission denied")
     assert (

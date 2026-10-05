@@ -7,12 +7,21 @@ without a window. Import from here — do not re-define in each test module.
 import asyncio
 import concurrent.futures
 import threading
+import time
 
 import flet as ft
 
 import scanner.ui.app as app_mod
 from scanner.shared.themes import THEMES
 from scanner.ui.app import ScannerApp
+
+
+def wait_until(cond, timeout=5.0):
+    """Poll until cond() holds — for worker-thread side effects in tests."""
+    deadline = time.time() + timeout
+    while not cond() and time.time() < deadline:
+        time.sleep(0.01)
+    return cond()
 
 
 class FakeLabel:

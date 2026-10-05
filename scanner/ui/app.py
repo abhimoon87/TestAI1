@@ -1032,15 +1032,9 @@ class ScannerApp(
         under the same ``key`` cancels the pending one. Without a live page
         loop (unit tests) ``fn`` runs inline so callers stay synchronous.
         """
-        timers = getattr(self, "_debounce_timers", None)
-        if timers is None:
-            timers = {}
-            self._debounce_timers = timers
+        timers = self.__dict__.setdefault("_debounce_timers", {})
         loop = self._page_event_loop()
         if loop is None:
-            old = timers.pop(key, None)
-            if old is not None:
-                old.cancel()
             fn()
             return
 
@@ -1151,8 +1145,6 @@ class ScannerApp(
         t.start()
 
     def _refresh_neg_cache_ui(self):
-        if not hasattr(self, "cache_status_lbl"):
-            return
         self._refresh_cache_ui("neg")
 
     def _finish_cache_action(self, refresh, log_msg, toast_msg, is_error=False):
@@ -1165,6 +1157,7 @@ class ScannerApp(
 
     def _clear_negative_cache(self, e=None):
         def _bg():
+            is_error = False
             try:
                 from ..api import cache_manager
 
@@ -1172,55 +1165,47 @@ class ScannerApp(
                     clears=list(cache_manager.negative_load().keys())
                 )
                 msg = "Cleared dead-symbol cache — fallback will re-attempt all symbols"
-                self._safe_update(
-                    lambda: self._finish_cache_action(
-                        self._refresh_neg_cache_ui, msg, "Dead-symbol cache cleared"
-                    )
-                )
+                toast = "Dead-symbol cache cleared"
             except Exception as ex:
-                err = f"Could not clear dead-symbol cache: {ex}"
-                self._safe_update(
-                    lambda: self._finish_cache_action(
-                        self._refresh_neg_cache_ui, err, err, True
-                    )
+                msg = toast = f"Could not clear dead-symbol cache: {ex}"
+                is_error = True
+            self._safe_update(
+                lambda: self._finish_cache_action(
+                    self._refresh_neg_cache_ui, msg, toast, is_error
                 )
+            )
 
         threading.Thread(target=_bg, daemon=True).start()
 
     def _refresh_enrich_cache_ui(self):
-        if not hasattr(self, "enrich_cache_status_lbl"):
-            return
         self._refresh_cache_ui("enrich")
 
     def _clear_enrichment_cache(self, e=None):
         def _bg():
+            is_error = False
             try:
                 from ..api import cache_manager
 
                 cache_manager.enrichment_clear()
                 msg = "Cleared enrichment cache — next scan will re-fetch phase-2 data"
-                self._safe_update(
-                    lambda: self._finish_cache_action(
-                        self._refresh_enrich_cache_ui, msg, "Enrichment cache cleared"
-                    )
-                )
+                toast = "Enrichment cache cleared"
             except Exception as ex:
-                err = f"Could not clear enrichment cache: {ex}"
-                self._safe_update(
-                    lambda: self._finish_cache_action(
-                        self._refresh_enrich_cache_ui, err, err, True
-                    )
+                msg = toast = f"Could not clear enrichment cache: {ex}"
+                is_error = True
+            self._safe_update(
+                lambda: self._finish_cache_action(
+                    self._refresh_enrich_cache_ui, msg, toast, is_error
                 )
+            )
 
         threading.Thread(target=_bg, daemon=True).start()
 
     def _refresh_price_cache_ui(self):
-        if not hasattr(self, "price_cache_status_lbl"):
-            return
         self._refresh_cache_ui("price")
 
     def _prune_price_cache(self, e=None):
         def _bg():
+            is_error = False
             try:
                 from ..api import cache_manager
 
@@ -1231,18 +1216,14 @@ class ScannerApp(
                 else:
                     msg = "Price cache clean — nothing to prune"
                     toast = None
-                self._safe_update(
-                    lambda: self._finish_cache_action(
-                        self._refresh_price_cache_ui, msg, toast
-                    )
-                )
             except Exception as ex:
-                err = f"Could not prune price cache: {ex}"
-                self._safe_update(
-                    lambda: self._finish_cache_action(
-                        self._refresh_price_cache_ui, err, err, True
-                    )
+                msg = toast = f"Could not prune price cache: {ex}"
+                is_error = True
+            self._safe_update(
+                lambda: self._finish_cache_action(
+                    self._refresh_price_cache_ui, msg, toast, is_error
                 )
+            )
 
         threading.Thread(target=_bg, daemon=True).start()
 

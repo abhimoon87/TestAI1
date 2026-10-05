@@ -16,6 +16,7 @@ from scanner.ui.views_results import ResultsViewMixin
 
 from .conftest import FakePage as _FakePage  # noqa: F401  (re-export)
 from .conftest import make_app as _make_app
+from .conftest import wait_until
 
 
 def _cell(row, idx):
@@ -282,8 +283,6 @@ class TestBuildSettingsView:
 
     def test_run_apply_fixes_applies_logs_and_triggers_reauth(self, monkeypatch):
         """The threaded runner applies, logs the summary, and re-audits."""
-        import time
-
         import scanner.backend.audit_stale_members as audit_mod
 
         app = _make_app()
@@ -313,9 +312,7 @@ class TestBuildSettingsView:
 
         app._run_apply_fixes()
 
-        deadline = time.time() + 5
-        while getattr(app, "stale_fix_running", False) and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: getattr(app, "stale_fix_running", False))
         log = " ".join(app.logged)
         assert "Fix done" in log
         assert "STALECO" in log
@@ -324,8 +321,6 @@ class TestBuildSettingsView:
 
     def test_run_apply_fixes_keeps_newer_reauth_result(self, monkeypatch):
         """A re-audit result stored during the fix survives the finally."""
-        import time
-
         import scanner.backend.audit_stale_members as audit_mod
 
         app = _make_app()
@@ -355,15 +350,11 @@ class TestBuildSettingsView:
 
         app._run_apply_fixes()
 
-        deadline = time.time() + 5
-        while getattr(app, "stale_fix_running", False) and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: getattr(app, "stale_fix_running", False))
         assert app._last_audit_res is fresh  # NOT clobbered to None
 
     def test_failed_audit_clears_result_and_disables_apply(self, monkeypatch):
         """A failed audit never leaves a stale fixable result actionable."""
-        import time
-
         app = _make_app()
         app._safe_update = lambda fn: fn()
         app._build_settings_view()  # creates stale_fix_btn
@@ -377,9 +368,7 @@ class TestBuildSettingsView:
 
         app._run_stale_audit()
 
-        deadline = time.time() + 5
-        while getattr(app, "stale_audit_running", False) and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: getattr(app, "stale_audit_running", False))
         assert app._last_audit_res is None
         assert app.stale_fix_btn.disabled is True
 
@@ -845,7 +834,6 @@ class TestHtmlExportFilters:
     def test_export_passes_visible_rows_and_filter_state(self, monkeypatch):
         """Full scan exported (filters re-applied client-side); news stays scoped
         to the grid-visible rows so export time doesn't grow with the table."""
-        import time
         import webbrowser
 
         import scanner.backend.report as report_mod
@@ -876,9 +864,7 @@ class TestHtmlExportFilters:
 
         app._export_html()
 
-        deadline = time.time() + 5
-        while not captured and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: captured)
         assert captured, "generate_html_report was never called"
 
         assert captured["rows"] == [good, poor]  # full scan
@@ -947,8 +933,6 @@ class TestErrorPaths:
 
     def test_html_export_failure_logs_error_with_deferred_update(self, monkeypatch):
         """A crashing export logs the failure even with a deferred UI update."""
-        import time
-
         app = self._deferred_app()
         app.results = [{"ticker": "TCS"}]
         app.universe_dd = type("DD", (), {"value": "NIFTY 50"})()
@@ -964,17 +948,13 @@ class TestErrorPaths:
 
         # The export runs in a worker thread — wait for its except handler
         # to enqueue the deferred log before flushing.
-        deadline = time.time() + 5
-        while not app._deferred and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: app._deferred)
         self._flush(app)
 
         assert any("HTML export failed: export boom" in m for m in app.logged)
 
     def test_prune_price_cache_failure_is_logged(self, monkeypatch):
         """A failing prune logs the error (direct log path, no deferral)."""
-        import time
-
         import scanner.api.cache_manager as cm_mod
 
         app = self._deferred_app()
@@ -986,17 +966,13 @@ class TestErrorPaths:
 
         app._prune_price_cache()
         # Disk op runs in a worker thread — wait for it to defer the finish.
-        deadline = time.time() + 5
-        while not app._deferred and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: app._deferred)
         self._flush(app)
 
         assert any("Could not prune price cache: prune boom" in m for m in app.logged)
 
     def test_clear_negative_cache_failure_is_logged(self, monkeypatch):
         """A failing dead-symbol-cache clear logs the error."""
-        import time
-
         import scanner.api.cache_manager as cm_mod
 
         app = self._deferred_app()
@@ -1008,9 +984,7 @@ class TestErrorPaths:
         monkeypatch.setattr(cm_mod, "negative_update", _boom)
 
         app._clear_negative_cache()
-        deadline = time.time() + 5
-        while not app._deferred and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: app._deferred)
         self._flush(app)
 
         assert any(
@@ -1019,8 +993,6 @@ class TestErrorPaths:
 
     def test_clear_enrichment_cache_failure_is_logged(self, monkeypatch):
         """A failing enrichment-cache clear logs the error."""
-        import time
-
         import scanner.api.cache_manager as cm_mod
 
         app = self._deferred_app()
@@ -1031,9 +1003,7 @@ class TestErrorPaths:
         monkeypatch.setattr(cm_mod, "enrichment_clear", _boom)
 
         app._clear_enrichment_cache()
-        deadline = time.time() + 5
-        while not app._deferred and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: app._deferred)
         self._flush(app)
 
         assert any(
@@ -1520,8 +1490,6 @@ class TestResultsPersistence:
         assert len(app.filtered_results) == 3
 
     def test_clear_results_persists_empty(self, monkeypatch):
-        import time
-
         import scanner.backend.settings_store as store_mod
 
         saved = []
@@ -1534,9 +1502,7 @@ class TestResultsPersistence:
         app._clear_results()
         # Persist runs on a background thread — wait for it (and join so the
         # monkeypatch is still active when it fires).
-        deadline = time.time() + 5
-        while not saved and time.time() < deadline:
-            time.sleep(0.01)
+        wait_until(lambda: saved)
         app._persist_thread.join(timeout=5)
 
         assert saved == [[]]
