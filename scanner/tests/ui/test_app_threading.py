@@ -251,6 +251,72 @@ class TestDebounce:
             t.join(timeout=5)
 
 
+class TestThrottle:
+    """_throttle rate-limits per-ticker engine pushes (page.update is slow)."""
+
+    def test_inline_without_page_loop(self):
+        from scanner.tests.ui.conftest import make_app
+
+        app = make_app()
+        ran = []
+        app._throttle("k", 0.1, lambda: ran.append(1))
+        app._throttle("k", 0.1, lambda: ran.append(2))
+        # No live loop → runs inline so unit tests stay synchronous.
+        assert ran == [1, 2]
+
+    def test_leading_edge_then_trailing_newest_on_running_loop(self):
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+        try:
+            wait_until(loop.is_running)
+            app, calls = _make_app(loop)
+            app._throttle("k", 0.1, lambda: calls["fn"].append(1))
+            app._throttle("k", 0.1, lambda: calls["fn"].append(2))
+            app._throttle("k", 0.1, lambda: calls["fn"].append(3))
+            assert wait_until(lambda: calls["fn"])
+            assert calls["fn"] == [1]  # only the leading edge ran
+            # In-window calls coalesce into one trailing run of the newest.
+            assert wait_until(lambda: len(calls["fn"]) == 2)
+            assert calls["fn"] == [1, 3]
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(timeout=5)
+
+
+class TestEngineLogCoalescing:
+    """Engine log bursts flush together instead of one page.update() each."""
+
+    def test_inline_without_page_loop(self):
+        from scanner.tests.ui.conftest import make_app
+
+        app = make_app()
+        app._engine_log("one")
+        app._engine_log("two")
+        assert app.logged == ["one", "two"]
+
+    def test_lines_buffer_until_trailing_flush_on_running_loop(self):
+        loop = asyncio.new_event_loop()
+        t = threading.Thread(target=loop.run_forever, daemon=True)
+        t.start()
+        try:
+            wait_until(loop.is_running)
+            app, calls = _make_app(loop)
+            app.lines = []
+            app._log = app.lines.append
+
+            app._engine_log("one")
+            assert wait_until(lambda: app.lines == ["one"])  # leading flush
+            app._engine_log("two")
+            time.sleep(0.1)
+            assert app.lines == ["one"]  # still inside the window
+            assert wait_until(lambda: app.lines == ["one", "two"])  # trailing
+            assert calls["updates"]  # flushed through _safe_update → page.update
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            t.join(timeout=5)
+
+
 class TestLogFileBackgroundWriter:
     """_log must never append to scan.log on the calling (UI) thread."""
 

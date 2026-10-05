@@ -347,12 +347,11 @@ class TestGenerateHtmlReport:
             generate_html_report(results, fetch_news=True)
         assert m.call_args[0][0] == ["MISS"]
 
-    def test_row_trend_bar_and_price_match_grid(self):
-        """Trend/price cells render grid-style bare values (no bars, ₹ price)."""
+    def test_row_cells_render_grid_style_values(self):
+        """Price/fund cells render grid-style bare values (no bars, ₹ price)."""
         html = generate_html_report(
             [_make_score_result(fundamentals=13.0)], fetch_news=False
         )
-        assert '<td class="num sc-green">10</td>' in html
         assert '<td class="num sc-fund c-t2">13</td>' in html
         assert "bar-val" not in html and "bar-container" not in html
         assert '<td class="num price">₹2500</td>' in html
@@ -386,7 +385,7 @@ class TestReportPolish:
         # label ("Trend") doesn't count as a column.
         thead = html.split("<thead>")[1].split("</thead>")[0]
         assert thead.count(">Trend<") == 0
-        assert ">T/15<" in thead  # grid score-component label
+        assert ">Vol/10<" in thead  # abbreviated grid label
 
     def test_sticky_header_and_print_css(self):
         css = _css_block()
@@ -908,7 +907,7 @@ class TestResponsiveReport:
         assert html.count('<td class="c-t1 ') == 2  # Dir + Chop (extra class each)
         assert len(re.findall(r'<td class="[^"]*c-t2', html)) == 3  # Vol/RS/Fund
         # Kept columns never get a drop class.
-        assert '<td class="num sc-green">' in html
+        assert '<td class="num price">' in html
 
     def test_media_queries_use_gui_breakpoints(self):
         css = _css_block()

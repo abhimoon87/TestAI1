@@ -518,14 +518,14 @@ class TestDataRowColoring:
         assert _cell(row, 3).color == c["green"]
         assert _cell(row, 4).value == "YES"
         assert _cell(row, 4).color == c["green"]
-        assert _cell(row, 17).value == "+3.4%"  # 1M%
-        assert _cell(row, 21).value == "OK"  # Chop
+        assert _cell(row, 13).value == "+3.4%"  # 1M%
+        assert _cell(row, 17).value == "OK"  # Chop
 
     def test_bearish_row_shows_down_arrow(self):
         app = _make_app()
         c = app.theme_colors
         row = app._create_row_controls(_row(ticker="SBI"), 1, c, c["card"], 50)
-        assert _cell(row, 18).value == "v Bear"  # Dir
+        assert _cell(row, 14).value == "v Bear"  # Dir
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -786,7 +786,7 @@ class TestUiPrefsPersistence:
     def test_save_ui_prefs_writes_sort_size_and_rating(self, monkeypatch):
         """Sort / page size / rating filter persist to settings.json."""
         app = self._app_with_pref_controls()
-        app.sort_col = 22  # the 1M sparkline column
+        app.sort_col = 18  # the 1M sparkline column
         app.sort_reverse = True
         app.page_size = 200
         app.rating_filter_dd.value = "Good"
@@ -795,7 +795,7 @@ class TestUiPrefsPersistence:
 
         app._save_ui_prefs()
 
-        assert written["ui_sort_col"] == 22
+        assert written["ui_sort_col"] == 18
         assert written["ui_sort_reverse"] is True
         assert written["ui_page_size"] == 200
         assert written["ui_rating_filter"] == "GOOD"
@@ -805,7 +805,7 @@ class TestUiPrefsPersistence:
         app = self._app_with_pref_controls()
         app.settings = {
             **app_mod.DEFAULT_SETTINGS,
-            "ui_sort_col": 22,
+            "ui_sort_col": 18,
             "ui_sort_reverse": True,
             "ui_page_size": 200,
             "ui_rating_filter": "GOOD",
@@ -813,7 +813,7 @@ class TestUiPrefsPersistence:
 
         app._load_ui_prefs()
 
-        assert app.sort_col == 22
+        assert app.sort_col == 18
         assert app.sort_reverse is True
         assert app.page_size == 200
         assert app.page_size_dd.value == "200"

@@ -104,9 +104,13 @@ class ScanOrchestrationMixin:
             if getattr(self, "_stop_requested", False):
                 engine.cancel()
             engine.set_progress_callback(
-                lambda p, m: self._safe_update(lambda: self._set_progress(p, m))
+                lambda p, m: self._throttle(
+                    "progress",
+                    0.15,
+                    lambda: self._safe_update(lambda: self._set_progress(p, m)),
+                )
             )
-            engine.set_log_callback(lambda m: self._safe_update(lambda: self._log(m)))
+            engine.set_log_callback(self._engine_log)
 
             def _on_batch(batch):
                 self._on_stream_batch(batch)
@@ -274,6 +278,27 @@ class ScanOrchestrationMixin:
         # row opens its stories instantly (no per-click yfinance round-trip).
         if self.results and not self._scan_cancelled:
             self._news_prefetcher.start(NEWS_PREFETCH_TOP)
+
+    def _engine_log(self, msg):
+        """Buffer an engine log line; flush it on a trailing throttle with a
+        single page update (engine bursts would otherwise cost one full
+        page.update() per line)."""
+        buf = self.__dict__.setdefault("_engine_log_buf", [])
+        buf.append(msg)
+        self._throttle(
+            "engine_log", 0.25, lambda: self._safe_update(self._flush_engine_log)
+        )
+
+    def _flush_engine_log(self):
+        # Copy-then-clear in place: the engine thread holds the same list
+        # reference (setdefault) and may append while we log — never pop/rebind.
+        buf = self.__dict__.get("_engine_log_buf")
+        if not buf:
+            return
+        msgs = buf[:]
+        del buf[:]
+        for m in msgs:
+            self._log(m)
 
     def _flush_news_badges(self):
         """Repaint the visible table so prefetched news badges appear."""

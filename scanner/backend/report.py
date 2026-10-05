@@ -486,7 +486,7 @@ def _css_block() -> str:
     tbody tr:not(.news-row):hover { background: var(--surface3); }
     tbody tr:last-child td:first-child { border-bottom-left-radius: var(--radius); }
     tbody tr:last-child td:last-child { border-bottom-right-radius: var(--radius); }
-    /* Sticky first two columns — 23 columns need ~2200px, so the identity
+    /* Sticky first two columns — 19 columns need ~1750px, so the identity
        cells (rank rail + ticker) must not scroll away from the row. */
     td.rank { position: sticky; left: 0; z-index: 1; background: inherit; width: 52px; color: var(--text-faint); padding-left: 12px; }
     td.rank::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px;
@@ -511,9 +511,6 @@ def _css_block() -> str:
     .price { font-size: 12px; font-weight: 700; }
     .bull { color: var(--green); }
     .bear { color: var(--red); }
-    .sc-green { color: var(--green); }
-    .sc-cyan { color: var(--cyan); }
-    .sc-blue { color: var(--blue); }
     .sc-orange { color: var(--orange); }
     .sc-lime { color: var(--lime); }
     .sc-fund { color: #ffe600; }
@@ -936,11 +933,11 @@ function syncColspan() {
 }
 
 // Content-fit: hide the least useful columns until the table fits its
-// container — viewport media queries alone can't (23 columns need
-// ~2200px). Indexes cheapest-first: chop/vol diagnostics, then readouts,
-// score-component cells last. Sort/filter indexes are positional so
+// container — viewport media queries alone can't (19 columns need
+// ~1750px). Indexes cheapest-first: chop/vol diagnostics, then readouts,
+// then POC/Both MA. Sort/filter indexes are positional so
 // display:none is safe.
-const FIT_ORDER = [21, 20, 18, 19, 7, 8, 16, 12, 11, 10, 9];
+const FIT_ORDER = [17, 16, 14, 15, 7, 8, 12];
 function fitColumns() {
     const table = document.getElementById("stockTable");
     const wrap = table.closest(".table-wrap");
@@ -1247,10 +1244,6 @@ _REPORT_COLS: list[tuple[str, int | None]] = [
     ("MA", None),
     ("POC", None),
     ("Both MA", None),
-    ("T/15", None),
-    ("M/15", None),
-    ("R/8", None),
-    ("V/7", None),
     ("Vol/10", 2),
     ("RS/10", 2),
     ("F/20", 2),
@@ -1609,10 +1602,6 @@ def _result_row_html(
             <td class="{ma_cls}">{_html.escape(ma_text)}</td>
             <td class="{poc_cls}">{"Above" if above_poc else "Below"}</td>
             <td class="{bothma_cls}">{"YES" if both_ma else "NO"}</td>
-            <td class="num sc-green">{r.get("trend", 0) or 0:.0f}</td>
-            <td class="num sc-cyan">{r.get("momentum", 0) or 0:.0f}</td>
-            <td class="num sc-blue">{r.get("rsi", 0) or 0:.0f}</td>
-            <td class="num sc-blue">{r.get("macd", 0) or 0:.0f}</td>
             <td class="num sc-orange c-t2">{r.get("volume", 0) or 0:.0f}</td>
             <td class="num sc-lime c-t2">{r.get("rel_str", 0) or 0:.0f}</td>
             <td class="num sc-fund c-t2">{r.get("fundamentals", 0) or 0:.0f}</td>

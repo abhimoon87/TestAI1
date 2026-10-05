@@ -135,6 +135,13 @@ class TestBullishCandleFilterGate:
         assert out is not None
         assert reason == "Bull"
 
+    def test_doji_passes_when_fresh(self, monkeypatch):
+        """Doji at a fresh crossover (ago=0) qualifies via the pattern branch."""
+        df = _last2_df(100.0, 101.0, 99.0, 100.0)
+        out, reason = self._score(df, "Bullish + Candle", monkeypatch)
+        assert out is not None
+        assert reason == "Bull"
+
     def test_filters_non_bullish_direction(self, monkeypatch):
         """Bear direction never reaches the pattern check → filtered."""
         monkeypatch.setattr(

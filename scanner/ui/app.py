@@ -1049,6 +1049,46 @@ class ScannerApp(
         except Exception:  # pragma: no cover — loop closed mid-call
             fn()
 
+    def _throttle(self, key: str, interval: float, fn: Callable[[], None]) -> None:
+        """Leading-edge throttle with one trailing flush of the newest ``fn``.
+
+        The first call (or any call after ``interval``) runs ``fn`` now;
+        calls inside the window coalesce into a single trailing run of the
+        newest ``fn`` when the window expires. Without a live page loop
+        (unit tests) ``fn`` runs inline so callers stay synchronous.
+        Rate-limits per-ticker engine pushes (progress, log lines) that
+        would otherwise queue hundreds of full ``page.update()`` sends.
+        """
+        st = self.__dict__.setdefault("_throttle_state", {})
+        loop = self._page_event_loop()
+        if loop is None:
+            fn()
+            return
+
+        def _decide():
+            now = time.monotonic()
+            rec = st.get(key)
+            if rec is None or now - rec[0] >= interval:
+                st[key] = [now, None, None]
+                fn()
+                return
+            rec[1] = fn  # newest pending wins
+            if rec[2] is None:
+
+                def _fire():
+                    rec[2] = None
+                    pending, rec[1] = rec[1], None
+                    rec[0] = time.monotonic()
+                    if pending is not None:
+                        pending()
+
+                rec[2] = loop.call_later(interval, _fire)
+
+        try:
+            loop.call_soon_threadsafe(_decide)
+        except Exception:  # pragma: no cover — loop closed mid-call
+            fn()
+
     # ── Results rendering ───────────────────────────────────────────────
 
     # ── Cache management ───────────────────────────────────────────────

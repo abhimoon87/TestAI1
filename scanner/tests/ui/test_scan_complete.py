@@ -73,7 +73,7 @@ class TestRowPoolInitialisation:
         assert "STK001" in app._row_pool
         assert app._row_pool["STK001"] is row
         assert "STK001" in app._row_cells
-        assert len(app._row_cells["STK001"]) == 22  # RESULT_COLS minus sparkline
+        assert len(app._row_cells["STK001"]) == 18  # RESULT_COLS minus sparkline
         assert row._pool_ticker == "STK001"
 
     def test_create_row_defensive_when_pool_missing(self):

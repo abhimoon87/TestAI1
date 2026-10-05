@@ -59,7 +59,7 @@ def width_tier(w) -> str:
 
 # Columns dropped as the window narrows, in hide order (tail of
 # RESULT_COLS only — the positional row specials at indexes 0/1/3/4/6
-# must never shift, so nothing before index 11 may appear here).
+# must never shift, so nothing before index 9 may appear here).
 COL_HIDE_ORDER = ("Chop", "Dir", "ADX", "F/20", "RS/10", "Vol/10")
 _HIDDEN_AT_TIER = {
     TIER_WIDE: (),
