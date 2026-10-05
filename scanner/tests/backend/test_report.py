@@ -365,19 +365,6 @@ class TestReportPolish:
         assert "NSE ALL" in html
         assert "Daily" in html
 
-    def test_histogram_has_four_bucket_columns(self):
-        results = [
-            _make_score_result(ticker="A", total=80.0),
-            _make_score_result(ticker="B", total=40.0),
-        ]
-        html = generate_html_report(results, fetch_news=False)
-        assert "histogram" in html
-        assert html.count('class="hist-col"') == 4
-
-    def test_no_histogram_for_empty_results(self):
-        html = generate_html_report([], fetch_news=False)
-        assert 'class="histogram"' not in html
-
     def test_direction_header_replaces_duplicate_trend(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
         assert ">Dir<" in html
@@ -950,17 +937,13 @@ class TestResponsiveReport:
         assert "Threshold 55+" in html
         assert "Passed · 55+" in html
 
-    def test_histogram_bars_fill_card(self):
-        css = _css_block()
-        assert "justify-content: space-evenly" in css  # no dead card space
-
     def test_compact_stat_strip(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
         assert html.count('class="stat-meta"') == 4  # inline number + labels
         css = _css_block()
         assert ".summary { display: contents; }" in css  # stats as grid cells
-        assert "repeat(4, minmax(0,1fr)) minmax(0,1.9fr)" in css  # 4 stats + hist
-        assert "grid-column: 1 / -1" in css  # hist spans full width when stacked
+        assert "grid-template-columns: repeat(4, minmax(0,1fr))" in css
+        assert "histogram" not in css  # score-distribution strip removed
         assert (
             ".stat::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 3px;"
             in css
@@ -1110,13 +1093,13 @@ class TestReportElegance:
         assert '<td class="entry yes">YES</td>' in html  # entry_signal True
         assert "score-excellent" not in html  # glow classes gone
 
-    def test_overview_band_and_histogram_caption(self):
+    def test_overview_band_renders(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)
         assert 'class="overview"' in html
-        assert "Score distribution" in html
+        assert "Score distribution" not in html
         empty = generate_html_report([], fetch_news=False)
         assert 'class="overview solo"' in empty
-        assert "Score distribution" not in empty
+        assert 'class="histogram"' not in empty
 
     def test_print_resets_glass_and_motion(self):
         css = _css_block()

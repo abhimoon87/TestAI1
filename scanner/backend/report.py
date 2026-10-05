@@ -382,46 +382,46 @@ def _css_block() -> str:
     body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: radial-gradient(1200px 600px at 0% -10%, #0d3328 0%, var(--bg) 55%), var(--bg); color: var(--text); padding: 24px; line-height: 1.5; min-height: 100vh;
            -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 
-    /* ─── Hero banner — the app's hero (views_layout): gradient pill
-           (title + status line + meta strip), market box on the page
-           background beside it. Soft top-right sheen + staggered rise-in. ── */
-    .hero { display: flex; align-items: center; gap: 16px; margin-bottom: 10px;
+    /* ─── Hero banner: slim tinted card — title + status left, meta
+           pills right (one band, no dead space), market box beside it.
+           Soft top-right sheen + staggered rise-in. ── */
+    .hero { display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
             animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
     .hero-pill { flex: 1; min-width: 0; position: relative; overflow: hidden;
-                 background: linear-gradient(90deg, #059669, #10b981, #0d9488, #0a0f0c);
-                 border-radius: 16px; padding: 18px 20px 14px 28px;
-                 box-shadow: 0 0 24px rgba(0,0,0,0.55), 0 0 40px -6px #10b98126; }
+                 background: linear-gradient(100deg, rgba(16,185,129,0.20), rgba(13,148,136,0.07) 45%, rgba(16,185,129,0) 75%), var(--surface2);
+                 border: 1px solid var(--border); border-radius: 14px; padding: 11px 16px;
+                 box-shadow: 0 4px 16px rgba(0,0,0,0.28); }
     .hero-pill::after { content: ''; position: absolute; inset: 0; pointer-events: none;
-                        background: radial-gradient(110% 170% at 100% 0%, rgba(255,255,255,0.16), transparent 45%); }
+                        background: radial-gradient(120% 220% at 100% -40%, rgba(255,255,255,0.10), transparent 55%); }
+    .hero-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
     .hero-text { min-width: 0; }
-    .hero-title { font-size: 21px; font-weight: 700; color: #ffffff; letter-spacing: -0.02em; line-height: 1.25; }
-    .hero-sub { color: #d1fae5; font-size: 12px; margin-top: 16px; }
-    .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-    .meta span { background: var(--surface3); border: 1px solid var(--border-light); border-radius: 10px;
-                 padding: 7px 14px; font-size: 11px; font-weight: 700; color: #d1fae5; }
-    .market-box { flex: none; width: 190px; text-align: right; background: var(--surface3);
-                  border: 1px solid var(--border-light); border-radius: 14px; padding: 8px 16px;
+    .hero-title { font-size: 17px; font-weight: 700; color: #ffffff; letter-spacing: -0.01em; line-height: 1.3; }
+    .hero-sub { color: rgba(209,250,229,0.85); font-size: 11.5px; margin-top: 3px; }
+    .meta { display: flex; gap: 6px; flex-wrap: wrap; }
+    .meta span { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.13); border-radius: 99px;
+                 padding: 4px 11px; font-size: 10px; font-weight: 600; color: #d1fae5; white-space: nowrap; }
+    .market-box { flex: none; width: 175px; text-align: right; background: var(--surface3);
+                  border: 1px solid var(--border-light); border-radius: 12px; padding: 6px 14px;
                   box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); }
     .market-label { font-size: 9px; font-weight: 700; color: rgba(209,250,229,0.65);
                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .market-value { font-size: 23px; font-weight: 700; color: #ffffff; line-height: 1.25; font-variant-numeric: tabular-nums; }
-    .market-change { font-size: 10px; color: #d1fae5; line-height: 1.5; }
+    .market-value { font-size: 19px; font-weight: 700; color: #ffffff; line-height: 1.3; font-variant-numeric: tabular-nums; }
+    .market-change { font-size: 9.5px; color: rgba(209,250,229,0.8); line-height: 1.5; }
 
-    /* ─── Overview: 4 compact stat cards + histogram in one strip ── */
-    .overview { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)) minmax(0,1.9fr); gap: 12px; align-items: stretch; margin-bottom: 16px;
+    /* ─── Overview: 4 compact stat cards in one strip ── */
+    .overview { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; align-items: stretch; margin-bottom: 16px;
                 animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) 0.06s both; }
-    .overview.solo { grid-template-columns: repeat(4, minmax(0,1fr)); }
     .summary { display: contents; }
-    .stat { display: flex; align-items: center; gap: 12px; background: linear-gradient(180deg, var(--surface) 0%, var(--surface2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px 12px 16px; position: relative; overflow: hidden; box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    .stat { display: flex; align-items: center; gap: 10px; background: linear-gradient(180deg, var(--surface) 0%, var(--surface2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 12px 9px 14px; position: relative; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.22);
             transition: transform 0.2s ease, box-shadow 0.2s ease; }
-    .stat:hover { transform: translateY(-2px); box-shadow: 0 12px 26px rgba(0,0,0,0.34); }
-    .stat::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 3px; background: var(--accent, var(--green)); opacity: 0.9; }
+    .stat:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.3); }
+    .stat::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 3px; background: var(--accent, var(--green)); opacity: 0.9; border-radius: 0 2px 2px 0; }
     .stat.green { --accent: var(--green); } .stat.lime { --accent: var(--lime); } .stat.cyan { --accent: var(--cyan); } .stat.orange { --accent: var(--orange); } .stat.red { --accent: var(--red); }
-    .stat .num { flex: none; font-family: var(--mono); font-size: 1.7em; font-weight: 700; line-height: 1; text-align: left;
+    .stat .num { flex: none; font-family: var(--mono); font-size: 1.3em; font-weight: 700; line-height: 1; text-align: left; color: var(--accent, var(--text));
                  font-variant-numeric: tabular-nums; }
-    .stat-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .stat .label { color: var(--text-dim); font-size: 0.66em; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; }
-    .stat .sub { color: var(--text-faint); font-size: 0.66em; }
+    .stat-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .stat .label { color: var(--text-dim); font-size: 0.6em; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; }
+    .stat .sub { color: var(--text-faint); font-size: 0.6em; }
     .filters { margin-bottom: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
                background: rgba(255,255,255,0.03); border: 1px solid var(--border); padding: 10px 14px; border-radius: var(--radius);
                backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
@@ -603,20 +603,6 @@ def _css_block() -> str:
     .inst-val { font-weight: 700; color: var(--text); }
     .inst-sub { display: block; font-size: 0.7em; }
     .inst-hint { font-size: 0.7em; color: var(--text-faint); margin-top: 4px; }
-
-    /* ─── Score histogram (compact strip cell) ────────────── */
-    .histogram { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border);
-                 border-radius: var(--radius); padding: 10px 14px; box-shadow: 0 6px 18px rgba(0,0,0,0.25); min-width: 0; }
-    .hist-cap { font-size: 0.64em; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
-    .hist-bars { display: flex; gap: 12px; align-items: stretch; flex: 1; min-height: 68px; justify-content: space-evenly; }
-    .hist-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; flex: 1; max-width: 120px; }
-    .hist-n { font-family: var(--mono); font-size: 0.75em; color: var(--text-dim); }
-    .hist-bar { width: 100%; min-height: 3px; border-radius: 4px 4px 0 0; }
-    .hist-bar.poor { background: var(--red); }
-    .hist-bar.moderate { background: var(--orange); }
-    .hist-bar.good { background: var(--lime); }
-    .hist-bar.excellent { background: var(--green); }
-    .hist-l { font-size: 0.62em; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
     .news-more { display: inline-block; color: var(--cyan); font-size: 0.8em; margin-top: 6px; text-decoration: none; }
     .news-more:hover { text-decoration: underline; }
 
@@ -645,15 +631,11 @@ def _css_block() -> str:
         th.c-t2, td.c-t2 { display: none; }
         table { min-width: 940px; }
     }
-    @media (max-width: 1499px) {
-        .overview, .overview.solo { grid-template-columns: repeat(4, minmax(0,1fr)); }
-        .overview .histogram { grid-column: 1 / -1; }
-    }
     @media (max-width: 1100px) {
         .detail-grid { grid-template-columns: minmax(0,1fr); }
     }
     @media (max-width: 860px) {
-        .overview, .overview.solo { grid-template-columns: repeat(2, minmax(0,1fr)); }
+        .overview { grid-template-columns: repeat(2, minmax(0,1fr)); }
     }
     @media (max-width: 720px) {
         body { padding: 12px; }
@@ -961,32 +943,6 @@ filterTable();  // apply export-time filters + recount before first paint
 relayout();"""
 
 
-def _histogram_html(results: list) -> str:
-    """Aggregate score distribution as four CSS bars."""
-    buckets = [
-        ("0–29", 0, 30, "poor"),
-        ("30–49", 30, 50, "moderate"),
-        ("50–69", 50, 70, "good"),
-        ("70+", 70, 101, "excellent"),
-    ]
-    counts = [
-        sum(1 for r in results if lo <= (r.get("total", 0) or 0) < hi)
-        for _, lo, hi, _ in buckets
-    ]
-    top = max(counts, default=0) or 1
-    cols = ""
-    for (label, _, _, cls), n in zip(buckets, counts, strict=True):
-        cols += (
-            f'<div class="hist-col"><span class="hist-n">{n}</span>'
-            f'<div class="hist-bar {cls}" style="height:{n / top * 100:.0f}%"></div>'
-            f'<span class="hist-l">{label}</span></div>'
-        )
-    return (
-        f'<div class="histogram"><span class="hist-cap">Score distribution</span>'
-        f'<div class="hist-bars">{cols}</div></div>'
-    )
-
-
 def _chip(gid: str, val: str, label: str, active: bool = False, cid: str = "") -> str:
     """One filter pill; writes the value into the hidden input via setFilter()."""
     cls = "chip active" if active else "chip"
@@ -1013,7 +969,7 @@ def _summary_header_html(
     meta: list | None = None,
     filters: dict | None = None,
 ) -> str:
-    """Hero banner, overview band (stats + histogram), and filter chips."""
+    """Hero banner, overview band (stats), and filter chips."""
     meta_spans = "".join(f"<span>{_html.escape(str(m))}</span>" for m in (meta or []))
     search_val = _html.escape(str((filters or {}).get("search") or ""))
     # Score group starts at the exported slider value when present, else the
@@ -1072,11 +1028,13 @@ def _summary_header_html(
         )
     return f"""<header class="hero">
   <div class="hero-pill">
-    <div class="hero-text">
-      <h1 class="hero-title">Find Your Next Swing Trade</h1>
-      <div class="hero-sub">{status}</div>
+    <div class="hero-row">
+      <div class="hero-text">
+        <h1 class="hero-title">Find Your Next Swing Trade</h1>
+        <div class="hero-sub">{status}</div>
+      </div>
+      <div class="meta"><span>🎯 Threshold {threshold:g}+</span><span>📦 {len(results)} total</span>{meta_spans}</div>
     </div>
-    <div class="meta"><span>🎯 Threshold {threshold:g}+</span><span>📦 {len(results)} total</span>{meta_spans}</div>
   </div>
   <div class="market-box">
     <div class="market-label">{_html.escape(title)}</div>
@@ -1116,7 +1074,6 @@ def _summary_header_html(
             </div>
         </div>
     </div>
-    {_histogram_html(results) if results else ""}
 </div>
 
 <div class="filters">

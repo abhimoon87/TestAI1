@@ -229,6 +229,21 @@ class TestFullRebuildRendersRows:
         assert len(saved) == 1
         assert [r["ticker"] for r in saved[0]] == ["STK000", "STK001", "STK002"]
 
+    def test_stale_progress_after_complete_is_dropped(self):
+        """A throttled progress flush landing after _scan_complete must not
+        overwrite the final Done labels with a stale "Finalizing scan…"."""
+        app = _make_app()
+        app.scanning = True
+        app._set_progress(0.9, "Scanning…")
+        assert app.progress_label.value == "Scanning…"
+
+        app.scanning = False  # _scan_complete already ran
+        app._set_progress(0.99, "Finalizing scan…")
+
+        assert app.progress_label.value == "Scanning…"
+        assert app.status_label.value == "Status: Scanning…"
+        assert app.progress_bar.value == 0.9
+
 
 class TestGridFilters:
     """min-score is a live grid filter; chips reflect active filters."""

@@ -311,6 +311,11 @@ class ScanOrchestrationMixin:
             logger.info("_flush_news_badges failed", exc_info=True)
 
     def _set_progress(self, value, text=""):
+        # A throttled progress flush can land after _scan_complete has set the
+        # final Done/Stopped labels — dropping it here stops the UI being
+        # overwritten back to a stale "Finalizing scan…".
+        if not self.scanning:
+            return
         self.progress_bar.value = value
         if text:
             self.progress_label.value = text

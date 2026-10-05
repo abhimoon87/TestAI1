@@ -1775,10 +1775,11 @@ class ResultsViewMixin:
         from .views_layout import RAIL_W, RIGHT_W, SIDE_W
 
         threshold = self._score_threshold()
-        # Fill the remaining strip width: window minus fixed chrome, the
-        # stats pills (~340px) and paddings.
+        # Right-aligned in the strip: size to the window but cap at 560px —
+        # an uncapped strip-width canvas stretched 10 buckets into fat bars
+        # with a void on the empty side.
         pw = int(getattr(self.page, "width", 0) or 1600)
-        avail = max(360, min(pw - RAIL_W - SIDE_W - RIGHT_W - 440, 1600))
+        avail = max(360, min(pw - RAIL_W - SIDE_W - RIGHT_W - 440, 560))
         self.chart_bars.controls = [
             build_score_histogram(
                 results,

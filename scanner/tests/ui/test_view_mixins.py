@@ -602,6 +602,11 @@ class TestInsightStrip:
         app._render_chart([{"total": 70}, {"total": 40}])
         assert app.chart_holder.visible is True
         assert len(app.chart_bars.controls) == 1
+        # Strips stay compact: bucket canvas never stretches past the cap.
+        inner = app.chart_bars.controls[0].content
+        while isinstance(inner, ft.GestureDetector):
+            inner = inner.content
+        assert inner.width <= 560
 
     def test_render_chart_hides_when_empty(self):
         app = _make_app()

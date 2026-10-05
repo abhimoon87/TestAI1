@@ -33,9 +33,9 @@ def build_score_histogram(
     """Canvas histogram of score distribution (10 buckets: 0-10 … 90-100).
 
     Features:
-    - Coloured bars (red → orange → lime → green)
+    - Coloured bars (red → orange → lime → green) on faint per-bucket slots
     - Vertical dashed threshold line at ``threshold``
-    - Bucket count labels above each bar
+    - Bucket count labels (inside tall bars, above short ones)
     - X-axis labels (0, 10, 20, … 100)
     - ``on_bucket(i)``: optional tap handler — wraps the chart in a
       GestureDetector and reports the clicked bucket index (0-9)
@@ -62,10 +62,27 @@ def build_score_histogram(
     shapes: list = []
     labels: list[ft.Text] = []
 
-    # ── Bars (per-bar coloured fills) ───────────────────────────────
+    # ── Bars (per-bar coloured fills) over a faint full-height slot ──
     for i, count in enumerate(buckets):
         x0 = pad_left + i * bar_w + gap / 2
         x1 = pad_left + (i + 1) * bar_w - gap / 2
+        # Slot on every bucket: empty deciles still read as chart
+        # instead of a void next to the bars.
+        shapes.append(
+            Path(
+                elements=[
+                    Path.MoveTo(x0, pad_top),
+                    Path.LineTo(x1, pad_top),
+                    Path.LineTo(x1, pad_top + chart_h),
+                    Path.LineTo(x0, pad_top + chart_h),
+                    Path.Close(),
+                ],
+                paint=ft.Paint(
+                    color=ft.Colors.with_opacity(0.06, c["text_faint"]),
+                    style=ft.PaintingStyle.FILL,
+                ),
+            )
+        )
         bar_h = (count / max_count) * chart_h if count > 0 else 0
         y0 = pad_top + chart_h - bar_h
         y1 = pad_top + chart_h
@@ -90,16 +107,18 @@ def build_score_histogram(
                 )
             )
 
-        # Count label above bar
+        # Count label: inside tall bars (keeps the top band clear for
+        # the threshold tag), above the bar when it's too short.
         if count > 0:
+            inside = bar_h >= 15
             labels.append(
                 ft.Text(
                     str(count),
                     size=9,
                     weight=ft.FontWeight.BOLD,
-                    color=color,
+                    color=c["main_bg"] if inside else color,
                     left=x0 + (x1 - x0) / 2 - 6,
-                    top=y0 - 16,
+                    top=y0 + 2 if inside else y0 - 16,
                 )
             )
 
@@ -137,7 +156,7 @@ def build_score_histogram(
                 size=8,
                 color=c["cyan"],
                 left=tx + 3,
-                top=pad_top + 2,
+                top=1,
             )
         )
 
@@ -171,10 +190,6 @@ def build_score_histogram(
 
     return ft.Container(
         content=content,
-        bgcolor=c["card"],
-        border_radius=RADIUS_LG,
-        border=_border_all(1, c["border"]),
-        padding=_padding_only(left=4, right=4, top=4, bottom=4),
     )
 
 
