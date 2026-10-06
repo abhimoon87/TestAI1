@@ -95,6 +95,16 @@ def test_report_parity_columns_in_row_specs():
     assert specs[16] == ("High", c["text"])
 
 
+def test_fund_cell_shows_na_when_zero():
+    """F/20 = 0 (no data) renders N/A; a real score stays numeric."""
+    app = make_app()
+    c = app.theme_colors
+    specs = app._row_specs({"ticker": "X", "fundamentals": 0}, 1, c, 50)
+    assert specs[11] == ("N/A", c["text_dim"])
+    specs = app._row_specs({"ticker": "X", "fundamentals": 13.0}, 1, c, 50)
+    assert specs[11] == ("13", c.get("fund", c["yellow"]))
+
+
 # ── Pane reflow plumbing ────────────────────────────────────────────
 
 

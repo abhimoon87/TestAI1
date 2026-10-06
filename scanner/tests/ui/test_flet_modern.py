@@ -178,6 +178,15 @@ def test_toast_sets_snackbar_and_updates():
     import flet as ft
 
     app = _ready_app()
+
+    # Production _safe_update pushes the page once after fn — emulate the
+    # real wrapper so we can assert the toast costs exactly one push
+    # (the old inner page.update() made every toast two full-page sends).
+    def _safe(fn):
+        fn()
+        app.page.update()
+
+    app._safe_update = _safe
     before = app.page.update_calls
     app._toast("Scan complete — 5 results", "success")
     assert len(app.page.shown) == 1
@@ -185,7 +194,7 @@ def test_toast_sets_snackbar_and_updates():
     assert isinstance(bar, ft.SnackBar)
     assert bar.content.value == "Scan complete — 5 results"
     assert bar.open is True
-    assert app.page.update_calls > before
+    assert app.page.update_calls == before + 1
 
 
 def test_toast_error_uses_white_text():
@@ -268,10 +277,16 @@ def test_stream_batch_multi_removal_keeps_grid_updating():
     rendered = []
     app._render_current_page = lambda: rendered.append(1)
     app.filter_text = "A"  # only AAA matches; BBB/CCC/DDD drop out
-    rows = [{"ticker": t, "total": 60.0} for t in ("AAA", "BBB", "CCC", "DDD")]
+    rows = [
+        {"ticker": t, "total": 60.0, "fundamentals": 12.0}
+        for t in ("AAA", "BBB", "CCC", "DDD")
+    ]
     app.all_results = [dict(r) for r in rows]
     app.filtered_results = [dict(r) for r in rows]
-    batch = [{"ticker": t, "total": 61.0} for t in ("AAA", "BBB", "CCC", "DDD")]
+    batch = [
+        {"ticker": t, "total": 61.0, "fundamentals": 12.0}
+        for t in ("AAA", "BBB", "CCC", "DDD")
+    ]
 
     app._on_stream_batch(batch)  # must not raise
 

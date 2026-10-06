@@ -287,7 +287,8 @@ class ScannerApp(
         settings = getattr(self, "settings_view", None)
         if settings is not None:
             settings.visible = False
-        self.page.update()
+        # No page.update() here — _display_results below pushes once with
+        # the overlay dismissal + hero/grid in a single send.
         self._load_settings_to_ui()
 
         # Hero independent of grid.
@@ -305,12 +306,16 @@ class ScannerApp(
 
         engine = getattr(self, "_scan_engine", None)
         if engine is not None and self.scanning:
+            # Same throttled registrations as scan start — raw callbacks
+            # here cost one full page.update() per ticker/line (203ms each).
             engine.set_progress_callback(
-                lambda p, m: self._safe_update(lambda: self._set_progress(p, m))
+                lambda p, m: self._throttle(
+                    "progress",
+                    0.5,
+                    lambda: self._safe_update(lambda: self._set_progress(p, m)),
+                )
             )
-            engine.set_log_callback(
-                lambda msg: self._safe_update(lambda: self._log(msg))
-            )
+            engine.set_log_callback(self._engine_log)
 
     def _motion_reduced(self) -> bool:
         """User preference: suppress decorative transitions/animations."""
@@ -482,7 +487,9 @@ class ScannerApp(
                 open=True,
             )
             self.page.show_dialog(bar)
-            self.page.update()
+            # No page.update() here — _toast wraps this in _safe_update,
+            # whose wrapper pushes the page once (this inner push doubled
+            # every toast to two full-page sends).
 
         try:
             self._safe_update(_show)
@@ -524,8 +531,8 @@ class ScannerApp(
         """Esc: leave the detail panel, else leave settings."""
         try:
             if getattr(self, "_detail_ticker", None) is not None:
+                # _back_to_results pushes the page itself.
                 self._back_to_results()
-                self.page.update()
             elif self.active_view == "settings":
                 self._show_view("dashboard")
         except Exception:
@@ -1761,11 +1768,13 @@ class ScannerApp(
         if getattr(self, "rating_filter_dd", None) is not None:
             self.rating_filter_dd.value = "All"
         if self.all_results:
+            # _display_results pushes the page itself — a second update
+            # here doubled every reset to two full-page sends.
             self._display_results(self.all_results)
         else:
             self._render_current_page()
+            self.page.update()
         self._scroll_to_top()
-        self.page.update()
 
     def _make_log_line(self, text, c):
         # "[HH:MM:SS] message" → dim timestamp + severity-tinted message

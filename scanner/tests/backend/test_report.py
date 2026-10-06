@@ -356,6 +356,14 @@ class TestGenerateHtmlReport:
         assert "bar-val" not in html and "bar-container" not in html
         assert '<td class="num price">₹2500</td>' in html
 
+    def test_zero_fundamentals_renders_na(self):
+        """Rows with no fundamentals show N/A, not a misleading 0."""
+        html = generate_html_report(
+            [_make_score_result(fundamentals=0.0)], fetch_news=False
+        )
+        assert '<td class="num sc-fund c-t2">N/A</td>' in html
+        assert 'data-fund="0"' in html  # sort/filter still sees the number
+
 
 class TestReportPolish:
     def test_meta_chips_rendered(self):

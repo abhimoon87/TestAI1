@@ -78,6 +78,7 @@ def _row_specs(r, rank, c, threshold):
     above = bool(r.get("above_poc"))
     both_ma = bool(r.get("close_above_both_ma"))
     rsi_val = r.get("rsi_val")
+    fund_pts = r.get("fundamentals", 0) or 0
     return [
         (str(rank), c["text_dim"]),
         (r.get("ticker", "?"), c["green"] if is_above else c["text"]),
@@ -93,7 +94,10 @@ def _row_specs(r, rank, c, threshold):
         ),
         (f"{r.get('volume', 0) or 0:.0f}", c["orange"]),
         (f"{r.get('rel_str', 0) or 0:.0f}", c["lime"]),
-        (f"{r.get('fundamentals', 0) or 0:.0f}", c.get("fund", c["yellow"])),
+        (
+            f"{fund_pts:.0f}" if fund_pts > 0 else "N/A",
+            c.get("fund", c["yellow"]) if fund_pts > 0 else c["text_dim"],
+        ),
         (
             "—" if rsi_val is None else f"{rsi_val:.1f}",
             c["text_dim"]
@@ -193,60 +197,31 @@ class ResultsViewMixin:
 
         pool = getattr(self, "_row_pool", None)
         cells = getattr(self, "_row_cells", None)
-        is_stream = (
-            pool is not None
-            and cells is not None
-            and pool  # non-empty pool required (empty dict after clear → full rebuild)
-            and self.sort_col is None
-            and not self._is_filter_active()
-            and self.table_column.controls  # already has rows from a prior render
-        )
         logger.info(
-            "_render_current_page: pool=%s cells=%s is_stream=%s sort=%s filter_active=%s controls=%d",
+            "_render_current_page: pool=%s cells=%s sort=%s filter_active=%s controls=%d",
             len(pool) if pool is not None else None,
             len(cells) if cells is not None else None,
-            is_stream,
             self.sort_col,
             self._is_filter_active(),
             len(self.table_column.controls),
         )
 
-        if is_stream and shown:
-            # Remove scan placeholder if present (it blocks row display)
-            if self.table_column.controls:
-                first = self.table_column.controls[0]
-                if isinstance(first, ft.Container) and not getattr(
-                    first, "_pool_ticker", None
-                ):
-                    # Check if it's the scan placeholder (has spinner inside)
-                    content = getattr(first, "content", None)
-                    if isinstance(content, ft.Column):
-                        self.table_column.controls.pop(0)
-
-            # Pinned column header (outside the row scroll pane)
+        # ── Pooled path: patch rows in place, rebuild the control list in
+        # page order ── page_shown is already filtered + sorted, so stream,
+        # filter and sort all reuse row controls instead of clearing the
+        # pool every render (the old sort/filter gates made this path
+        # unreachable and full-rebuilt ~4500 controls every 2s).
+        if pool and cells and shown:
+            # Pinned column header (outside the row scroll pane) — rebuilt
+            # each render so sort arrows track sort_col/sort_reverse.
             holder = getattr(self, "header_holder", None)
-            if holder is not None and not holder.controls:
+            if holder is not None:
                 holder.controls = [self._make_header_row(c)]
 
-            # Prune rows that left the current page (stream path never
-            # rebuilds, so a page change must drop stale rows here).
-            page_tickers = {r.get("ticker") for r in page_shown}
-            self.table_column.controls = [
-                ctl
-                for ctl in self.table_column.controls
-                if (tk := getattr(ctl, "_pool_ticker", None)) is None
-                or tk in page_tickers
-            ]
-
-            # Update existing rows and append new ones
+            new_controls = []
             for rank, r in enumerate(page_shown, start + 1):
-                ticker = r.get("ticker", "?")
-                if ticker in pool:
-                    self._update_row(ticker, rank, c, threshold, len(shown))
-                    # Row may be pooled but not currently displayed (page changed)
-                    row = pool[ticker]
-                    if not any(x is row for x in self.table_column.controls):
-                        self.table_column.controls.append(row)
+                if self._update_row(r, rank, c, threshold):
+                    row = pool[r.get("ticker", "?")]
                 else:
                     score = _score_of(r)
                     is_above = score >= threshold
@@ -256,21 +231,22 @@ class ResultsViewMixin:
                         else (c["row_alt"] if rank % 2 else c["main_bg"])
                     )
                     row = self._create_row_controls(r, rank, c, row_bg, threshold)
-                    self.table_column.controls.append(row)
+                new_controls.append(row)
+            self.table_column.controls = new_controls
 
             logger.info(
-                "_render_current_page STREAM DONE: table_ctrls=%d, shown=%d, results=%d",
-                len(self.table_column.controls),
+                "_render_current_page POOLED DONE: table_ctrls=%d, shown=%d, results=%d",
+                len(new_controls),
                 len(shown),
                 len(results),
             )
 
-        # ── Full rebuild path ─────────────────────────────────────────
+        # ── Full rebuild path (first render / pool cleared / no rows) ──
         else:
-            if getattr(self, "_row_pool", None):
-                self._row_pool.clear()
-            if getattr(self, "_row_cells", None):
-                self._row_cells.clear()
+            # Pool survives here: an empty filtered view must keep rows so
+            # loosening the filter takes the pooled path again. Explicit
+            # invalidators (scan start, width tier, detail open, settings)
+            # clear the pool themselves.
             self.table_column.controls.clear()
 
             if not shown:
@@ -810,23 +786,19 @@ class ResultsViewMixin:
         row._pool_ticker = ticker
         return row
 
-    def _update_row(self, ticker, rank, c, threshold, shown_len):
+    def _update_row(self, r, rank, c, threshold):
         """Patch an existing pooled row's text values in-place.
 
-        Returns True if the row was found and updated, False otherwise.
+        ``r`` is the row dict handed in by the caller (page_shown), so no
+        lock-guarded scan of all_results is needed per row — that scan was
+        O(results) x page_size per render.
+
+        Returns True if the pooled row was found and updated, False otherwise.
         """
+        ticker = r.get("ticker", "?")
         row = getattr(self, "_row_pool", {}).get(ticker)
         cells = getattr(self, "_row_cells", {}).get(ticker)
         if row is None or cells is None:
-            return False
-
-        with self._results_lock:
-            r = None
-            for result in self.all_results:
-                if result.get("ticker") == ticker:
-                    r = result
-                    break
-        if r is None:
             return False
 
         total = _score_of(r)

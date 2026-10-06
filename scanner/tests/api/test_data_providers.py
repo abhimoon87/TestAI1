@@ -15,6 +15,7 @@ import pandas as pd
 from scanner.api.data_providers import (
     DataProvider,
     _cache_key,
+    _fetch_fundamentals_screener,
     _fetch_fundamentals_yfinance,
     _fetch_yfinance,
     _fetch_yfinance_index,
@@ -263,6 +264,49 @@ class TestFetchFundamentalsYfinance:
 
         mock_yf.Ticker.assert_called_once_with("RELIANCE.NS")
 
+    def test_rate_limit_waits_and_retries(self):
+        """A 429 during .info waits 2s then 4s and retries instead of failing."""
+        outcomes = [
+            Exception("429 Too Many Requests"),
+            Exception("Too Many Requests"),
+            {"trailingPE": 20.0, "returnOnEquity": 0.25},
+        ]
+
+        class _Ticker:
+            def __init__(self, *_a):
+                pass
+
+            @property
+            def info(self):
+                outcome = outcomes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+        mock_yf = MagicMock()
+        mock_yf.Ticker.side_effect = _Ticker
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("time.sleep") as sleep:
+                result = _fetch_fundamentals_yfinance("RELIANCE")
+
+        assert result is not None
+        assert result["pe_ratio"] == 20.0
+        assert [c.args[0] for c in sleep.call_args_list] == [2, 4]
+        assert len(outcomes) == 0  # exactly three attempts
+
+    def test_non_rate_error_fails_fast(self):
+        """Non-429 errors don't burn the scan budget on retries."""
+        mock_yf = MagicMock()
+        mock_yf.Ticker.side_effect = ValueError("delisted")
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("time.sleep") as sleep:
+                result = _fetch_fundamentals_yfinance("DEAD")
+
+        assert result is None
+        sleep.assert_not_called()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DataProvider class
@@ -405,8 +449,16 @@ class TestDataProvider:
                 "scanner.api.data_providers._fetch_fundamentals_alpha_vantage",
                 return_value=None,
             ):
-                with patch.dict("sys.modules", {"yfinance": mock_yf}):
-                    result = provider.fetch_fundamentals("RELIANCE")
+                with patch(
+                    "scanner.api.data_providers._fetch_fundamentals_screener",
+                    return_value=None,
+                ):
+                    with patch(
+                        "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                        return_value=None,
+                    ):
+                        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+                            result = provider.fetch_fundamentals("RELIANCE")
 
         assert result is not None
         assert result["pe_ratio"] == 20.0
@@ -424,18 +476,22 @@ class TestDataProvider:
                 return_value=None,
             ):
                 with patch(
-                    "scanner.api.data_providers._fetch_fundamentals_yfinance",
+                    "scanner.api.data_providers._fetch_fundamentals_screener",
                     return_value=None,
                 ):
                     with patch(
-                        "scanner.api.data_providers._fetch_fundamentals_nselib",
+                        "scanner.api.data_providers._fetch_fundamentals_yfinance",
                         return_value=None,
                     ):
                         with patch(
-                            "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                            "scanner.api.data_providers._fetch_fundamentals_nselib",
                             return_value=None,
                         ):
-                            result = provider.fetch_fundamentals("INVALID")
+                            with patch(
+                                "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                                return_value=None,
+                            ):
+                                result = provider.fetch_fundamentals("INVALID")
 
         assert result is None
 
@@ -456,30 +512,41 @@ class TestDataProvider:
                 return_value=None,
             ):
                 with patch(
-                    "scanner.api.data_providers._fetch_fundamentals_yfinance",
+                    "scanner.api.data_providers._fetch_fundamentals_screener",
                     return_value=None,
                 ):
                     with patch(
-                        "scanner.api.data_providers._fetch_fundamentals_marketlens",
-                        ml_mock,
+                        "scanner.api.data_providers._fetch_fundamentals_yfinance",
+                        return_value=None,
                     ):
                         with patch(
-                            "scanner.api.data_providers._fetch_fundamentals_nselib",
-                            nselib_mock,
+                            "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                            ml_mock,
                         ):
-                            result = provider.fetch_fundamentals("RELIANCE")
+                            with patch(
+                                "scanner.api.data_providers._fetch_fundamentals_nselib",
+                                nselib_mock,
+                            ):
+                                result = provider.fetch_fundamentals("RELIANCE")
 
         assert result == {"pe_ratio": 10.0, "eps_growth": 5.0, "rev_growth": 6.0}
         assert provider.last_provider == "marketlens"
+        # nselib can only add P/E, which marketlens already supplied — skipped
         nselib_mock.assert_not_called()
 
     def test_fetch_fundamentals_result_cached(self):
-        """use_cache=True: the second fetch replays the TTL cache, no HTTP."""
+        """use_cache=True: a complete compile is cached — second fetch replays it."""
         from scanner.api.data_providers import _FUNDAMENTALS_CACHE
 
         _FUNDAMENTALS_CACHE.clear()
         provider = DataProvider(use_cache=True)
-        finnhub_mock = MagicMock(return_value={"pe_ratio": 12.0, "roe": 15.0})
+        complete = {
+            "pe_ratio": 12.0,
+            "roe": 15.0,
+            "eps_growth": 8.0,
+            "rev_growth": 10.0,
+        }
+        finnhub_mock = MagicMock(return_value=complete)
 
         with patch(
             "scanner.api.data_providers._fetch_fundamentals_finnhub", finnhub_mock
@@ -487,10 +554,121 @@ class TestDataProvider:
             first = provider.fetch_fundamentals("CACHETEST")
             second = provider.fetch_fundamentals("CACHETEST")
 
-        assert first == second == {"pe_ratio": 12.0, "roe": 15.0}
+        assert first == second == complete
         finnhub_mock.assert_called_once()
         assert provider.last_provider == "cache"
         _FUNDAMENTALS_CACHE.clear()
+
+    def test_fetch_fundamentals_compiles_across_sources(self):
+        """Every provider fills only what's missing; the chain stops once all
+        four score fields are compiled (first provider to supply a field wins)."""
+        provider = DataProvider(use_cache=False)
+
+        with patch(
+            "scanner.api.data_providers._fetch_fundamentals_finnhub", return_value=None
+        ):
+            with patch(
+                "scanner.api.data_providers._fetch_fundamentals_alpha_vantage",
+                return_value=None,
+            ):
+                with patch(
+                    "scanner.api.data_providers._fetch_fundamentals_screener",
+                    return_value={"pe_ratio": 18.0, "roe": 25.0},
+                ):
+                    with patch(
+                        "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                        return_value={
+                            "pe_ratio": 99.0,
+                            "eps_growth": 12.0,
+                            "rev_growth": 15.0,
+                        },
+                    ):
+                        with patch(
+                            "scanner.api.data_providers._fetch_fundamentals_yfinance"
+                        ) as mock_yf:
+                            result = provider.fetch_fundamentals("MERGED")
+
+        assert result == {
+            "pe_ratio": 18.0,
+            "roe": 25.0,
+            "eps_growth": 12.0,
+            "rev_growth": 15.0,
+        }
+        mock_yf.assert_not_called()  # all four compiled before yfinance
+        assert provider.last_provider == "screener+marketlens"
+
+    def test_partial_compile_not_frozen_missing_fields_retry(self):
+        """A partial compile isn't cached as final: saved raws replay while
+        missing fields keep retrying live until they arrive."""
+        from scanner.api.data_providers import _FUNDAMENTALS_CACHE
+
+        _FUNDAMENTALS_CACHE.clear()
+        provider = DataProvider(use_cache=True)
+        finnhub_mock = MagicMock(
+            return_value={
+                "pe_ratio": 20.0,
+                "roe": 22.0,
+                "eps_growth": None,
+                "rev_growth": None,
+            }
+        )
+        # marketlens fails the first compile, recovers on the second
+        ml_mock = MagicMock(
+            side_effect=[None, {"eps_growth": 10.0, "rev_growth": 12.0}]
+        )
+
+        with patch(
+            "scanner.api.data_providers._fetch_fundamentals_finnhub", finnhub_mock
+        ):
+            with patch(
+                "scanner.api.data_providers._fetch_fundamentals_alpha_vantage",
+                return_value=None,
+            ):
+                with patch(
+                    "scanner.api.data_providers._fetch_fundamentals_screener",
+                    return_value=None,
+                ):
+                    with patch(
+                        "scanner.api.data_providers._fetch_fundamentals_marketlens",
+                        ml_mock,
+                    ):
+                        with patch(
+                            "scanner.api.data_providers._fetch_fundamentals_yfinance",
+                            return_value=None,
+                        ):
+                            first = provider.fetch_fundamentals("PARTIAL")
+                            second = provider.fetch_fundamentals("PARTIAL")
+
+        assert first == {"pe_ratio": 20.0, "roe": 22.0}  # partial, not frozen
+        assert second == {
+            "pe_ratio": 20.0,
+            "roe": 22.0,
+            "eps_growth": 10.0,
+            "rev_growth": 12.0,
+        }
+        finnhub_mock.assert_called_once()  # raw saved on the first compile
+        assert ml_mock.call_count == 2  # failures aren't cached — retried
+        _FUNDAMENTALS_CACHE.clear()
+
+    def test_fetch_fundamentals_screener_maps_peer_fields(self):
+        """Screener.in's stock_pe/stock_roe map into the score fields."""
+        from scanner.api.indian_fundamentals import PeerComparison
+
+        peer = PeerComparison(
+            ticker="RELIANCE", industry="Oil & Gas", stock_pe=22.5, stock_roe=18.0
+        )
+        with patch(
+            "scanner.api.indian_fundamentals.fetch_peer_comparison",
+            return_value=peer,
+        ):
+            fund = _fetch_fundamentals_screener("RELIANCE")
+
+        assert fund == {
+            "pe_ratio": 22.5,
+            "eps_growth": None,
+            "rev_growth": None,
+            "roe": 18.0,
+        }
 
     def test_min_bars_filter(self):
         """Stocks with < 50 bars should be rejected."""

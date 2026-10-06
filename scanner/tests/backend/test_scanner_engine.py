@@ -235,18 +235,21 @@ class TestEnrichRowsInPlaceCache:
             return {"total": 88.0, "combined_rating": "EXCELLENT"}
 
         with patch(
-            "scanner.backend.scanner_engine.compute_scores",
-            side_effect=fake_compute,
+            "scanner.backend.scanner_engine.fetch_fundamentals", return_value=None
         ):
-            _enrich_rows_in_place(
-                rows,
-                {"TCS": df},
-                settings={},
-                global_data=None,
-                timeframe="D",
-                index_df=None,
-                enrich=lambda *a, **k: AssertionError("cache hit, no enrich"),
-            )
+            with patch(
+                "scanner.backend.scanner_engine.compute_scores",
+                side_effect=fake_compute,
+            ):
+                _enrich_rows_in_place(
+                    rows,
+                    {"TCS": df},
+                    settings={},
+                    global_data=None,
+                    timeframe="D",
+                    index_df=None,
+                    enrich=lambda *a, **k: AssertionError("cache hit, no enrich"),
+                )
         assert seen["_fii_is_buying"] is True
         assert seen["_dii_is_buying"] is False
 
@@ -277,8 +280,9 @@ class TestEnrichRowsInPlaceCache:
         assert entry["providers"] == {"_sentiment_score": 0.7, "_article_count": 3}
         assert entry["fundamentals"] == {"pe_ratio": 15.0}
 
-    def test_cached_known_none_fundamentals_skip_refetch(self):
-        """fundamentals=None cached means 'no fundamentals' — don't re-ask."""
+    def test_cached_known_none_fundamentals_refetched(self):
+        """A cached-None fundamentals entry retries live (a 429-era failure
+        must not freeze the ticker's F-score for the whole TTL)."""
         data_fetcher._enrichment_cache_put("SMALL", {"_social_score": 0.2}, None)
         df = _tiny_df()
         rows = [{"ticker": "SMALL", "total": 50.0}]
@@ -286,12 +290,37 @@ class TestEnrichRowsInPlaceCache:
         def enrich(ticker, settings, gd):
             raise AssertionError("provider enrich must not run on a cache hit")
 
-        with patch("scanner.backend.scanner_engine.fetch_fundamentals") as mock_fund:
+        with patch(
+            "scanner.backend.scanner_engine.fetch_fundamentals",
+            return_value={"pe_ratio": 18.0},
+        ) as mock_fund:
             out = self._run(rows, {"SMALL": df}, enrich)
 
-        mock_fund.assert_not_called()
-        assert "_fundamentals" not in df.attrs  # stays fundamentals-free
+        mock_fund.assert_called_once_with("SMALL")
+        assert df.attrs.get("_fundamentals") == {"pe_ratio": 18.0}
+        # The recovered fundamentals replace the None in the cache
+        entry = data_fetcher._enrichment_cache_get("SMALL")
+        assert entry is not None
+        assert entry["fundamentals"] == {"pe_ratio": 18.0}
         assert out[0]["total"] == 88.0
+
+    def test_cached_none_fundamentals_failure_stays_none(self):
+        """When the live retry also fails, the entry keeps fundamentals=None
+        so the next scan retries again (failures are never re-cached)."""
+        data_fetcher._enrichment_cache_put("DOWN", {"_social_score": 0.1}, None)
+        df = _tiny_df()
+        rows = [{"ticker": "DOWN", "total": 50.0}]
+
+        with patch(
+            "scanner.backend.scanner_engine.fetch_fundamentals", return_value=None
+        ) as mock_fund:
+            self._run(rows, {"DOWN": df}, lambda *a: {})
+
+        mock_fund.assert_called_once()
+        assert "_fundamentals" not in df.attrs
+        entry = data_fetcher._enrichment_cache_get("DOWN")
+        assert entry is not None
+        assert entry["fundamentals"] is None
 
     def test_cache_miss_with_all_providers_empty_is_not_cached(self):
         """Providers returning nothing must not freeze an empty entry."""

@@ -229,7 +229,7 @@ class TestSmallCacheReadthrough:
     def test_disabled_flag_drops_stale_keys(self, monkeypatch, tmp_path):
         _isolated_cache(monkeypatch, tmp_path)
         data_fetcher._enrichment_cache_put(
-            "PF13", {"_sentiment_score": 0.9, "_insider_score": 5}, None
+            "PF13", {"_sentiment_score": 0.9, "_insider_score": 5}, {"pe_ratio": 14.0}
         )
 
         def enrich(ticker, settings, gd):

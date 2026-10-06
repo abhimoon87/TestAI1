@@ -1529,6 +1529,7 @@ class TestRestoreMainArea:
                 "entry_signal": False,
                 "trend_dir": "Bull",
                 "ma_bullish": True,
+                "fundamentals": 12.0,
             }
             for i in range(4)
         ]
@@ -1569,6 +1570,7 @@ class TestRestoreMainArea:
                 "entry_signal": False,
                 "trend_dir": "Bull",
                 "ma_bullish": True,
+                "fundamentals": 12.0,
             }
         ]
         app.filtered_results = list(app.all_results)

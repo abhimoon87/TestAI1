@@ -1504,6 +1504,7 @@ def _result_row_html(
     both_ma = bool(r.get("close_above_both_ma"))
     rsi_val = r.get("rsi_val")
     pc1m = r.get("pc1m", 0) or 0
+    fund_pts = r.get("fundamentals", 0) or 0
     trend_dir = r.get("trend_dir") or ""
     sideways = bool(r.get("is_sideways"))
     sideways_reasons = _html.escape(", ".join(r.get("sideways_reasons", [])))
@@ -1561,7 +1562,7 @@ def _result_row_html(
             <td class="{bothma_cls}">{"YES" if both_ma else "NO"}</td>
             <td class="num sc-orange c-t2">{r.get("volume", 0) or 0:.0f}</td>
             <td class="num sc-lime c-t2">{r.get("rel_str", 0) or 0:.0f}</td>
-            <td class="num sc-fund c-t2">{r.get("fundamentals", 0) or 0:.0f}</td>
+            <td class="num sc-fund c-t2">{"N/A" if not fund_pts else f"{fund_pts:.0f}"}</td>
             <td class="num {rsi_cls}">{"—" if rsi_val is None else f"{rsi_val:.1f}"}</td>
             <td class="num {"bull" if pc1m > 0 else "bear"}">{pc1m:+.1f}%</td>
             <td class="c-t1 {"bull" if trend_dir == "Bull" else "bear"}">{("^ " if trend_dir == "Bull" else "v ") + (trend_dir or "?")}</td>

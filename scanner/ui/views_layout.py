@@ -668,7 +668,7 @@ class LayoutViewMixin:
         )
         self.fund_filter_cb = ft.Checkbox(
             label="Hide zero fundamental score",
-            value=False,
+            value=True,
             label_style=ft.TextStyle(size=11, color=c["text_dim"]),
             active_color=c["green"],
             check_color=c["on_accent"],

@@ -93,6 +93,7 @@ class ScanOrchestrationMixin:
         # a news prefetch) can detect they no longer own the results.
         with self._scan_lock:
             self._scan_epoch += 1
+        final_sync = None
         try:
             from ..backend.scanner_engine import ScannerEngine
 
@@ -106,7 +107,9 @@ class ScanOrchestrationMixin:
             engine.set_progress_callback(
                 lambda p, m: self._throttle(
                     "progress",
-                    0.15,
+                    # 0.5s >= the measured 203-454ms cost of one
+                    # page.update() — smaller windows never rate-limit.
+                    0.5,
                     lambda: self._safe_update(lambda: self._set_progress(p, m)),
                 )
             )
@@ -160,7 +163,7 @@ class ScanOrchestrationMixin:
                 if result.error:
                     self._log(f"Scan finished with error: {result.error}")
 
-            self._safe_update(_final_sync)
+            final_sync = _final_sync
 
         except Exception as e:
             msg = f"\nERROR: {e!s}"
@@ -168,7 +171,15 @@ class ScanOrchestrationMixin:
             # exits, so a closure referencing it would NameError if deferred.
             self._safe_update(lambda: self._log(msg))
         finally:
-            self._safe_update(self._scan_complete)
+            # One page.update for sync + complete: two back-to-back
+            # _safe_update calls each cost a 200-450ms full-page send
+            # (~1-2s of frozen UI at scan end).
+            def _finish():
+                if final_sync is not None:
+                    final_sync()
+                self._scan_complete()
+
+            self._safe_update(_finish)
 
     def _on_stream_batch(self, batch):
         if not batch:
@@ -286,7 +297,7 @@ class ScanOrchestrationMixin:
         buf = self.__dict__.setdefault("_engine_log_buf", [])
         buf.append(msg)
         self._throttle(
-            "engine_log", 0.25, lambda: self._safe_update(self._flush_engine_log)
+            "engine_log", 0.5, lambda: self._safe_update(self._flush_engine_log)
         )
 
     def _flush_engine_log(self):

@@ -7,12 +7,15 @@ Provider priority for OHLCV:
   3. nselib — NSE library, no auth needed
   4. Market Lens — close+volume only (NaN high/low), last resort
 
-Provider priority for Fundamentals:
-  1. Finnhub — Institutional-grade data (free tier)
-  2. Alpha Vantage — Technical indicators + fundamentals (free API key)
-  3. yfinance .info — Detailed financial data
+Provider strategy for Fundamentals — fetch ALL free sources, save each
+raw result, then compile the four score fields (pe_ratio, eps_growth,
+rev_growth, roe; first provider to supply a field wins):
+  1. Finnhub — institutional-grade data (free API key)
+  2. Alpha Vantage — overview (free API key)
+  3. Screener.in — Stock PE + ROE (no key, cached)
   4. Market Lens — NSE profile + quarterly financials (no ROE)
-  5. nselib pe_ratio — Bulk P/E ratio for all stocks
+  5. yfinance .info — all fields (429-prone, last full source)
+  6. nselib pe_ratio — bulk P/E ratio for all stocks
 
 All providers normalize data to a common DataFrame format:
   columns = [open, high, low, close, volume]
@@ -86,7 +89,26 @@ VACUUM_SLACK_MB = 8.0
 
 # Fundamentals change quarterly — persist each provider chain's result so
 # single-ticker fetches (fallback, detail) and scans share one disk-backed read.
+# Two levels share this cache: raw per-provider results under
+# make_key(ticker, provider) — saved the moment a provider returns, never
+# erased by later failures — and the compiled four-field score dict under
+# make_key(ticker), stored only when COMPLETE (a partial compile is retried
+# against the still-cached raws next call instead of freezing for 6h).
 _FUNDAMENTALS_CACHE: TTLCache = TTLCache(ttl=6 * 3600, namespace="fundamentals")
+
+# The four fields _score_fundamentals_dict consumes (5 pts each, max 20).
+_FUND_SCORE_FIELDS = ("pe_ratio", "eps_growth", "rev_growth", "roe")
+
+# Which score fields each provider can fill — lets the chain skip any
+# provider that cannot add anything new (and stop once all fields are set).
+_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
+    "finnhub": _FUND_SCORE_FIELDS,
+    "alpha_vantage": _FUND_SCORE_FIELDS,
+    "screener": ("pe_ratio", "roe"),
+    "marketlens": ("pe_ratio", "eps_growth", "rev_growth"),
+    "yfinance": _FUND_SCORE_FIELDS,
+    "nselib": ("pe_ratio",),
+}
 
 
 from ..shared._index_utils import _normalize_daily_index
@@ -306,8 +328,8 @@ def _import_price_pair(key: str, ticker: str) -> pd.DataFrame | None:
     return df
 
 
-def _store_price_row(key: str, df: pd.DataFrame, expires: float) -> None:
-    """Serialize the frame as parquet bytes and upsert the db row."""
+def _encode_price_blob(df: pd.DataFrame) -> bytes:
+    """Serialize the frame as parquet bytes (CPU-heavy — keep out of locks)."""
     buf = io.BytesIO()
     try:
         df.to_parquet(buf, index=True)
@@ -317,12 +339,21 @@ def _store_price_row(key: str, df: pd.DataFrame, expires: float) -> None:
 
         table = _pa.Table.from_pandas(df.reset_index(drop=False), preserve_index=True)
         _pq.write_table(table, buf)
+    return buf.getvalue()
+
+
+def _upsert_price_row(key: str, payload: bytes, expires: float) -> None:
     db.get_conn().execute(
         "INSERT INTO price_cache (cache_key, payload, expires) VALUES (?, ?, ?)"
         " ON CONFLICT (cache_key)"
         " DO UPDATE SET payload = excluded.payload, expires = excluded.expires",
-        (key, buf.getvalue(), expires),
+        (key, payload, expires),
     )
+
+
+def _store_price_row(key: str, df: pd.DataFrame, expires: float) -> None:
+    """Serialize the frame as parquet bytes and upsert the db row."""
+    _upsert_price_row(key, _encode_price_blob(df), expires)
 
 
 def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
@@ -349,10 +380,18 @@ def _get_cached(ticker: str, period: str, provider: str) -> pd.DataFrame | None:
 def _set_cached(ticker: str, period: str, provider: str, df: pd.DataFrame):
     """Store data in the price cache (db BLOB with a CACHE_TTL_HOURS expiry)."""
     key = _cache_key(ticker, period, provider)
+    try:
+        # Normalize + parquet-encode outside the write lock — 8 chunk
+        # threads write here and the encode dwarfs the upsert; only the
+        # db write needs serializing.
+        payload = _encode_price_blob(_normalize_daily_index(df))
+        expires = time.time() + CACHE_TTL_HOURS * 3600
+    except Exception as e:
+        logger.debug("Cache write failed for %s: %s", ticker, e)
+        return
     with _CACHE_WRITE_LOCK:
         try:
-            df = _normalize_daily_index(df)
-            _store_price_row(key, df, time.time() + CACHE_TTL_HOURS * 3600)
+            _upsert_price_row(key, payload, expires)
         except Exception as e:
             logger.debug("Cache write failed for %s: %s", ticker, e)
 
@@ -828,16 +867,41 @@ def _fetch_fundamentals_alpha_vantage(ticker: str) -> dict | None:
         return None
 
 
+def _is_rate_limited(err: Exception) -> bool:
+    """True for Yahoo-style 429 / rate-limit failures (worth retrying)."""
+    msg = str(err).lower()
+    return "429" in msg or "too many requests" in msg or "rate limit" in msg
+
+
 def _fetch_fundamentals_yfinance(ticker: str) -> dict | None:
-    """Fetch fundamentals from yfinance .info."""
+    """Fetch fundamentals from yfinance .info (429-tolerant).
+
+    A burst of enrichment workers can trip Yahoo's rate limit; wait out the
+    window (2s, then 4s) before retrying instead of caching the miss.
+    Non-rate errors fail fast — retrying them only wastes the scan budget.
+    """
     try:
         import yfinance as yf
 
         info = {}
-        for yf_ticker in yf_quote_variants(ticker):
-            info = yf.Ticker(yf_ticker).info or {}
+        for attempt in range(3):
+            rate_limited = False
+            try:
+                for yf_ticker in yf_quote_variants(ticker):
+                    info = yf.Ticker(yf_ticker).info or {}
+                    if info:
+                        break
+            except Exception as e:
+                if not _is_rate_limited(e):
+                    logger.info("yfinance fundamentals failed for %s: %s", ticker, e)
+                    return None
+                rate_limited = True
+                info = {}
             if info:
                 break
+            if not (rate_limited and attempt < 2):
+                break  # no data (not a rate limit) — fail fast
+            time.sleep(2 * (attempt + 1))  # 2s, 4s
 
         if not info:
             return None
@@ -929,6 +993,26 @@ def _fetch_fundamentals_marketlens(ticker: str) -> dict | None:
         return fund if any(v is not None for v in fund.values()) else None
     except Exception as e:
         logger.info("Market Lens fundamentals failed for %s: %s", ticker, e)
+        return None
+
+
+def _fetch_fundamentals_screener(ticker: str) -> dict | None:
+    """Screener.in (keyless, cached) — Stock PE + ROE only."""
+    try:
+        from .indian_fundamentals import fetch_peer_comparison
+
+        peer = fetch_peer_comparison(ticker)
+        if not peer:
+            return None
+        fund = {
+            "pe_ratio": peer.stock_pe,
+            "eps_growth": None,
+            "rev_growth": None,
+            "roe": peer.stock_roe,
+        }
+        return fund if any(v is not None for v in fund.values()) else None
+    except Exception as e:
+        logger.info("Screener fundamentals failed for %s: %s", ticker, e)
         return None
 
 
@@ -1095,14 +1179,16 @@ class DataProvider:
         self, ticker: str, provider_timeout: float | None = None
     ) -> dict | None:
         """
-        Fetch fundamental data with provider fallback.
+        Fetch fundamentals from ALL free providers, save each raw result,
+        then compile the four score fields.
 
-        Priority:
-          1. Finnhub (institutional-grade, free tier)
-          2. Alpha Vantage (technical indicators + fundamentals)
-          3. yfinance (detailed financial data, has ROE)
-          4. Market Lens (NSE profile + quarterly financials, no ROE)
-          5. nselib (bulk P/E ratio only)
+        Each provider's result is cached under its own key the moment it
+        arrives (failures are never cached), so a later compile combines
+        sources fetched at different times and only re-fetches what is
+        still missing. Fields merge first-writer-wins; providers that
+        cannot add a missing field are skipped. The compiled dict is
+        cached only when all four fields are set — partial compiles are
+        recompiled from the raws on the next call.
 
         Args:
             provider_timeout: When set, each provider call is capped at this
@@ -1122,34 +1208,58 @@ class DataProvider:
         providers = [
             ("finnhub", lambda: _fetch_fundamentals_finnhub(ticker)),
             ("alpha_vantage", lambda: _fetch_fundamentals_alpha_vantage(ticker)),
-            ("yfinance", lambda: _fetch_fundamentals_yfinance(ticker)),
+            ("screener", lambda: _fetch_fundamentals_screener(ticker)),
             ("marketlens", lambda: _fetch_fundamentals_marketlens(ticker)),
+            ("yfinance", lambda: _fetch_fundamentals_yfinance(ticker)),
             ("nselib", lambda: _fetch_fundamentals_nselib(ticker)),
         ]
 
+        merged: dict = {}
+        contributors: list[str] = []
         for name, fetch_fn in providers:
-            try:
-                if provider_timeout:
-                    fund = _call_with_timeout(fetch_fn, provider_timeout)
-                    if fund is _TIMEOUT:
-                        logger.debug(
-                            "Fundamentals provider %s timed out for %s", name, ticker
-                        )
-                        continue
-                else:
-                    fund = fetch_fn()
-                if fund is not None:
-                    with self._meta_lock:
-                        self.last_provider = name
-                    if self.use_cache:
-                        _FUNDAMENTALS_CACHE.set(
-                            _FUNDAMENTALS_CACHE.make_key(ticker), fund
-                        )
-                    return fund
-            except Exception as e:
-                logger.info(
-                    "Fundamentals provider %s failed for %s: %s", name, ticker, e
-                )
+            needed = {f for f in _FUND_SCORE_FIELDS if f not in merged}
+            if not needed:
+                break
+            if not set(_PROVIDER_FIELDS[name]) & needed:
                 continue
+            fund = None
+            if self.use_cache:
+                fund = _FUNDAMENTALS_CACHE.get(
+                    _FUNDAMENTALS_CACHE.make_key(ticker, name)
+                )
+            if fund is None:
+                try:
+                    if provider_timeout:
+                        fund = _call_with_timeout(fetch_fn, provider_timeout)
+                        if fund is _TIMEOUT:
+                            fund = None
+                    else:
+                        fund = fetch_fn()
+                except Exception as e:
+                    logger.info(
+                        "Fundamentals provider %s failed for %s: %s", name, ticker, e
+                    )
+                    fund = None
+                if fund and self.use_cache:
+                    # Save the raw result — failures stay uncached so they
+                    # retry on the next compile.
+                    _FUNDAMENTALS_CACHE.set(
+                        _FUNDAMENTALS_CACHE.make_key(ticker, name), fund
+                    )
+            if not fund:
+                continue
+            contributed = False
+            for f in fund:
+                if f in needed and merged.get(f) is None and fund[f] is not None:
+                    merged[f] = fund[f]
+                    contributed = True
+            if contributed:
+                contributors.append(name)
 
-        return None
+        if not merged:
+            return None
+        with self._meta_lock:
+            self.last_provider = "+".join(contributors)
+        if self.use_cache and len(merged) == len(_FUND_SCORE_FIELDS):
+            _FUNDAMENTALS_CACHE.set(_FUNDAMENTALS_CACHE.make_key(ticker), merged)
+        return merged

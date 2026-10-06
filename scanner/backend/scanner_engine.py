@@ -265,7 +265,19 @@ def _enrich_small_cached(ticker, df, settings, global_data, enrich, use_cache=Tr
                     for key in [k for k in providers if k.startswith(prefixes)]:
                         del providers[key]
             fund = cached.get("fundamentals")
-            if fund is not None:
+            if fund is None:
+                # Cached-None = the last attempt failed (e.g. a Yahoo 429
+                # burst). Failures don't deserve a 24h freeze — retry live
+                # and re-cache only on success.
+                try:
+                    fund = fetch_fundamentals(ticker)
+                except (RequestException, ValueError, KeyError) as e:
+                    logger.debug("Fundamentals fetch failed for %s: %s", ticker, e)
+                    fund = None
+                if fund is not None:
+                    df.attrs["_fundamentals"] = fund
+                    enrichment_put(ticker, cached.get("providers") or {}, fund)
+            else:
                 df.attrs["_fundamentals"] = fund
             return {**settings, **(global_data or {}), **providers}
     if df.attrs.get("_fundamentals") is None:
@@ -365,9 +377,14 @@ def _enrich_rows_in_place(
     # (15 s each via ENRICH_PROVIDER_TIMEOUT) + fundamentals + re-score,
     # so 60 s gives ample headroom while still bounding worst-case stalls.
 
-    # Shared executor for the 5 per-ticker provider calls — reused across
-    # all enrichment workers to avoid creating/destroying an executor per ticker.
-    _provider_executor = _DaemonThreadPoolExecutor(max_workers=5)
+    # Shared executor for the per-ticker provider calls — reused across
+    # all enrichment workers to avoid creating/destroying an executor per
+    # ticker. Sized to the worst-case in-flight demand (8 enrichment
+    # workers x 7 futures: 6 providers + shariah) so as_completed's
+    # ENRICH_PROVIDER_TIMEOUT measures real provider latency instead of
+    # queue wait; per-domain concurrency stays at 8 (one future per worker).
+    # ponytail: drop to 24 if a provider starts rate-limiting.
+    _provider_executor = _DaemonThreadPoolExecutor(max_workers=56)
 
     def _enrich_one(r):
         ticker = r["ticker"]
@@ -408,20 +425,18 @@ def _enrich_rows_in_place(
                     fund = None
                     try:
                         if cached is not None:
-                            fund = cached.get(
-                                "fundamentals"
-                            )  # may be None = known-none
-                        else:
+                            fund = cached.get("fundamentals")
+                        if fund is None:  # absent or known-none — retry live
                             fund = _call_with_timeout(
                                 lambda: fetch_fundamentals(ticker),
                                 timeout=TICKER_TIMEOUT,
                             )
-                            if (
-                                fund is not None
-                                and fund is not _TIMEOUT
-                                and provider_keys
-                            ):
-                                enrichment_put(ticker, provider_keys, fund)
+                            if fund is not None and fund is not _TIMEOUT:
+                                keys = provider_keys or (
+                                    cached.get("providers") if cached else None
+                                )
+                                if keys:
+                                    enrichment_put(ticker, keys, fund)
                         if fund is not None and fund is not _TIMEOUT:
                             df.attrs["_fundamentals"] = fund
                     except (RequestException, ValueError, KeyError) as e:
@@ -814,14 +829,21 @@ class ScannerEngine:
             return fetch_mandi_prices()
 
         futures = {}
-        with ThreadPoolExecutor(max_workers=2) as ex:
+        ex = _DaemonThreadPoolExecutor(max_workers=2)
+        try:
             if settings.get("use_macro_data", True):
                 futures[ex.submit(_fetch_macro)] = "macro"
                 futures[ex.submit(_fetch_mandi)] = "mandi"
-            for fut in as_completed(futures):
-                kind = futures[fut]
-                try:
-                    res = fut.result()
+            # 30s cap — a slow/hung source must not stall the whole prepare
+            # phase; completed results are kept, stragglers are abandoned.
+            try:
+                for fut in as_completed(futures, timeout=30):
+                    kind = futures[fut]
+                    try:
+                        res = fut.result()
+                    except (RequestException, ValueError, KeyError) as e:
+                        logger.debug("%s fetch failed: %s", kind, e)
+                        continue
                     if kind == "macro" and res:
                         regime = res.get("regime")
                         if regime:
@@ -842,8 +864,14 @@ class ScannerEngine:
                     elif kind == "mandi" and res:
                         global_data["_commodity_trend"] = "neutral"
                         global_data["_commodity_source"] = "mandi"
-                except (RequestException, ValueError, KeyError) as e:
-                    logger.debug("%s fetch failed: %s", kind, e)
+            except TimeoutError:
+                logger.info(
+                    "global enrichment timed out after 30s — keeping %d/%d results",
+                    len(global_data),
+                    len(futures),
+                )
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
 
         return global_data
 
@@ -931,7 +959,9 @@ class ScannerEngine:
         futures = {}
         _own_executor = executor is None
         if _own_executor:
-            executor = ThreadPoolExecutor(max_workers=5)
+            # One slot per future (6 providers + shariah) — a fresh pool,
+            # so no queueing.
+            executor = ThreadPoolExecutor(max_workers=7)
         try:
             if settings.get("use_market_sentiment", True):
                 futures[executor.submit(_fetch_sentiment)] = "sentiment"
@@ -945,6 +975,17 @@ class ScannerEngine:
                 futures[executor.submit(_fetch_market_lens)] = "mlens"
             if settings.get("use_insider_data", True):
                 futures[executor.submit(_fetch_insider)] = "insider"
+
+            # Category 20 (shariah) rides the same pool, submitted before
+            # the provider wait so it overlaps them instead of adding a
+            # serial 15s tail; its result is read after the loop below.
+            from ..api.premium_finance import fetch_shariah_data
+
+            shariah_fut = executor.submit(
+                fetch_shariah_data,
+                ticker,
+                api_key=get_api_key("HALAL_API_KEY", api_config),
+            )
 
             try:
                 for future in as_completed(futures, timeout=ENRICH_PROVIDER_TIMEOUT):
@@ -1029,26 +1070,25 @@ class ScannerEngine:
                     ticker,
                     ENRICH_PROVIDER_TIMEOUT,
                 )
+
+            # ── Premium Finance (Category 20 - Shariah) — resolved from
+            # the future submitted above (overlapped with the providers).
+            try:
+                shariah = shariah_fut.result(timeout=ENRICH_PROVIDER_TIMEOUT)
+                if shariah:
+                    enriched["_is_shariah_compliant"] = shariah.is_shariah_compliant
+                    enriched["_shariah_source"] = "halal_terminal"
+            except (
+                RequestException,
+                ValueError,
+                KeyError,
+                AttributeError,
+                TimeoutError,
+            ) as e:
+                logger.debug("Shariah data fetch failed for %s: %s", ticker, e)
         finally:
             if _own_executor:
                 executor.shutdown(wait=False)
-
-        # ── Premium Finance (Category 20 - Shariah) ────────────────────
-        try:
-            from ..api.premium_finance import fetch_shariah_data
-
-            shariah = _call_with_timeout(
-                lambda: fetch_shariah_data(
-                    ticker,
-                    api_key=get_api_key("HALAL_API_KEY", api_config),
-                ),
-                timeout=15,
-            )
-            if shariah and shariah is not _TIMEOUT:
-                enriched["_is_shariah_compliant"] = shariah.is_shariah_compliant
-                enriched["_shariah_source"] = "halal_terminal"
-        except (RequestException, ValueError, KeyError, AttributeError) as e:
-            logger.debug("Shariah data fetch failed for %s: %s", ticker, e)
 
         return enriched
 
@@ -1377,6 +1417,7 @@ class ScannerEngine:
         )
 
         try:
+            t_phase = _time.monotonic()
             tickers, index_df, global_data, is_large = self._prepare_scan(
                 universe,
                 settings,
@@ -1385,6 +1426,11 @@ class ScannerEngine:
                 trend_filter,
                 index_symbol,
                 scan_label="STREAM SCAN",
+            )
+            logger.info(
+                "phase=prepare elapsed=%.1fs tickers=%d",
+                _time.monotonic() - t_phase,
+                len(tickers),
             )
 
             results: list[dict] = []
@@ -1412,6 +1458,8 @@ class ScannerEngine:
 
             # ── Stream per parallel batch ─────────────────────────────────
             reset_negative_skips()
+            t_stream = _time.monotonic()
+            score_accum = 0.0
             for chunk_data in fetch_batch_yfinance_stream(
                 tickers,
                 period=period,
@@ -1439,6 +1487,7 @@ class ScannerEngine:
                     f"Batch {batch_idx} received: {len(chunk_data)} tickers (cumulative {fetched_so_far}) — scoring..."
                 )
 
+                t_sc = _time.monotonic()
                 chunk_results: list[dict] = []
                 # For large universes use parallel scoring per chunk (smaller
                 # pool) — poll cancel every 0.5s so Stop isn't held by scoring.
@@ -1448,7 +1497,7 @@ class ScannerEngine:
                         wait,
                     )
 
-                    max_w = min(4, (len(chunk_data) // 25) + 1)
+                    max_w = min(8, (len(chunk_data) // 25) + 1)
                     ex = _DaemonThreadPoolExecutor(max_workers=max_w)
                     futs = {
                         ex.submit(_score_one, item): item[0]
@@ -1502,6 +1551,7 @@ class ScannerEngine:
                             direction_counts.get(direction, 0) + 1
                         )
                         chunk_results.append(scores)
+                score_accum += _time.monotonic() - t_sc
 
                 if chunk_results:
                     # Keep global results sorted incrementally for top-200 calc later
@@ -1527,7 +1577,14 @@ class ScannerEngine:
                         except Exception as e:
                             logger.info("on_batch callback failed: %s", e)
 
+            logger.info(
+                "phase=stream elapsed=%.1fs score=%.1fs",
+                _time.monotonic() - t_stream,
+                score_accum,
+            )
+
             # ── Phase 2: Enrich top 200 for large universes (update in place) ─
+            t_en = _time.monotonic()
             if is_large and results and not self._cancel_event.is_set():
                 results.sort(key=lambda x: x.get("total", 0) or 0, reverse=True)
                 top_n = min(ENRICH_TOP_N, len(results))
@@ -1557,7 +1614,9 @@ class ScannerEngine:
                         self._log(f"Top {top_n} enrichment complete — grid updated")
                     except Exception as e:
                         logger.info("on_batch enrichment callback failed: %s", e)
+            logger.info("phase=enrich elapsed=%.1fs", _time.monotonic() - t_en)
 
+            t_fin = _time.monotonic()
             self._finalize_scan(
                 result,
                 settings,
@@ -1570,6 +1629,7 @@ class ScannerEngine:
                 batch_data=batch_data_all,
                 scan_label="Stream Scan Complete",
             )
+            logger.info("phase=finalize elapsed=%.1fs", _time.monotonic() - t_fin)
 
         except Exception as e:
             result.error = f"{type(e).__name__}: {e}"

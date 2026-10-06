@@ -90,7 +90,7 @@ class TestRowPoolInitialisation:
         app = _make_app()
         app._row_pool = {}
         app._row_cells = {}
-        assert app._update_row("NOPE", 1, app.theme_colors, 50, 1) is False
+        assert app._update_row(_result(99), 1, app.theme_colors, 50) is False
 
 
 class TestFullRebuildRendersRows:
@@ -181,6 +181,32 @@ class TestFullRebuildRendersRows:
         first_count = len(app.table_column.controls)
         app._render_current_page()  # should hit streaming fast-path
         assert len(app.table_column.controls) >= first_count - 1  # header stays
+
+    def test_pooled_path_applies_sort_and_reuses_rows(self):
+        """Sort + active filter used to force a full rebuild every render;
+        the pooled path must now reuse row objects with both active."""
+        app = _make_app()
+        app.all_results = [_result(i, score=50.0 + i) for i in range(10)]
+        app.filtered_results = list(app.all_results)
+        app.active_view = "dashboard"
+        app.scanning = False
+        app.sort_col = None
+        app.page_size = 100
+        # Make the filter active without hiding any row (scores 50-59).
+        app.threshold_slider = type("S", (), {"value": 50})()
+        assert app._is_filter_active() is True
+
+        app._render_current_page()  # full rebuild, fills pool
+        first = {c._pool_ticker: c for c in app.table_column.controls}
+        assert len(first) == 10
+
+        app.sort_col = 5  # close column
+        app.sort_reverse = True
+        app._render_current_page()  # pooled path despite sort + filter
+
+        tickers = [c._pool_ticker for c in app.table_column.controls]
+        assert tickers == [f"STK{i:03d}" for i in range(9, -1, -1)]
+        assert all(app._row_pool[t] is first[t] for t in tickers)
 
     def test_scan_complete_clears_pool_and_rebuilds(self):
         app = _make_app()

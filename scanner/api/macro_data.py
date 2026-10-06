@@ -529,12 +529,33 @@ def fetch_macro_data(
             "regime": MarketRegime,
         }
     """
-    fred = fetch_fred_data(fred_key)
-    econpulse = fetch_econpulse_data(econpulse_key)
-    econdb = fetch_econdb_data(econdb_key)
-    yahoo = fetch_yahoo_macro_data()
-    forex = fetch_forex_data()
-    crypto = fetch_crypto_sentiment()
+    # 6 independent HTTP sources — run them concurrently (serial sum was
+    # ~10s of the prepare phase); a failing source yields None instead of
+    # aborting the other five (every source is typed optional).
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {
+            "fred": ex.submit(fetch_fred_data, fred_key),
+            "econpulse": ex.submit(fetch_econpulse_data, econpulse_key),
+            "econdb": ex.submit(fetch_econdb_data, econdb_key),
+            "yahoo": ex.submit(fetch_yahoo_macro_data),
+            "forex": ex.submit(fetch_forex_data),
+            "crypto": ex.submit(fetch_crypto_sentiment),
+        }
+        out: dict = {}
+        for name, fut in futs.items():
+            try:
+                out[name] = fut.result()
+            except Exception:
+                logger.debug("macro source %s failed", name, exc_info=True)
+                out[name] = None
+    fred = out["fred"]
+    econpulse = out["econpulse"]
+    econdb = out["econdb"]
+    yahoo = out["yahoo"]
+    forex = out["forex"]
+    crypto = out["crypto"]
 
     regime = detect_market_regime(fred, econpulse, econdb, yahoo)
 

@@ -237,24 +237,31 @@ def fetch_index_data(ticker: str = "^NSEI", period: str = "1y") -> pd.DataFrame 
     return provider.fetch_index(ticker, period)
 
 
-def fetch_fundamentals(ticker: str) -> dict | None:
+def fetch_fundamentals(
+    ticker: str, provider_timeout: float | None = 10.0
+) -> dict | None:
     """
     Fetch fundamental data for a stock.
 
     Uses multi-source provider:
       yfinance -> nselib
 
+    provider_timeout caps each provider in the merge chain so one hung
+    source can't eat the whole call (callers on the small path have no
+    outer timeout).
+
     Returns dict with pe_ratio, eps_growth, rev_growth, roe.
     """
     provider = _get_provider()
-    return provider.fetch_fundamentals(ticker)
+    return provider.fetch_fundamentals(ticker, provider_timeout=provider_timeout)
 
 
 CHUNK = 200  # ~200 * 8 chars avg + commas ≈ 1.6k URL < 8k limit; safe for Yahoo
 MAX_PARALLEL_CHUNKS = 8  # parallel chunk downloads — 8×200 = 1600 tickers in flight
 SLEEP_BETWEEN_BATCH = 0.3  # throttle between parallel batches to avoid 429
 FALLBACK_WORKERS = (
-    4  # per-ticker fallback threads — keep low to avoid NSE rate-limiting
+    8  # per-ticker fallback threads — doubled from 4 to cut the ~105s cold
+    # fallback pass; drop back to 4 if NSE rate-limits the chain
 )
 FALLBACK_PROVIDER_TIMEOUT = (
     10.0  # per-provider cap (s) in the fallback pass — dead symbols fail fast
@@ -806,10 +813,9 @@ def fetch_batch_yfinance_stream(
                 except Exception as e:
                     logger.info("Batch cache read failed for %s: %s", t, e)
                     daily = None
-                # Legacy cache entries can hold UTC-close stamps; normalize so
-                # all tickers share one trade-date calendar.
-                if daily is not None and not daily.empty:
-                    daily = _normalize_daily_index(daily)
+                # No normalize here — _get_cached normalizes on every read
+                # path (_read_price_row / legacy pair import); the second
+                # pass cost ~5-10s per scan over the whole universe.
                 if daily is not None and not daily.empty:
                     df = daily if timeframe == "D" else resample_ohlcv(daily, timeframe)
                     if df is not None and len(df) >= 50:
@@ -893,6 +899,7 @@ def fetch_batch_yfinance_stream(
             return chunk_results
 
         cumulative = 0
+        t_ns = time.monotonic()
         for batch_start in range(0, len(chunks), MAX_PARALLEL_CHUNKS):
             if cancel_event is not None and cancel_event.is_set():
                 logger.info("Batch download cancelled between batches")
@@ -958,6 +965,11 @@ def fetch_batch_yfinance_stream(
             if batch_start + MAX_PARALLEL_CHUNKS < len(chunks):
                 time.sleep(SLEEP_BETWEEN_BATCH)
 
+        # Wall time includes consumer scoring while this generator is
+        # suspended at a yield — compare with phase=stream score= for the
+        # download-only share.
+        logger.info("phase_section=ns elapsed=%.1fs", time.monotonic() - t_ns)
+
         # ── BSE .BO pass: names the .NS pass missed get one retry via
         # Yahoo's BSE suffix — BSE-only listings never resolve on .NS, and
         # the NSE-native fallback below skips them anyway (jugaad/nselib are
@@ -965,8 +977,6 @@ def fetch_batch_yfinance_stream(
         # must not trigger an NSE list fetch (watchlists work even when
         # nselib is down); a wasted .BO attempt on a dead NSE name is one
         # cheap no-data download.
-        # Sequential chunks: smaller diff than cloning the parallel machinery
-        # above; parallelise like the .NS pass if scan timings show.
         # ponytail: one yf attempt per 200 unrecovered names per scan —
         # mark-negative after repeated failures if BSE ALL latency matters.
         bo_targets: list = (
@@ -974,6 +984,7 @@ def fetch_batch_yfinance_stream(
             if (cancel_event is not None and cancel_event.is_set())
             else [t for t in tickers if t not in seen_tickers]
         )
+        t_bo = time.monotonic()
         if bo_targets:
             chunks = [
                 bo_targets[i : i + CHUNK] for i in range(0, len(bo_targets), CHUNK)
@@ -984,18 +995,42 @@ def fetch_batch_yfinance_stream(
                 total,
                 len(chunks),
             )
-            for ci, chunk in enumerate(chunks, 1):
+            # One wave of parallel chunks (normally 1-3), streamed as each
+            # finishes — the old sequential loop cost ~94s of wall time.
+            executor = _DaemonThreadPoolExecutor(
+                max_workers=min(len(chunks), MAX_PARALLEL_CHUNKS)
+            )
+            future_to_ci = {
+                executor.submit(_fetch_chunk, chunk, ci, ".BO"): ci
+                for ci, chunk in enumerate(chunks, 1)
+            }
+            pending = set(future_to_ci)
+            while pending:
                 if cancel_event is not None and cancel_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
                     logger.info("BSE .BO pass cancelled")
                     break
-                bo_res = _fetch_chunk(chunk, ci, suffix=".BO")
-                if bo_res:
-                    seen_tickers.update(bo_res)
-                    yield dict(bo_res)
-                if ci < len(chunks):
-                    time.sleep(SLEEP_BETWEEN_BATCH)
+                completed, pending = wait(
+                    pending, timeout=0.5, return_when=FIRST_COMPLETED
+                )
+                if not completed:
+                    continue
+                for future in completed:
+                    ci = future_to_ci[future]
+                    try:
+                        bo_res = future.result()
+                    except Exception as e:
+                        logger.warning("BSE chunk %d failed: %s", ci, e)
+                        continue
+                    if bo_res:
+                        seen_tickers.update(bo_res)
+                        yield dict(bo_res)
+            else:
+                executor.shutdown(wait=True)
+            logger.info("phase_section=bo elapsed=%.1fs", time.monotonic() - t_bo)
 
         # ── Fallback: recover tickers the yfinance pass missed ───────────
+        t_fb = time.monotonic()
         missing = [t for t in tickers if t not in seen_tickers]
         if missing and not (cancel_event is not None and cancel_event.is_set()):
             # Negative cache first: symbols that failed the whole NSE chain on
@@ -1057,6 +1092,8 @@ def fetch_batch_yfinance_stream(
                         "Fallback fetch returned nothing for %d missed tickers",
                         len(candidates),
                     )
+
+        logger.info("phase_section=fallback elapsed=%.1fs", time.monotonic() - t_fb)
 
     except ImportError:
         logger.warning("yfinance not available for batch download")
