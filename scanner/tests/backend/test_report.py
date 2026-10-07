@@ -889,12 +889,32 @@ class TestResponsiveReport:
         ths = re.findall(r"<th([^>]*)>([^<]+)</th>", head)
         assert [label for _, label in ths] == [lbl for lbl, _ in _REPORT_COLS]
         for i, ((attrs, label), (_, tier)) in enumerate(zip(ths, _REPORT_COLS)):
-            if label == "1M":
-                assert "sortTable" not in attrs  # spark column never sorts
-            else:
-                assert f"sortTable({i})" in attrs  # positional index intact
+            assert f"sortTable({i})" in attrs  # positional index intact, spark too
             assert ('class="c-t1"' in attrs) == (tier == 1)
             assert ('class="c-t2"' in attrs) == (tier == 2)
+
+    def test_row_cells_match_header_count(self):
+        head = _table_head_html()
+        n_th = len(re.findall(r"<th\b", head))
+        assert n_th == len(_REPORT_COLS) == 19
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        first_row = html.split("<tr ", 1)[1].split("</tr>", 1)[0]
+        assert len(re.findall(r"<td\b", first_row)) == n_th
+        # News panel spans exactly the data columns.
+        assert '<td colspan="19">' in html
+        assert 'colspan="23"' not in html
+
+    def test_row_carries_sort_data_attrs(self):
+        html = generate_html_report([_make_score_result()], fetch_news=False)
+        assert 'data-cbars="' in html  # MA rank parity (_ma_rank)
+        assert 'data-spark="' in html  # spark column sort value
+
+    def test_sort_js_mirrors_app_defaults(self):
+        js = _js_block()
+        assert '"WEAK"' in js  # rating order matches _get_sort_key
+        assert "col === 0 || col === 1" in js  # first-click direction seed
+        assert "delete sortDir[i]" in js  # reset on column switch
+        assert '"poc-above"' in js  # POC sorts semantically, not Above<Below
 
     def test_row_cells_carry_tier_classes(self):
         html = generate_html_report([_make_score_result()], fetch_news=False)

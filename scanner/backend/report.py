@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from ..shared.cache import TTLCache
 from ..shared.constants import has_fii_dii, score_of
-from ..shared.detail_specs import SCORE_CATS, fmt_pct, ma_chip, signal_specs
+from ..shared.detail_specs import SCORE_CATS, fmt_pct, ma_chip, signal_specs, spark_move
 
 logger = logging.getLogger(__name__)
 
@@ -689,11 +689,19 @@ function sortTable(col) {
     const allRows = Array.from(tbody.rows);
     const th = table.tHead.rows[0].cells[col];
 
-    sortDir[col] = sortDir[col] === "asc" ? "desc" : "asc";
+    // First click seeds the app's default direction (desc, except #/Ticker);
+    // switching columns resets the others, mirroring app _on_sort.
+    if (sortDir[col] === undefined) {
+        sortDir[col] = (col === 0 || col === 1) ? "asc" : "desc";
+    } else {
+        sortDir[col] = sortDir[col] === "asc" ? "desc" : "asc";
+    }
     const dir = sortDir[col];
 
-    for (let cell of table.tHead.rows[0].cells) {
+    for (let i = 0; i < table.tHead.rows[0].cells.length; i++) {
+        const cell = table.tHead.rows[0].cells[i];
         cell.classList.remove("sorted-asc", "sorted-desc");
+        if (i !== col) delete sortDir[i];
     }
     th.classList.add(dir === "asc" ? "sorted-asc" : "sorted-desc");
 
@@ -707,7 +715,9 @@ function sortTable(col) {
         if (newsRow) i++;
     }
 
-    const ratingOrder = {"EXCELLENT":4,"GOOD":3,"MODERATE":2,"POOR":1};
+    const ratingOrder = {"EXCELLENT":4,"GOOD":3,"MODERATE":2,"POOR":1,"WEAK":0};
+    const isNum = t => /^[-+]?[\u20b9$]?[0-9,]+(?:[.][0-9]+)?[ ]*%?$/.test(t);
+    const flip = dir === "asc" ? 1 : -1;
 
     pairs.sort((a, b) => {
         let aCell = a.dataRow.cells[col];
@@ -717,21 +727,43 @@ function sortTable(col) {
         let aText = aVal.replace(/<[^>]*>/g, "").trim();
         let bText = bVal.replace(/<[^>]*>/g, "").trim();
 
-        // Rating column (3) — custom order, not alphabetical
-        if (col === 3) {
-            let aR = ratingOrder[aText.toUpperCase()] || 0;
-            let bR = ratingOrder[bText.toUpperCase()] || 0;
-            return dir === "asc" ? aR - bR : bR - aR;
+        // Semantic columns mirror app _get_sort_key — never the cell text.
+        if (col === 3 || col === 6 || col === 7 || col === 14 || col === 17 || col === 18) {
+            let aR, bR;
+            if (col === 3) {  // Rating: custom order, not alphabetical
+                aR = ratingOrder[aText.toUpperCase()] || 0;
+                bR = ratingOrder[bText.toUpperCase()] || 0;
+            } else if (col === 6) {  // MA: fresh crossover > bullish > bearish
+                const dA = a.dataRow.dataset, dB = b.dataRow.dataset;
+                aR = dA.crossed === "true" ? 200 - (Number(dA.cbars) || 0) : (dA.maBull === "true" ? 1 : 0);
+                bR = dB.crossed === "true" ? 200 - (Number(dB.cbars) || 0) : (dB.maBull === "true" ? 1 : 0);
+            } else if (col === 7) {  // POC: Above = 1 (lexical A<B would invert desc)
+                aR = aCell && aCell.classList.contains("poc-above") ? 1 : 0;
+                bR = bCell && bCell.classList.contains("poc-above") ? 1 : 0;
+            } else if (col === 14) {  // Dir: Bull = 1
+                aR = aCell && aCell.classList.contains("bull") ? 1 : 0;
+                bR = bCell && bCell.classList.contains("bull") ? 1 : 0;
+            } else if (col === 17) {  // Chop: sideways = 1
+                aR = aCell && aCell.classList.contains("sideways") ? 1 : 0;
+                bR = bCell && bCell.classList.contains("sideways") ? 1 : 0;
+            } else {  // Spark (18): drawn % move
+                aR = Number(a.dataRow.dataset.spark) || 0;
+                bR = Number(b.dataRow.dataset.spark) || 0;
+            }
+            return (aR - bR) * flip;
         }
 
-        let aNum = parseFloat(aText.replace(/[^0-9.\\-]/g, ""));
-        let bNum = parseFloat(bText.replace(/[^0-9.\\-]/g, ""));
-        let aIsNum = !isNaN(aNum) && /[0-9]/.test(aText);
-        let bIsNum = !isNaN(bNum) && /[0-9]/.test(bText);
-        if (aIsNum && bIsNum) {
-            return dir === "asc" ? aNum - bNum : bNum - aNum;
+        // Whole-cell numeric (₹, %, commas). Text like "3MINDIA" fails the
+        // test and stays alphabetical; N/A and — always sort after numbers,
+        // in both directions.
+        const aOk = isNum(aText), bOk = isNum(bText);
+        if (aOk !== bOk) return aOk ? -1 : 1;
+        if (aOk) {
+            let aNum = parseFloat(aText.replace(/[^0-9.-]/g, ""));
+            let bNum = parseFloat(bText.replace(/[^0-9.-]/g, ""));
+            if (!isNaN(aNum) && !isNaN(bNum)) return (aNum - bNum) * flip;
         }
-        return dir === "asc" ? aText.localeCompare(bText) : bText.localeCompare(aText);
+        return aText.localeCompare(bText) * flip;
     });
 
     // Re-append in sorted order, keeping news rows attached to their parent
@@ -1219,9 +1251,9 @@ def _table_head_html() -> str:
     ths = []
     for i, (label, tier) in enumerate(_REPORT_COLS):
         cls = f' class="c-t{tier}"' if tier else ""
-        # The spark column is visual-only — no sort handler.
-        onclick = f' onclick="sortTable({i})"' if label != "1M" else ""
-        ths.append(f"<th{cls}{onclick}>{label}</th>")
+        # Every header sorts positionally, spark included — parity with the
+        # app grid, which sorts col 18 by the drawn move (spark_move).
+        ths.append(f'<th{cls} onclick="sortTable({i})">{label}</th>')
     return f"""<div class="table-wrap">
 <table id="stockTable">
 <thead>
@@ -1476,7 +1508,7 @@ def _news_panel_html(
     if panel_content:
         return f"""
                 <tr class="news-row" id="news-{_news_id(ticker)}" style="display:none">
-                    <td colspan="23">
+                    <td colspan="19">
                         <div class="news-panel">
                             {panel_content}
                         </div>
@@ -1550,7 +1582,9 @@ def _result_row_html(
             data-rating="{_html.escape(rating.upper())}"
             data-price="{float(r.get("close") or 0):g}"
             data-fund="{float(r.get("fundamentals") or 0):g}"
-            data-fii="{"1" if has_fii_dii(r) else "0"}">
+            data-fii="{"1" if has_fii_dii(r) else "0"}"
+            data-cbars="{r.get("crossover_bars_ago") or 0}"
+            data-spark="{spark_move(r):g}">
             <td class="rank">{rank}</td>
             <td class="{ticker_cls}" onclick="toggleNews('{_news_id(ticker)}')">{_html.escape(ticker)}<button type="button" class="copy-t" onclick="copyTicker(event,this)" title="Copy ticker">⧉</button></td>
             <td class="score s-{_score_class(score)}">{score:.0f}</td>

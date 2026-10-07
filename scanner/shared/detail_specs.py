@@ -27,6 +27,14 @@ def ma_chip(r: dict) -> tuple[str, str]:
     return "v Bear", "red"
 
 
+def spark_move(r: dict) -> float:
+    """Net % move across the row's sparkline closes (for column sorting)."""
+    px = r.get("px_tail") or []
+    if len(px) < 2 or not px[0]:
+        return 0.0
+    return (px[-1] - px[0]) / px[0] * 100.0
+
+
 def signal_specs(r: dict) -> list[tuple[str, str, str]]:
     """[(label, text, color role)] — the detail panel's signal chips."""
     rsi = float(r.get("rsi_val") or 0)

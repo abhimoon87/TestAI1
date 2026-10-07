@@ -22,7 +22,7 @@ from flet.controls.alignment import Alignment
 logger = logging.getLogger(__name__)
 from ..shared.constants import RESULT_COLS
 from ..shared.constants import score_of as _score_of
-from ..shared.detail_specs import fmt_pct, ma_chip, signal_specs
+from ..shared.detail_specs import fmt_pct, ma_chip, signal_specs, spark_move
 from .ui_kit import (
     ANIM_FAST,
     ANIM_NORMAL,
@@ -119,14 +119,6 @@ def _row_specs(r, rank, c, threshold):
             c["orange"] if r.get("is_sideways") else c["green"],
         ),
     ]
-
-
-def _spark_move(r: dict) -> float:
-    """Net % move across the row's sparkline closes (for column sorting)."""
-    px = r.get("px_tail") or []
-    if len(px) < 2 or not px[0]:
-        return 0.0
-    return (px[-1] - px[0]) / px[0] * 100.0
 
 
 class ResultsViewMixin:
@@ -899,7 +891,7 @@ class ResultsViewMixin:
             16: lambda r: r.get("volat_stat") or "",
             17: lambda r: 1 if r.get("is_sideways") else 0,
             # Sparkline column sorts by the move it draws (last vs first close).
-            18: lambda r: _spark_move(r),
+            18: lambda r: spark_move(r),
         }
         return sort_keys.get(col_idx, lambda r: r.get("total", 0))
 
