@@ -1516,32 +1516,32 @@ class ResultsViewMixin:
         elif not results:
             lines.append(ft.Text("No results.", size=11, color=c["text_dim"]))
         else:
-            for r in results:
-                lines.append(
-                    ft.Column(
-                        [
-                            ft.Text(
-                                r.get("title") or r.get("url", ""),
-                                size=11,
-                                weight=ft.FontWeight.BOLD,
-                                color=c["text"],
-                            ),
-                            ft.Text(
-                                r.get("snippet") or "",
-                                size=10,
-                                color=c["text_dim"],
-                                max_lines=3,
-                            ),
-                            ft.Text(
-                                r.get("url") or "",
-                                size=9,
-                                color=c["cyan"],
-                                selectable=True,
-                            ),
-                        ],
-                        spacing=2,
-                    )
+            lines.extend(
+                ft.Column(
+                    [
+                        ft.Text(
+                            r.get("title") or r.get("url", ""),
+                            size=11,
+                            weight=ft.FontWeight.BOLD,
+                            color=c["text"],
+                        ),
+                        ft.Text(
+                            r.get("snippet") or "",
+                            size=10,
+                            color=c["text_dim"],
+                            max_lines=3,
+                        ),
+                        ft.Text(
+                            r.get("url") or "",
+                            size=9,
+                            color=c["cyan"],
+                            selectable=True,
+                        ),
+                    ],
+                    spacing=2,
                 )
+                for r in results
+            )
         self.table_column.controls.append(
             self._panel_frame("research", "Web research", lines)
         )

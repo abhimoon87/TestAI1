@@ -492,9 +492,7 @@ def detect_market_regime(
 
 
 # ── Frankfurter / CoinGecko — delegated to free_apis ────────────────────────
-from .free_apis import (  # noqa: F401
-    CryptoSentiment,
-    ForexData,
+from .free_apis import (
     fetch_crypto_sentiment,
     fetch_forex_data,
 )

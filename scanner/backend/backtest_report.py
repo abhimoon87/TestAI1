@@ -359,25 +359,24 @@ def save_trades_csv(
     trades: list[TradeResult], filepath: str = "Reports/backtest_trades.csv"
 ):
     """Save all trades to a CSV file."""
-    rows = []
-    for t in trades:
-        rows.append(
-            {
-                "ticker": t.ticker,
-                "sector": t.sector,
-                "entry_date": t.entry_date.strftime("%Y-%m-%d"),
-                "entry_price": round(t.entry_price, 2),
-                "entry_score": round(t.entry_score, 1),
-                "exit_date": t.exit_date.strftime("%Y-%m-%d"),
-                "exit_price": round(t.exit_price, 2),
-                "exit_reason": t.exit_reason,
-                "shares": t.shares,
-                "pnl": round(t.pnl, 2),
-                "pnl_pct": round(t.pnl_pct, 2),
-                "days_held": t.days_held,
-                "investment": round(t.investment, 2),
-            }
-        )
+    rows = [
+        {
+            "ticker": t.ticker,
+            "sector": t.sector,
+            "entry_date": t.entry_date.strftime("%Y-%m-%d"),
+            "entry_price": round(t.entry_price, 2),
+            "entry_score": round(t.entry_score, 1),
+            "exit_date": t.exit_date.strftime("%Y-%m-%d"),
+            "exit_price": round(t.exit_price, 2),
+            "exit_reason": t.exit_reason,
+            "shares": t.shares,
+            "pnl": round(t.pnl, 2),
+            "pnl_pct": round(t.pnl_pct, 2),
+            "days_held": t.days_held,
+            "investment": round(t.investment, 2),
+        }
+        for t in trades
+    ]
 
     df = pd.DataFrame(rows)
     df.to_csv(filepath, index=False)

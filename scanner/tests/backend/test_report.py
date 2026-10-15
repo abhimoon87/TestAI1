@@ -888,7 +888,9 @@ class TestResponsiveReport:
         head = _table_head_html()
         ths = re.findall(r"<th([^>]*)>([^<]+)</th>", head)
         assert [label for _, label in ths] == [lbl for lbl, _ in _REPORT_COLS]
-        for i, ((attrs, label), (_, tier)) in enumerate(zip(ths, _REPORT_COLS)):
+        for i, ((attrs, _label), (_, tier)) in enumerate(
+            zip(ths, _REPORT_COLS, strict=True)
+        ):
             assert f"sortTable({i})" in attrs  # positional index intact, spark too
             assert ('class="c-t1"' in attrs) == (tier == 1)
             assert ('class="c-t2"' in attrs) == (tier == 2)

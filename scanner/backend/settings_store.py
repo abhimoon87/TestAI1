@@ -234,23 +234,20 @@ def _sanitize_settings(saved: dict) -> dict:
                     and isinstance(val, int)
                     and 0 <= val < len(RESULT_COLS)
                 )
-                or key == "ui_sort_reverse"
-                and isinstance(val, bool)
-                or key == "ui_page_size"
-                and isinstance(val, int)
-                and 0 < val <= 500
-                or key == "ui_rating_filter"
-                and val
-                in (
-                    "ALL",
-                    "EXCELLENT",
-                    "GOOD",
-                    "MODERATE",
-                    "POOR",
+                or (key == "ui_sort_reverse" and isinstance(val, bool))
+                or (key == "ui_page_size" and isinstance(val, int) and 0 < val <= 500)
+                or (
+                    key == "ui_rating_filter"
+                    and val
+                    in (
+                        "ALL",
+                        "EXCELLENT",
+                        "GOOD",
+                        "MODERATE",
+                        "POOR",
+                    )
                 )
-                or key == "universe"
-                and isinstance(val, str)
-                and val
+                or (key == "universe" and isinstance(val, str) and val)
             ):
                 cleaned[key] = val
             else:

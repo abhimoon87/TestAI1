@@ -14,7 +14,6 @@ from scanner.shared.constants import score_of as _score_of
 from scanner.shared.themes import THEMES
 from scanner.ui.views_results import ResultsViewMixin
 
-from .conftest import FakePage as _FakePage  # noqa: F401  (re-export)
 from .conftest import make_app as _make_app
 from .conftest import wait_until
 

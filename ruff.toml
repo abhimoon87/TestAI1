@@ -1,14 +1,19 @@
 # Governed ruff rule set for the HMAxEMA Scanner.
 #
-# `ruff check .` is GREEN on this selection (ruff 0.16.x), so the plain
+# `ruff check .` is GREEN on this selection (ruff 0.17.x), so the plain
 # default run doubles as CI.  Categories the codebase uses deliberately are
-# NOT selected; they were quantified in the 2026-09 lint audit:
+# NOT selected; quantified in the 2026-09 lint audit and the 2026-10
+# ruff 0.17 upgrade pass:
 #
 #   BLE001 blind `except Exception`    (~161) defensive provider/fallback style
 #   DTZ0xx  tz-naive datetime           (~51) market "today" is deliberately naive
 #   S110/S112 try-except-pass/continue  (~38) intentional suppression sites
 #   SIM117  nested with statements      (~36) test-fixture style
 #   E4xx/E7xx pycodestyle cosmetics     (E402 view imports, E731 lambdas...)
+#   PTH0xx  pathlib conversions         (~118) encoding-sensitive Windows I/O
+#   RUF001-003 ambiguous unicode        (~37) deliberate typography (₹, —, ▲)
+#   PTxxx   pytest style                (~46) composite asserts / parametrize kept
+#   SIM103  needless-bool               (2) guard-chain readability wins
 #
 # Re-enable a category only after the codebase is cleaned to zero on it.
 
@@ -19,9 +24,14 @@ exclude = [".cache", ".ruff_cache", "*.log"]
 select = [
     # Enforced floor — always CI-clean (pyflakes + syntax errors).
     "F", "E9",
+    # Whole families verified zero at the 2026-10 ruff 0.17 pass.
+    # UP/RET/C4/PERF/B/A: were specific codes before, now guard all new code.
+    "UP", "RET", "C4", "PERF", "B", "A",
     # Audited + autofixed to zero (2026-09 lint pass).
-    "I001", "UP006", "UP035", "PIE807", "PLR0402", "PLR1711",
-    "FURB167", "PYI041", "RET501",
+    "I001", "PIE807", "PLR0402", "PLR1711",
+    "FURB167", "PYI041",
     # Audited + hand-fixed to zero.
-    "TRY401", "RUF012", "PERF102", "PGH005", "C408", "FURB192", "ISC004",
+    "TRY401", "RUF012", "PGH005", "FURB192", "ISC004",
+    # ruff 0.17 pass (2026-10): dead noqa removal + explicit parenthesization.
+    "RUF100", "RUF021",
 ]

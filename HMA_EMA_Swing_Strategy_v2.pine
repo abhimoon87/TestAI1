@@ -13,17 +13,18 @@ tf = input.timeframe("W", "Analysis Timeframe", group="Timeframe")
 
 // ── Moving Averages (Crossover) ──────────────────────────────────────────────
 fastMAType  = input.string("HMA", "Fast MA Type", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Moving Averages")
-fastMALen   = input.int(40, "Fast MA Length", minval=1, group="Moving Averages")
+fastMALen   = input.int(40, "Fast MA Length", minval=1, maxval=2000, group="Moving Averages")
 slowMAType  = input.string("EMA", "Slow MA Type", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Moving Averages")
-slowMALen   = input.int(50, "Slow MA Length", minval=1, group="Moving Averages")
+slowMALen   = input.int(50, "Slow MA Length", minval=1, maxval=2000, group="Moving Averages")
 showMAs     = input.bool(true, "Show MAs on Chart", group="Moving Averages")
 fastMAColor = input.color(color.blue, "Fast MA Color", group="Moving Averages")
 slowMAColor = input.color(color.orange, "Slow MA Color", group="Moving Averages")
 hideOldSignals = input.bool(true, "Hide Old Signals", group="Moving Averages")
+smoothMTF   = input.bool(true, "Smooth MTF MAs", group="Moving Averages")
 
 // ── Volume Profile ───────────────────────────────────────────────────────────
 showVP     = input.bool(true, "Show Volume Profile", group="Volume Profile")
-vpLookback = input.int(200, "VP Lookback (Candles)", minval=10, group="Volume Profile")
+vpLookback = input.int(200, "VP Lookback (Candles)", minval=10, maxval=2000, group="Volume Profile")
 vpAlignment = input.string("Left", "Profile Alignment", options=["Left", "Right"], group="Volume Profile")
 vpRows     = input.int(30, "Number of Price Rows/Bins", minval=5, maxval=100, group="Volume Profile")
 vpWidth    = input.int(40, "Profile Width (Visual Bars)", minval=10, group="Volume Profile")
@@ -36,19 +37,19 @@ vpColor    = input.color(color.new(color.blue, 70), "Profile Color", group="Volu
 // ── Technical Analysis & Relative Strength ───────────────────────────────────
 indexSymbol   = input.symbol("NSE:NIFTY", "Index/Sector Symbol", group="Relative Strength")
 niftySymbol   = input.symbol("NSE:NIFTY", "Nifty 50 Symbol", group="Relative Strength")
-rsLength      = input.int(14, "RS Length", minval=1, group="Relative Strength")
-rsiLength     = input.int(14, "RSI Length", minval=1, group="Technical Analysis")
-volumeMALength = input.int(20, "Volume MA Length", minval=1, group="Technical Analysis")
-atrLength     = input.int(14, "ATR Length", minval=1, group="Technical Analysis")
+rsLength      = input.int(14, "RS Length", minval=1, maxval=2000, group="Relative Strength")
+rsiLength     = input.int(14, "RSI Length", minval=1, maxval=2000, group="Technical Analysis")
+volumeMALength = input.int(20, "Volume MA Length", minval=1, maxval=2000, group="Technical Analysis")
+atrLength     = input.int(14, "ATR Length", minval=1, maxval=2000, group="Technical Analysis")
 
 // ── Sideways Filter ──────────────────────────────────────────────────────────
-adxLen        = input.int(14, "ADX Length", minval=1, group="Sideways Filter")
+adxLen        = input.int(14, "ADX Length", minval=1, maxval=2000, group="Sideways Filter")
 adxThreshold  = input.float(20.0, "ADX Sideways Threshold (Below = Chop)", group="Sideways Filter")
-chopLen       = input.int(14, "Choppiness Length", minval=2, group="Sideways Filter")
+chopLen       = input.int(14, "Choppiness Length", minval=2, maxval=2000, group="Sideways Filter")
 chopThreshold = input.float(61.8, "Chop Threshold (Above = Chop)", group="Sideways Filter")
 maType        = input.string("EMA", "MA Type for Slope", options=["HMA", "EMA", "SMA", "KAMA", "VWMA"], group="Sideways Filter")
-maLen         = input.int(50, "Slope MA Length", minval=1, group="Sideways Filter")
-slopeLookback = input.int(10, "Slope Lookback (Bars)", minval=1, group="Sideways Filter")
+maLen         = input.int(50, "Slope MA Length", minval=1, maxval=2000, group="Sideways Filter")
+slopeLookback = input.int(10, "Slope Lookback (Bars)", minval=1, maxval=2000, group="Sideways Filter")
 flatThreshold = input.float(0.5, "Flatness Threshold (%)", step=0.1, group="Sideways Filter")
 showSidewaysStatus = input.bool(true, "Show Sideways Status", group="Sideways Filter")
 sidewaysMinCount   = input.int(2, "Min Filters to Trigger Sideways (1-3)", minval=1, maxval=3, group="Sideways Filter")
@@ -66,19 +67,19 @@ dash_bg     = input.color(color.rgb(5,   20,  10,  5), "Dashboard Background", g
 
 // ── Pivot Levels ────────────────────────────────────────────────────────────
 pivot1     = input.bool(true, "Pivot 1", inline="p1", group="Pivot Levels")
-len1       = input.int(20, "", inline="p1", group="Pivot Levels")
+len1       = input.int(20, "", inline="p1", maxval=2000, group="Pivot Levels")
 style1     = input.string("--", "Style:", ["--", "-", ".."], inline="p1", group="Pivot Levels")
 extendM1   = input.string("Both", "Extend:", ["Both", "Right"], inline="p1", group="Pivot Levels") == "Both"
 pivot2     = input.bool(true, "Pivot 2", inline="p2", group="Pivot Levels")
-len2       = input.int(50, "", inline="p2", group="Pivot Levels")
+len2       = input.int(50, "", inline="p2", maxval=2000, group="Pivot Levels")
 style2     = input.string("-", "Style:", ["--", "-", ".."], inline="p2", group="Pivot Levels")
 extendM2   = input.string("Both", "Extend:", ["Both", "Right"], inline="p2", group="Pivot Levels") == "Both"
 pivot3     = input.bool(true, "Pivot 3", inline="p3", group="Pivot Levels")
-len3       = input.int(100, "", inline="p3", group="Pivot Levels")
+len3       = input.int(100, "", inline="p3", maxval=2000, group="Pivot Levels")
 style3     = input.string("-", "Style:", ["--", "-", ".."], inline="p3", group="Pivot Levels")
 extendM3   = input.string("Both", "Extend:", ["Both", "Right"], inline="p3", group="Pivot Levels") == "Both"
 pivot4     = input.bool(true, "Pivot 4", inline="p4", group="Pivot Levels")
-len4       = input.int(200, "", inline="p4", group="Pivot Levels")
+len4       = input.int(200, "", inline="p4", maxval=2000, group="Pivot Levels")
 style4     = input.string("-", "Style:", ["--", "-", ".."], inline="p4", group="Pivot Levels")
 extendM4   = input.string("Both", "Extend:", ["Both", "Right"], inline="p4", group="Pivot Levels") == "Both"
 ptColorSup = input.color(color.rgb(30, 214, 125), "Support Color", group="Pivot Levels")
@@ -92,7 +93,7 @@ showSCUpper  = input.bool(false, "Show Upper Band", group="Step Channel")
 showSCLower  = input.bool(false, "Show Lower Band", group="Step Channel")
 showSCLabels = input.bool(false, "Show Pivot Labels", group="Step Channel")
 showMomCandles = input.bool(false, "Show Momentum Candles", group="Step Channel")
-scLen        = input.int(3, "Pivot Length", minval=1, group="Step Channel")
+scLen        = input.int(3, "Pivot Length", minval=1, maxval=2000, group="Step Channel")
 scMult       = input.float(0.6, "Bands Multiplier", step=0.1, group="Step Channel")
 scColorUp    = input.color(color.rgb(26, 190, 127), "Up Color", group="Step Channel")
 scColorDn    = input.color(color.rgb(202, 38, 65), "Down Color", group="Step Channel")
@@ -104,7 +105,7 @@ scColorMid   = input.color(color.orange, "Mid Color", group="Step Channel")
 
 // Hull Moving Average
 hullMA(src, length) =>
-    ta.wma(2 * ta.wma(src, int(length / 2)) - ta.wma(src, length), int(math.sqrt(length)))
+    ta.wma(2 * ta.wma(src, math.max(1, int(length / 2))) - ta.wma(src, length), int(math.sqrt(length)))
 
 // Kaufman's Adaptive Moving Average
 kama(src, length, fastLength, slowLength) =>
@@ -175,9 +176,17 @@ get_mtf_data() =>
     mtf_obvMA = ta.sma(mtf_obv, 20)
     // ADX (fixed 14-period for scoring consistency)
     [_, _, mtf_adx] = ta.dmi(14, 14)
-    [mtf_fast_ma, mtf_slow_ma, mtf_bullishCross, mtf_bearishCross, mtf_stockRS, mtf_rsi, mtf_volMA, mtf_atr, mtf_pc1, mtf_pc3, mtf_volT, mtf_macdHist, mtf_stochK, mtf_obv, mtf_obvMA, mtf_adx, close, volume]
+    // Sideways-filter legs — computed on the ANALYSIS timeframe here so the
+    // banner matches the scanner's is_sideways (analysis-TF bars) on any chart.
+    [_, _, mtf_sideADX] = ta.dmi(adxLen, adxLen)
+    mtf_chopSum = math.sum(ta.atr(1), chopLen)
+    mtf_chopRange = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
+    mtf_sideChop = 100 * math.log10(mtf_chopSum / (mtf_chopRange == 0 ? syminfo.mintick : mtf_chopRange)) / math.log10(chopLen)
+    mtf_sideMA = get_ma(maType, close, maLen)
+    mtf_sideSlope = mtf_sideMA[slopeLookback] != 0 ? math.abs((mtf_sideMA - mtf_sideMA[slopeLookback]) / mtf_sideMA[slopeLookback]) * 100 : 0.0
+    [mtf_fast_ma, mtf_slow_ma, mtf_bullishCross, mtf_bearishCross, mtf_stockRS, mtf_rsi, mtf_volMA, mtf_atr, mtf_pc1, mtf_pc3, mtf_volT, mtf_macdHist, mtf_stochK, mtf_obv, mtf_obvMA, mtf_adx, close, volume, mtf_sideADX, mtf_sideChop, mtf_sideSlope]
 
-[fast_ma, slow_ma, bx, sx, stockRS, rsi, volMA, atr, pc1M, pc3M, volT, macdHist, stochK, obv, obvMA, mtf_adx, tf_close, tf_volume] = request.security(syminfo.tickerid, tf, get_mtf_data())
+[fast_ma, slow_ma, bx, sx, stockRS, rsi, volMA, atr, pc1M, pc3M, volT, macdHist, stochK, obv, obvMA, mtf_adx, tf_close, tf_volume, sideADX, sideChop, sideSlope] = request.security(syminfo.tickerid, tf, get_mtf_data())
 
 // NOTE: `and not bx[1]` is needed for MTF — request.security carries the boolean
 // forward across all intra-period lower-TF bars, so deduplication collapses
@@ -185,14 +194,41 @@ get_mtf_data() =>
 buyCross = bx and not bx[1]
 sellCross = sx and not sx[1]
 
+// Smoothed MTF MA display: ramp between the two most recent CONFIRMED
+// analysis-TF values so a weekly MA on a daily chart is continuous instead
+// of a 5-bar staircase.  Lands exactly on the true value at each period end;
+// raw fast_ma/slow_ma keep feeding signals + scoring (scanner parity).
+newPeriod = ta.change(time(tf)) != 0
+var int   dispStart      = bar_index
+var int   dispPrevStart  = bar_index
+var float rawFastPrev    = na
+var float rawSlowPrev    = na
+var float rawFastCur     = na
+var float rawSlowCur     = na
+if newPeriod
+    dispPrevStart := dispStart
+    dispStart     := bar_index
+    rawFastPrev   := rawFastCur
+    rawSlowPrev   := rawSlowCur
+rawFastCur := fast_ma    // flat within a period anyway (gaps_off carry)
+rawSlowCur := slow_ma
+float spanBars = dispStart - dispPrevStart                      // bars in last full period
+float frac     = smoothMTF and spanBars > 1 ? math.min(1.0, float(bar_index - dispStart) / (spanBars - 1)) : 1.0
+float dispFast = na(rawFastPrev) ? rawFastCur : rawFastPrev + (rawFastCur - rawFastPrev) * frac
+float dispSlow = na(rawSlowPrev) ? rawSlowCur : rawSlowPrev + (rawSlowCur - rawSlowPrev) * frac
+
 // Plot MAs
-pFast = plot(showMAs ? fast_ma : na, "Fast MA", fastMAColor, 2)
-pSlow = plot(showMAs ? slow_ma : na, "Slow MA", slowMAColor, 2)
-fill(pFast, pSlow, color=fast_ma > slow_ma ? color.new(color.green, 85) : color.new(color.red, 85), title="MA Fill")
+pFast = plot(showMAs ? dispFast : na, "Fast MA", fastMAColor, 2)
+pSlow = plot(showMAs ? dispSlow : na, "Slow MA", slowMAColor, 2)
+fill(pFast, pSlow, color=dispFast > dispSlow ? color.new(color.green, 85) : color.new(color.red, 85), title="MA Fill")
 
 // Crossover signals
 plotshape(not hideOldSignals and buyCross, "All Buy", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white)
 plotshape(not hideOldSignals and sellCross, "All Sell", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white)
+
+// Alerts
+alertcondition(buyCross, "HMAxEMA Buy", "HMAxEMA BUY on {{ticker}} @ {{close}}")
+alertcondition(sellCross, "HMAxEMA Sell", "HMAxEMA SELL on {{ticker}} @ {{close}}")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 4. RELATIVE STRENGTH & SCORING ENGINE
@@ -222,7 +258,7 @@ float netIncome   = request.financial(syminfo.tickerid, "NET_INCOME", "TTM", bar
 float equity      = request.financial(syminfo.tickerid, "COMMON_EQUITY_TOTAL", "FQ", barmerge.gaps_off, true)
 
 // Derived fundamental metrics (only meaningful when hasFund; otherwise stay na via guards below)
-float calcPE       = not na(epsBasic) and epsBasic != 0 ? close / epsBasic : na
+float calcPE       = not na(epsBasic) and epsBasic != 0 ? tf_close / epsBasic : na
 float epsGrowth    = not na(epsCurrent) and not na(epsPrev) and epsPrev != 0 ? ((epsCurrent - epsPrev) / math.abs(epsPrev)) * 100 : na
 float revGrowth    = not na(revCurrent) and not na(revPrev) and revPrev != 0 ? ((revCurrent - revPrev) / math.abs(revPrev)) * 100 : na
 float roe          = not na(netIncome) and not na(equity) and equity != 0 ? (netIncome / equity) * 100 : na
@@ -347,6 +383,17 @@ if hideOldSignals and sellCross
     label.delete(activeSell)
     string sigSize = score >= scoreExcellent ? size.large : score >= scoreGood ? size.normal : size.small
     activeSell := label.new(bar_index, high, "SELL " + str.tostring(math.round(score)), color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=sigSize)
+
+// Last signal — persists in the dashboard (like the chart labels) instead of
+// only lighting up on the cross bar itself.
+var string lastSigStr = "— None"
+var color  lastSigCol = color.gray
+if buyCross
+    lastSigStr := "▲ BUY " + str.tostring(math.round(score))
+    lastSigCol := color.green
+if sellCross
+    lastSigStr := "▼ SELL " + str.tostring(math.round(score))
+    lastSigCol := color.red
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 5. VOLUME PROFILE
@@ -484,17 +531,12 @@ plotcandle(showMomCandles ? open : na, high, low, close, title="Momentum Candles
 // 7. SIDeways / TREND FILTER
 // ══════════════════════════════════════════════════════════════════════════════
 
-[_, _, adxSide] = ta.dmi(adxLen, adxLen)
-isSidewaysADX = adxSide < adxThreshold
-
-chopSum = math.sum(ta.atr(1), chopLen)
-chopRange = ta.highest(high, chopLen) - ta.lowest(low, chopLen)
-chop = 100 * math.log10(chopSum / (chopRange == 0 ? syminfo.mintick : chopRange)) / math.log10(chopLen)
-isSidewaysChop = chop > chopThreshold
-
-selectedMA = get_ma(maType, close, maLen)
-maSlopePct = selectedMA[slopeLookback] != 0 ? math.abs((selectedMA - selectedMA[slopeLookback]) / selectedMA[slopeLookback]) * 100 : 0.0
-isSidewaysSlope = maSlopePct < flatThreshold
+// ADX / Choppiness / Slope arrive from request.security — computed on the
+// ANALYSIS timeframe (matches the scanner, which scores is_sideways on
+// analysis-TF bars). Identical to the old chart-TF math when tf == chart.
+isSidewaysADX   = sideADX < adxThreshold
+isSidewaysChop  = sideChop > chopThreshold
+isSidewaysSlope = sideSlope < flatThreshold
 
 int sidewaysCount = (isSidewaysADX ? 1 : 0) + (isSidewaysChop ? 1 : 0) + (isSidewaysSlope ? 1 : 0)
 isSideways = sidewaysCount >= sidewaysMinCount
@@ -532,8 +574,8 @@ if showDash and barstate.islast
         color  cAtrCol = volatStat == "High" ? color.red : volatStat == "Low" ? color.green : color.orange
         table.cell(dash, 0, 6, "ATR",        text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 6, cAtrStr,       text_color=cAtrCol,  bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
-        string cSigStr = buyCross ? "▲ BUY" : sellCross ? "▼ SELL" : "— None"
-        color  cSigCol = buyCross ? color.green : sellCross ? color.red : color.gray
+        string cSigStr = lastSigStr
+        color  cSigCol = lastSigCol
         table.cell(dash, 0, 7, "Signal",     text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 7, cSigStr,       text_color=cSigCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
     else
@@ -564,8 +606,8 @@ if showDash and barstate.islast
         table.cell(dash, 1, 7, rsNftStat + "  " + rsComp, text_color=rsNftCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 8, "Fund",       text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 8, hasFund ? fundComp : assetType, text_color=fundRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
-        string activeSignal = buyCross ? "▲ BUY" : sellCross ? "▼ SELL" : "— None"
-        color  signalCol    = buyCross ? color.green : sellCross ? color.red : color.gray
+        string activeSignal = lastSigStr
+        color  signalCol    = lastSigCol
         table.cell(dash, 0, 9, "Signal",     text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 9, activeSignal,  text_color=signalCol, bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         string sideStr = isSideways ? "⚠ Sideways" : "✓ Trending"
@@ -640,12 +682,33 @@ safeLen2 = safe(len2)
 safeLen3 = safe(len3)
 safeLen4 = safe(len4)
 
-array<PivotLevel> pivotLevels = array.from(
-    PivotLevel.new(len1, ta.valuewhen(not na(ph1), high[safeLen1], 0), ta.valuewhen(not na(pl1), low[safeLen1], 0), pivot1, style1, ta.valuewhen(not na(ph1), bar_index[safeLen1], 0), ta.valuewhen(not na(pl1), bar_index[safeLen1], 0), extendM1, ta.valuewhen(not na(ph1), math.sum(volume, len1*2), 0), ta.valuewhen(not na(pl1), math.sum(volume, len1*2), 0)),
-    PivotLevel.new(len2, ta.valuewhen(not na(ph2), high[safeLen2], 0), ta.valuewhen(not na(pl2), low[safeLen2], 0), pivot2, style2, ta.valuewhen(not na(ph2), bar_index[safeLen2], 0), ta.valuewhen(not na(pl2), bar_index[safeLen2], 0), extendM2, ta.valuewhen(not na(ph2), math.sum(volume, len2*2), 0), ta.valuewhen(not na(pl2), math.sum(volume, len2*2), 0)),
-    PivotLevel.new(len3, ta.valuewhen(not na(ph3), high[safeLen3], 0), ta.valuewhen(not na(pl3), low[safeLen3], 0), pivot3, style3, ta.valuewhen(not na(ph3), bar_index[safeLen3], 0), ta.valuewhen(not na(pl3), bar_index[safeLen3], 0), extendM3, ta.valuewhen(not na(ph3), math.sum(volume, len3*2), 0), ta.valuewhen(not na(pl3), math.sum(volume, len3*2), 0)),
-    PivotLevel.new(len4, ta.valuewhen(not na(ph4), high[safeLen4], 0), ta.valuewhen(not na(pl4), low[safeLen4], 0), pivot4, style4, ta.valuewhen(not na(ph4), bar_index[safeLen4], 0), ta.valuewhen(not na(pl4), bar_index[safeLen4], 0), extendM4, ta.valuewhen(not na(ph4), math.sum(volume, len4*2), 0), ta.valuewhen(not na(pl4), math.sum(volume, len4*2), 0))
-)
+// Pivot level values — ta.valuewhen must run on every bar (Pine consistency);
+// the PivotLevel objects are only needed by the barstate.islast redraw, so
+// they are built inside that block instead of being allocated on every bar.
+float lvl1H  = ta.valuewhen(not na(ph1), high[safeLen1], 0)
+float lvl1L  = ta.valuewhen(not na(pl1), low[safeLen1], 0)
+int lvl1SH  = ta.valuewhen(not na(ph1), bar_index[safeLen1], 0)
+int lvl1SL  = ta.valuewhen(not na(pl1), bar_index[safeLen1], 0)
+float lvl1VH = ta.valuewhen(not na(ph1), math.sum(volume, len1*2), 0)
+float lvl1VL = ta.valuewhen(not na(pl1), math.sum(volume, len1*2), 0)
+float lvl2H  = ta.valuewhen(not na(ph2), high[safeLen2], 0)
+float lvl2L  = ta.valuewhen(not na(pl2), low[safeLen2], 0)
+int lvl2SH  = ta.valuewhen(not na(ph2), bar_index[safeLen2], 0)
+int lvl2SL  = ta.valuewhen(not na(pl2), bar_index[safeLen2], 0)
+float lvl2VH = ta.valuewhen(not na(ph2), math.sum(volume, len2*2), 0)
+float lvl2VL = ta.valuewhen(not na(pl2), math.sum(volume, len2*2), 0)
+float lvl3H  = ta.valuewhen(not na(ph3), high[safeLen3], 0)
+float lvl3L  = ta.valuewhen(not na(pl3), low[safeLen3], 0)
+int lvl3SH  = ta.valuewhen(not na(ph3), bar_index[safeLen3], 0)
+int lvl3SL  = ta.valuewhen(not na(pl3), bar_index[safeLen3], 0)
+float lvl3VH = ta.valuewhen(not na(ph3), math.sum(volume, len3*2), 0)
+float lvl3VL = ta.valuewhen(not na(pl3), math.sum(volume, len3*2), 0)
+float lvl4H  = ta.valuewhen(not na(ph4), high[safeLen4], 0)
+float lvl4L  = ta.valuewhen(not na(pl4), low[safeLen4], 0)
+int lvl4SH  = ta.valuewhen(not na(ph4), bar_index[safeLen4], 0)
+int lvl4SL  = ta.valuewhen(not na(pl4), bar_index[safeLen4], 0)
+float lvl4VH = ta.valuewhen(not na(ph4), math.sum(volume, len4*2), 0)
+float lvl4VL = ta.valuewhen(not na(pl4), math.sum(volume, len4*2), 0)
 
 drawPivotLevel(H, L, len, style_, startH, startL, extendM, volH, volL, tot) =>
     // Called only from a barstate.islast block — no inner guard needed
@@ -675,18 +738,24 @@ if barstate.islast
     array.clear(pivotLabels)
     array.clear(pivotBoxes)
 
+    array<PivotLevel> pivotLevels = array.new<PivotLevel>()
+    array.push(pivotLevels, PivotLevel.new(len1, lvl1H, lvl1L, pivot1, style1, lvl1SH, lvl1SL, extendM1, lvl1VH, lvl1VL))
+    array.push(pivotLevels, PivotLevel.new(len2, lvl2H, lvl2L, pivot2, style2, lvl2SH, lvl2SL, extendM2, lvl2VH, lvl2VL))
+    array.push(pivotLevels, PivotLevel.new(len3, lvl3H, lvl3L, pivot3, style3, lvl3SH, lvl3SL, extendM3, lvl3VH, lvl3VL))
+    array.push(pivotLevels, PivotLevel.new(len4, lvl4H, lvl4L, pivot4, style4, lvl4SH, lvl4SL, extendM4, lvl4VH, lvl4VL))
+
     float pivotTotal = 0.0
     for lv in pivotLevels
-        if lv.display
+        if lv.display and not na(lv.levelH) and not na(lv.levelL)
             pivotTotal += lv.volH + lv.volL
 
     for lv in pivotLevels
-        if lv.display
+        if lv.display and not na(lv.levelH) and not na(lv.levelL)
             drawPivotLevel(lv.levelH, lv.levelL, lv.length, lv.style, lv.startH, lv.startL, lv.extend, lv.volH, lv.volL, pivotTotal)
 
     // Draw pivot zone fills as transparent boxes between H/L levels
     if showPivotFill
         for lv in pivotLevels
-            if lv.display
+            if lv.display and not na(lv.levelH) and not na(lv.levelL)
                 color ptColor1 = low > lv.levelH + ptAtr ? ptColorSup : high < lv.levelH - ptAtr ? ptColorRes : ptColorAct
                 pivotBoxes.push(box.new(left=lv.startH, top=lv.levelH, right=bar_index, bottom=lv.levelL, border_color=color.new(ptColor1, 90), bgcolor=color.new(ptColor1, 95)))

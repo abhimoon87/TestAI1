@@ -5,9 +5,6 @@ Harness lives in ``tests/ui/conftest.py`` (``make_app`` / ``FakeLabel`` / …).
 
 from scanner.api import cache_manager, data_fetcher
 
-from .conftest import FakeButton as _FakeButton  # noqa: F401
-from .conftest import FakeLabel as _FakeLabel  # noqa: F401
-from .conftest import FakePage as _FakePage  # noqa: F401
 from .conftest import make_app as _make_app
 from .conftest import wait_until
 

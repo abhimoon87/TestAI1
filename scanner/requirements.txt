@@ -1,18 +1,18 @@
 # Core dependencies
-# NOTE: flet is pinned to the latest stable (1.0.3) — the GUI is
+# NOTE: flet is pinned to the latest stable (1.0.4) — the GUI is
 # built and tested against this version's control API (page.open/close and
 # page.snack_bar were removed in 1.0 in favor of show_dialog/pop_dialog).
-flet==1.0.3
+flet==1.0.4
 pandas>=3.0.6
 numpy>=2.4.6
-pyarrow>=25.0.1
+pyarrow>=26.0.0
 yfinance>=1.7.0
 # yfinance's repair mode lazily imports sklearn — kept in case repair is
 # re-enabled (the batch downloader runs without repair: it starved the UI)
 scikit-learn>=1.5
 
 # Data providers (free, no auth needed)
-jugaad-data>=0.35.9
+jugaad-data>=0.35.10
 nselib>=2.5.1
 
 # HTTP requests (for API calls and news fetching)
@@ -20,4 +20,4 @@ requests>=2.34.2
 
 # Browser-TLS fingerprinting — the official BSE symbol master (Akamai WAF)
 # rejects plain-requests fingerprints; curl_cffi's Chrome impersonation passes
-curl_cffi>=0.13
+curl_cffi>=0.16.3

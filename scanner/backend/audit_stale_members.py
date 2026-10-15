@@ -369,8 +369,7 @@ def format_report(res: dict) -> str:
         f"3) ANNOTATED BUT FRESH ({len(res['annotated_fresh'])}) "
         "-> candidates to REMOVE (trading resumed?):"
     )
-    for t in res["annotated_fresh"]:
-        lines.append(f"   {t}")
+    lines.extend(f"   {t}" for t in res["annotated_fresh"])
     if not res["annotated_fresh"]:
         lines.append("   (none)")
 

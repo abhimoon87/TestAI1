@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 from ..backend.settings_store import (  # noqa: F401 — re-exported for tests
     DEFAULT_SETTINGS,
     load_settings,
-    save_settings,
 )
 from ..shared.themes import THEMES
 from ..shared.universes import UNIVERSES

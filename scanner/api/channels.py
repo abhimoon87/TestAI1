@@ -38,7 +38,7 @@ def run_channel(args: list, timeout: int = 20, env: dict | None = None) -> str |
         logger.debug("Channel tool not installed: %s", args[0])
         return None
     try:
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(
             [exe, *args[1:]],
             capture_output=True,
             text=True,
