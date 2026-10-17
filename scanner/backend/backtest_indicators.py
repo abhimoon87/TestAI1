@@ -26,7 +26,11 @@ from .scoring import get_ma, to_weekly
 
 def precompute_stock(ticker: str, df: pd.DataFrame, settings: dict) -> StockData | None:
     """Precompute all technical indicators for a stock's entire history."""
-    if df is None or len(df) < WARMUP_BARS:
+    # Weekly mode feeds weekly bars here; 260 daily bars ≈ 5 years of
+    # weeks would reject every short-history stock.  60 matches the
+    # weekly_df gate below (~1.2y, past EMA(44) stabilization).
+    min_bars = 60 if settings.get("timeframe") == "weekly" else WARMUP_BARS
+    if df is None or len(df) < min_bars:
         return None
 
     close = df["close"]
@@ -68,8 +72,10 @@ def precompute_stock(ticker: str, df: pd.DataFrame, settings: dict) -> StockData
     if w_df is not None and len(w_df) >= 60:
         w_close = w_df["close"]
         stock.weekly_df = w_df
-        stock.w_hma = hull_ma(w_close, 44)
-        stock.w_ema50 = ema(w_close, 50)
+        # Weekly trigger MAs — Pine uses HMA(40) x EMA(50); the v1 backtest
+        # keeps its historical 44/50 by not setting these keys.
+        stock.w_hma = hull_ma(w_close, settings.get("w_fast_len", 44))
+        stock.w_ema50 = ema(w_close, settings.get("w_slow_len", 50))
 
     # Attach fundamentals if available
     fund = df.attrs.get("_fundamentals")

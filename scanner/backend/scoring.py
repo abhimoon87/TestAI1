@@ -44,7 +44,7 @@ Pine-vs-Python parity, per category:
       choppy by the Choppiness index alone.
 
   Metadata only (never changes the total):
-    - weekly HMA(44) x EMA(50) higher-timeframe state
+    - weekly HMA(40) x EMA(50) higher-timeframe state
     - sideways (ADX / Choppiness / slope) flags
     - combined-rating labels and entry-signal flags
 
@@ -575,12 +575,11 @@ def _last_values(ind: dict) -> dict:
 
 def _compute_weekly_hma(df: pd.DataFrame) -> dict:
     """
-    Evaluate the weekly higher-timeframe crossover, HMA(44) x EMA(50).
+    Evaluate the weekly higher-timeframe crossover, HMA(40) x EMA(50).
 
-    Python-only extension: the Pine v2 file resamples its configurable
-    fast/slow MAs to the analysis timeframe (defaults HMA(40)/EMA(50))
-    but defines no separate weekly check. This helper hard-codes the
-    44/50 weekly swing-regime check on top of the daily scan.
+    Matches the Pine v2 file's trigger: weekly HMA(fastMALen=40) crossing
+    weekly EMA(slowMALen=50), evaluated as-of the last confirmed weekly bar.
+    The old 44/50 constants predated the Pine file's weekly-trigger design.
 
     Returns:
         {"bull": bool, "cross": bool, "cross_bars_ago": int}
@@ -592,7 +591,7 @@ def _compute_weekly_hma(df: pd.DataFrame) -> dict:
         return result
 
     w_close = weekly_df["close"]
-    w_hma = hull_ma(w_close, 44)
+    w_hma = hull_ma(w_close, 40)
     w_ema = ema(w_close, 50)
 
     if not np.isnan(w_hma.iloc[-1]) and not np.isnan(w_ema.iloc[-1]):
@@ -1305,7 +1304,7 @@ def compute_scores(
         "crossover_dates": curr["crossover_dates"],
         "above_poc": curr["above_poc"],
         "vp_poc": round(curr["vp_poc"], 2),
-        # Weekly HMA(44) x EMA(50) higher-timeframe condition
+        # Weekly HMA(40) x EMA(50) higher-timeframe condition
         "weekly_hma_bull": weekly["bull"],
         "weekly_hma_cross": weekly["cross"],
         "weekly_hma_cross_bars_ago": weekly["cross_bars_ago"],

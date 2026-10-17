@@ -2,7 +2,7 @@
 // © YourUsername
 
 //@version=6
-indicator("HMAxEMA_VP Swing Trading System V4", overlay=true, max_labels_count=500, max_boxes_count=200, max_lines_count=100, max_bars_back=5000, shorttitle="HMAxEMA_VP")
+strategy("HMAxEMA_VP Swing Trading System V4", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.1, slippage=1, pyramiding=0, max_labels_count=500, max_boxes_count=200, max_lines_count=100, max_bars_back=5000, shorttitle="HMAxEMA_VP")
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 1. INPUT PARAMETERS
@@ -53,6 +53,17 @@ slopeLookback = input.int(10, "Slope Lookback (Bars)", minval=1, maxval=2000, gr
 flatThreshold = input.float(0.5, "Flatness Threshold (%)", step=0.1, group="Sideways Filter")
 showSidewaysStatus = input.bool(true, "Show Sideways Status", group="Sideways Filter")
 sidewaysMinCount   = input.int(2, "Min Filters to Trigger Sideways (1-3)", minval=1, maxval=3, group="Sideways Filter")
+
+// ── Strategy / Confirmation ────────────────────────────────────────────────
+confirmDays  = input.int(5, "Confirm Expiry (Daily Bars)", minval=1, maxval=50, group="Strategy")
+minScore     = input.int(50, "Min Score for Entry", minval=0, maxval=100, group="Strategy")
+exitMode     = input.string("Signals Only", "Exit Mode (Signals Only = old baseline)", options=["Signals Only", "R-Bracket", "ATR Trail"], group="Strategy")
+slPct        = input.float(8.0, "Stop Loss % (1R)", minval=0.1, step=0.1, group="Strategy")
+rrRatio      = input.float(3.0, "Reward:Risk (R, R-Bracket TP)", minval=0.5, step=0.5, group="Strategy")
+beActR       = input.float(1.0, "Stop → Breakeven after +R", minval=0.5, step=0.5, group="Strategy")
+atrMult      = input.float(3.0, "Chandelier ATR Mult (ATR Trail mode)", minval=0.5, step=0.5, group="Strategy")
+useRiskSizing = input.bool(false, "Risk-Based Position Sizing", group="Strategy")
+riskPct      = input.float(1.0, "Risk Per Trade %", minval=0.1, step=0.1, group="Strategy")
 
 // ── Score Calibration ────────────────────────────────────────────────────────
 scoreExcellent = input.int(70, "Excellent Threshold", minval=50, maxval=100, group="Score Calibration")
@@ -144,12 +155,39 @@ get_ma(type, src, len) =>
 // the bars actually loaded so sparse symbols never request readahead past the
 // buffer while long-history symbols keep full depth. Offsets inside
 // request.security() (MTF momentum/RS) intentionally stay static.
-barsAvail() =>
-    // bar_index on the last bar ~= total loaded bars - 1
-    bar_index
-
 safe(n) =>
-    math.max(1, math.min(n, math.max(barsAvail() - 1, 1)))
+    math.max(1, math.min(n, math.max(bar_index - 1, 1)))
+
+// Shared proportional volume binning — the entry gate's POC (vpPOC) and the
+// drawn profile must use identical math, so both consume vpBins. Called only
+// while a confirmation is pending or on the last bar, not every bar.
+vpBins(float hh, float ll) =>
+    float rowSize = (hh - ll) == 0 ? syminfo.mintick : (hh - ll) / vpRows
+    array<float> a_vol = array.new_float(vpRows, 0.0)
+    for i = 0 to vpLookback - 1
+        float b_h = high[i]
+        float b_l = low[i]
+        float b_v = volume[i]
+        if b_h == b_l
+            int idx = int(math.round((b_h - ll) / rowSize))
+            idx := int(math.max(0, math.min(vpRows - 1, idx)))
+            array.set(a_vol, idx, array.get(a_vol, idx) + b_v)
+        else
+            int startBin = int(math.max(0, math.floor((b_l - ll) / rowSize)))
+            int endBin = int(math.min(vpRows - 1, math.ceil((b_h - ll) / rowSize) - 1))
+            for r = startBin to endBin
+                float binBot = ll + (r * rowSize)
+                float binTop = ll + ((r + 1) * rowSize)
+                float overlap = math.max(0, math.min(b_h, binTop) - math.max(b_l, binBot))
+                if overlap > 0
+                    array.set(a_vol, r, array.get(a_vol, r) + (b_v * (overlap / (b_h - b_l))))
+    a_vol
+
+vpPOC(float hh, float ll) =>
+    float rowSize = (hh - ll) == 0 ? syminfo.mintick : (hh - ll) / vpRows
+    array<float> a_vol = vpBins(hh, ll)
+    int pocIdx = array.indexof(a_vol, array.max(a_vol))
+    ll + (pocIdx * rowSize) + (rowSize / 2)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 3. MTF DATA & CROSSOVER SIGNALS
@@ -191,8 +229,39 @@ get_mtf_data() =>
 // NOTE: `and not bx[1]` is needed for MTF — request.security carries the boolean
 // forward across all intra-period lower-TF bars, so deduplication collapses
 // multiple true values into a single signal per crossover event.
-buyCross = bx and not bx[1]
-sellCross = sx and not sx[1]
+rawBuy  = bx and not bx[1]
+rawSell = sx and not sx[1]
+
+// ── Sideways gate (moved up from §7 so the signal gate can see it) ─────────
+// ADX / Choppiness / Slope arrive from request.security — computed on the
+// ANALYSIS timeframe (matches the scanner, which scores is_sideways on
+// analysis-TF bars). Identical to the old chart-TF math when tf == chart.
+isSidewaysADX   = sideADX < adxThreshold
+isSidewaysChop  = sideChop > chopThreshold
+isSidewaysSlope = sideSlope < flatThreshold
+
+int sidewaysCount = (isSidewaysADX ? 1 : 0) + (isSidewaysChop ? 1 : 0) + (isSidewaysSlope ? 1 : 0)
+isSideways = sidewaysCount >= sidewaysMinCount
+
+// Entries are gated on the sideways vote; exits are never filtered.
+blocked    = rawBuy and isSideways
+// Entry condition 2: the crossover DAILY candle must close above BOTH weekly MAs.
+// After a bullish cross fast_ma > slow_ma, so max() == fast_ma.
+crossAboveMAs = not na(fast_ma) and not na(slow_ma) and close > math.max(fast_ma, slow_ma)
+buyCross   = rawBuy and crossAboveMAs and not isSideways
+sellCross  = rawSell
+
+// ── Pending confirmation: armed on the signal bar, consumed by confEntry
+// (computed in §5 after score + POC are known) or cancelled by an opposite
+// signal / expiry.
+var float pendLevel = na
+var int   pendBar   = na
+if sellCross or (not na(pendBar) and bar_index > pendBar + confirmDays)
+    pendLevel := na
+    pendBar   := na
+if buyCross
+    pendLevel := high
+    pendBar   := bar_index
 
 // Smoothed MTF MA display: ramp between the two most recent CONFIRMED
 // analysis-TF values so a weekly MA on a daily chart is continuous instead
@@ -226,9 +295,10 @@ fill(pFast, pSlow, color=dispFast > dispSlow ? color.new(color.green, 85) : colo
 plotshape(not hideOldSignals and buyCross, "All Buy", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white)
 plotshape(not hideOldSignals and sellCross, "All Sell", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white)
 
-// Alerts
-alertcondition(buyCross, "HMAxEMA Buy", "HMAxEMA BUY on {{ticker}} @ {{close}}")
-alertcondition(sellCross, "HMAxEMA Sell", "HMAxEMA SELL on {{ticker}} @ {{close}}")
+// Weekly cross refused by the sideways gate
+plotshape(blocked, "Blocked Flat", shape.xcross, location.belowbar, color.gray, text="FLAT", textcolor=color.gray)
+
+// Orders + confEntry live in §5 — they need `score` (§4) and the POC (§5).
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 4. RELATIVE STRENGTH & SCORING ENGINE
@@ -402,6 +472,109 @@ if sellCross
 float vp_hh = ta.highest(high, vpLookback)
 float vp_ll = ta.lowest(low, vpLookback)
 
+// Daily ATR for the chandelier stop (the MTF `atr` is weekly — ~5× too wide
+// for a trailing stop). Highest high since entry drives the ratchet.
+float chartAtr = ta.atr(atrLength)
+var float riskHi = na
+// Chandelier stop: highest high since fill − atrMult × live ATR. Monotonic
+// guard so an ATR expansion can never LOWER the stop mid-trade.
+var float chandStop = na
+// Per-trade risk unit (1R): the REAL stop distance — ATR-based in ATR Trail
+// mode, slPct% otherwise. Set at entry, kept while flat so the just-closed
+// dashboard aggregation still sees the closing trade's unit.
+var float tradeR = na
+if strategy.position_size > 0
+    riskHi := na(riskHi) ? strategy.position_avg_price : math.max(riskHi, high)
+else
+    riskHi := na
+    chandStop := na
+if strategy.position_size > 0 and strategy.position_size[1] <= 0
+    tradeR := exitMode == "ATR Trail" ? atrMult * chartAtr : strategy.position_avg_price * slPct / 100
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 5b. ENTRY CONFIRMATION & ORDERS
+// ══════════════════════════════════════════════════════════════════════════════
+// Conditions (1+2 already folded into buyCross in §3):
+//   1. Weekly HMA crosses weekly EMA                    → rawBuy
+//   2. Crossover DAILY candle closes above both MAs     → crossAboveMAs
+//   3. Entry candle closes above crossover candle HIGH  → close > pendLevel
+//   4. Entry candle GREEN and close above VP POC        → close > open, close > POC
+//   5. Score >= minScore                                → score >= minScore
+float entryPOC = not na(pendBar) and not na(vp_hh) and not na(vp_ll) ? vpPOC(vp_hh, vp_ll) : na
+confEntry = not na(pendBar) and bar_index > pendBar and bar_index <= pendBar + confirmDays and close > open and close > pendLevel and not na(entryPOC) and close > entryPOC and not na(score) and score >= minScore
+
+// ── Orders — long only, filled at the next bar's open ─────────────────────
+// sellCross fills at the next bar's open, so the flag is set on the SIGNAL
+// bar; justClosed (below) then sees the fill bar and attributes the close.
+var bool sigExitPending = false
+if confEntry
+    if useRiskSizing
+        // Stop distance estimated from this bar (fill is next open — gaps shift
+        // realized risk slightly). ATR Trail mode: real chandelier stop distance;
+        // other modes: slPct%. 1% equity ÷ stop distance = size.
+        // ponytail: floor-to-1 can oversize high-priced symbols where 1% of
+        // equity buys under 1 share; filter those out if it bites.
+        float stopDist = exitMode == "ATR Trail" ? atrMult * chartAtr : close * slPct / 100
+        float qty = math.max(1.0, math.floor(strategy.equity * riskPct / 100 / stopDist))
+        strategy.entry("Long", strategy.long, qty=qty, alert_message="HMAxEMA LONG confirmed on {{ticker}} @ {{close}}")
+    else
+        strategy.entry("Long", strategy.long, alert_message="HMAxEMA LONG confirmed on {{ticker}} @ {{close}}")
+    pendLevel := na
+    pendBar   := na
+if sellCross and strategy.position_size > 0
+    strategy.close("Long", alert_message="HMAxEMA SELL on {{ticker}} @ {{close}}")
+    sigExitPending := true
+
+// ── Risk exit: 3 selectable modes (re-issued every bar in position) ────────
+// R-Bracket levels derive 1R = slPct% from the ACTUAL fill price; ATR Trail
+// is a Chandelier stop (highest-high-since-fill − atrMult × live ATR, only
+// ever moves up). trail_offset/trail_price no longer used.
+if exitMode != "Signals Only" and strategy.position_size > 0
+    float entryPx  = strategy.position_avg_price
+    float rUnit    = entryPx * slPct / 100
+    float baseStop = entryPx - rUnit
+    if exitMode == "R-Bracket"
+        // base −1R stop → once high reaches +beActR, trail from highest high
+        // at beActR distance (beActR=1: BE at +1R, locks +1R once high ≥ +2R)
+        float stopPx = riskHi >= entryPx + beActR * rUnit ? math.max(baseStop, riskHi - beActR * rUnit) : baseStop
+        float tpPx   = entryPx + rUnit * rrRatio
+        strategy.exit("Risk Exit", "Long", stop=stopPx, limit=tpPx, alert_message="HMAxEMA RISK EXIT on {{ticker}} @ {{close}}")
+    else if exitMode == "ATR Trail"
+        // Chandelier: initial stop sits atrMult×ATR below the fill, then
+        // ratchets with every new high — one formula for SL AND trailing SL.
+        float cand = riskHi - atrMult * chartAtr
+        chandStop := na(chandStop) ? cand : math.max(chandStop, cand)
+        strategy.exit("Risk Exit", "Long", stop=chandStop, alert_message="HMAxEMA RISK EXIT on {{ticker}} @ {{close}}")
+
+// ── Re-arm: a stop/trailing exit mid-trend reopens the confirmation gate ───
+bool justClosed = strategy.position_size[1] > 0 and strategy.position_size == 0
+if justClosed
+    if sigExitPending
+        sigExitPending := false
+    else if not na(fast_ma) and not na(slow_ma) and fast_ma > slow_ma and not isSideways
+        pendLevel := high
+        pendBar   := bar_index
+
+// ── Running closed-trade aggregates for the dashboard ──────────────────────
+// Accumulated O(1) at each close instead of looping over every closed trade
+// on the last bar — a loop would hit the 500-iteration realtime cap on long
+// backtests. PF / avg-R are derived from these in §8.
+var float dashGrossWin  = 0.0
+var float dashGrossLoss = 0.0
+var float dashSumR      = 0.0
+if justClosed
+    int lastT = strategy.closedtrades - 1
+    if lastT >= 0
+        float p  = strategy.closedtrades.profit(lastT)
+        float ep = strategy.closedtrades.entry_price(lastT)
+        float xp = strategy.closedtrades.exit_price(lastT)
+        if p > 0
+            dashGrossWin += p
+        else
+            dashGrossLoss -= p
+        if not na(ep) and ep != 0 and not na(xp)
+            dashSumR += (xp - ep) / (not na(tradeR) and tradeR != 0 ? tradeR : ep * slPct / 100)
+
 var box[] vpBoxes = array.new_box()
 var line pocLine = na
 
@@ -415,27 +588,7 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
         line.delete(pocLine)
 
     float rowSize = (vp_hh - vp_ll) == 0 ? syminfo.mintick : (vp_hh - vp_ll) / vpRows
-    a_vol = array.new_float(vpRows, 0.0)
-
-    for i = 0 to vpLookback - 1
-        float b_h = high[i]
-        float b_l = low[i]
-        float b_v = volume[i]
-
-        if b_h == b_l
-            int idx = int(math.round((b_h - vp_ll) / rowSize))
-            idx := int(math.max(0, math.min(vpRows - 1, idx)))
-            array.set(a_vol, idx, array.get(a_vol, idx) + b_v)
-        else
-            int startBin = int(math.max(0, math.floor((b_l - vp_ll) / rowSize)))
-            int endBin = int(math.min(vpRows - 1, math.ceil((b_h - vp_ll) / rowSize) - 1))
-            for r = startBin to endBin
-                float binBot = vp_ll + (r * rowSize)
-                float binTop = vp_ll + ((r + 1) * rowSize)
-                float overlap = math.max(0, math.min(b_h, binTop) - math.max(b_l, binBot))
-
-                if overlap > 0
-                    array.set(a_vol, r, array.get(a_vol, r) + (b_v * (overlap / (b_h - b_l))))
+    a_vol = vpBins(vp_hh, vp_ll)
 
     float maxVol = array.max(a_vol)
     int pocIdx = array.indexof(a_vol, maxVol)
@@ -466,6 +619,8 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
     if showPOC
         pocLine := line.new(startBar, pocPrice, bar_index, pocPrice, color=pocColor, width=2, style=line.style_solid)
 
+// NOT syminfo.tickerid — it appends the adjustment JSON
+// ("...{"adjustment":"dividends",...}") on adjusted charts and breaks the table.
 string clean_ticker = syminfo.prefix + ":" + syminfo.ticker
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -528,21 +683,7 @@ plotcandle(showMomCandles ? open : na, high, low, close, title="Momentum Candles
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 7. SIDeways / TREND FILTER
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ADX / Choppiness / Slope arrive from request.security — computed on the
-// ANALYSIS timeframe (matches the scanner, which scores is_sideways on
-// analysis-TF bars). Identical to the old chart-TF math when tf == chart.
-isSidewaysADX   = sideADX < adxThreshold
-isSidewaysChop  = sideChop > chopThreshold
-isSidewaysSlope = sideSlope < flatThreshold
-
-int sidewaysCount = (isSidewaysADX ? 1 : 0) + (isSidewaysChop ? 1 : 0) + (isSidewaysSlope ? 1 : 0)
-isSideways = sidewaysCount >= sidewaysMinCount
-
-// ══════════════════════════════════════════════════════════════════════════════
-// 8. DASHBOARD
+// 7. DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════════
 
 string trdStat2 = not na(slow_ma) and tf_close > slow_ma ? "Bullish" : not na(slow_ma) ? "Bearish" : "—"
@@ -553,12 +694,21 @@ color  hdr_bg  = color.rgb(10,  35,  25,  10)
 color  alt_bg  = color.rgb(8,   28,  20,  10)
 color  odd_bg  = dash_bg
 color  lbl_col = color.rgb(130, 150, 120, 0)
-int    dash_rows = compactMode ? 8 : 14
+int    dash_rows = compactMode ? 10 : 16
 var table dash = table.new(dashPos == "Top Left" ? position.top_left : dashPos == "Top Right" ? position.top_right : dashPos == "Bottom Left" ? position.bottom_left : position.bottom_right, 2, dash_rows, border_width=1, border_color=color.rgb(10,55,40,20), frame_width=1, frame_color=color.rgb(15,65,50,10))
 
 if showDash and barstate.islast
     table.cell(dash, 0, 0, clean_ticker, text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
     table.cell(dash, 1, 0, recStr,       text_color=recCol,     bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+    // ── Open-trade R + closed-trade PF / avg R (shared by both layouts) ─────
+    float openR = strategy.position_size > 0 ? (close - strategy.position_avg_price) / (not na(tradeR) and tradeR != 0 ? tradeR : strategy.position_avg_price * slPct / 100) : na
+    int   nClosed = strategy.closedtrades
+    float pf   = dashGrossLoss > 0 ? dashGrossWin / dashGrossLoss : na
+    float avgR = nClosed > 0 ? dashSumR / nClosed : na
+    string openRStr  = not na(openR) ? (openR >= 0 ? "+" : "") + str.tostring(openR, "#.##") + "R" : "— Flat"
+    color  openRCol  = not na(openR) ? openR >= 0 ? color.green : color.red : color.gray
+    string perfStr   = nClosed > 0 ? (not na(pf) ? "PF " + str.tostring(pf, "#.##") : "PF —") + " · " + (avgR >= 0 ? "+" : "") + str.tostring(avgR, "#.##") + "R · " + str.tostring(nClosed) + "T" : "— No trades"
+    color  perfCol   = nClosed == 0 ? color.gray : not na(pf) and pf >= 1.5 ? color.green : not na(pf) and pf >= 1.0 ? color.orange : color.red
     if compactMode
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 1, str.tostring(score, "#") + "/" + str.tostring(maxScore), text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
@@ -578,17 +728,19 @@ if showDash and barstate.islast
         color  cSigCol = lastSigCol
         table.cell(dash, 0, 7, "Signal",     text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 7, cSigStr,       text_color=cSigCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 0, 8, "Open R",     text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 8, openRStr,      text_color=openRCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 0, 9, "PF",         text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 9, perfStr,       text_color=perfCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
     else
         int filled = int(math.round(score * 10 / maxScore))
         string scoreBar = ""
         for i = 0 to 9
             scoreBar += i < filled ? "█" : "░"
         color trendRowCol = trendScore >= 10.5 ? color.green : trendScore >= 6 ? color.orange : color.red
-        color rsiRowCol   = rsiScore >= 5.6 ? color.green : rsiScore >= 3.2 ? color.orange : color.red
         color macdRowCol  = macdScore >= 4.9 ? color.green : macdScore >= 2.8 ? color.orange : color.red
         color momRowCol   = momScore >= 10.5 ? color.green : momScore >= 6 ? color.orange : color.red
         color volRowCol   = volScore2 >= 7 ? color.green : volScore2 >= 4 ? color.orange : color.red
-        color rsRowCol    = rsScore >= 7 ? color.green : rsScore >= 4 ? color.orange : color.red
         color fundRowCol  = hasFund ? (fundScore >= 14 ? color.green : fundScore >= 8 ? color.orange : color.red) : color.gray
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 1, str.tostring(score, "#") + "/" + str.tostring(maxScore) + " " + scoreBar + " " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
@@ -626,9 +778,13 @@ if showDash and barstate.islast
         color  obvCol  = not na(obv) and not na(obvMA) ? (obv > obvMA ? color.green : color.red) : color.gray
         table.cell(dash, 0, 13, "OBV",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 13, obvStr,        text_color=obvCol,   bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 0, 14, "Open R",     text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 14, openRStr,      text_color=openRCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 0, 15, "PF / AvgR",  text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 15, perfStr,       text_color=perfCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 9. SIDEWAYS / TREND FILTER (display table)
+// 8. SIDeways / TREND FILTER (display table)
 // ══════════════════════════════════════════════════════════════════════════════
 
 var table statusTable = table.new(position.bottom_center, 1, 1, border_width=2, border_color=color.new(color.black, 100))

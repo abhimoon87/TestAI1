@@ -487,6 +487,40 @@ def _fetch_nse_via_csv() -> list[str]:
     return []
 
 
+# NIFTY 500 (CNX500) constituents — matches the Pine strategy's indexSymbol universe.
+NIFTY500_CSV_URL = (
+    "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv"
+)
+
+
+def fetch_nifty500() -> list[str]:
+    """NIFTY 500 constituents from NSE archives, 4h cached (disk + kv).
+
+    Returns [] when offline with no cache — callers fall back to NIFTY_BROAD.
+    """
+
+    def _fetch() -> list[str]:
+        import csv
+        import io
+
+        import requests
+
+        resp = requests.get(
+            NIFTY500_CSV_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=12
+        )
+        resp.raise_for_status()
+        reader = csv.DictReader(io.StringIO(resp.text))
+        symbols = [
+            str(r.get("Symbol", "")).strip().upper()
+            for r in reader
+            if str(r.get("Symbol", "")).strip()
+        ]
+        # Real NIFTY 500 has ~500 rows — reject truncated/parked responses.
+        return sorted(set(symbols)) if len(symbols) >= 300 else []
+
+    return _fetch_with_cache("nifty500", _fetch, fallback=[])
+
+
 def fetch_bse_all_live() -> list[str]:
     """Fetch all BSE Active Equity symbols (~4,000-5,500). Cached 4h."""
 

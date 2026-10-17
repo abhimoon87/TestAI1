@@ -27,7 +27,13 @@ def update_position(
         exit_price = max(pos.stop_loss, low)
         if opn < pos.stop_loss:
             exit_price = opn  # gap down: filled at open
-        return _close_position(pos, exit_price, current_date, "STOP_LOSS")
+        return _close_position(
+            pos,
+            exit_price,
+            current_date,
+            "STOP_LOSS",
+            commission_pct=settings.get("commission_pct", 0.0),
+        )
 
     # --- Check target ---
     atr_trail = settings.get("atr_trail_enabled", False)
@@ -48,7 +54,13 @@ def update_position(
         # (low happens before close within a bar)
         if low <= pos.trail_stop:
             exit_price = max(pos.trail_stop, low)
-            return _close_position(pos, exit_price, current_date, "TRAILING_STOP")
+            return _close_position(
+                pos,
+                exit_price,
+                current_date,
+                "TRAILING_STOP",
+                commission_pct=settings.get("commission_pct", 0.0),
+            )
 
         # THEN update peak with close (information available after the bar)
         if close_val > pos.peak_price:
@@ -63,14 +75,26 @@ def update_position(
 
 
 def _close_position(
-    pos: Position, exit_price: float, exit_date: datetime, reason: str
+    pos: Position,
+    exit_price: float,
+    exit_date: datetime,
+    reason: str,
+    commission_pct: float = 0.0,
 ) -> TradeResult:
-    """Close a position and return the trade result."""
+    """Close a position and return the trade result.
+
+    commission_pct (e.g. 0.1 for Pine's 0.1%) is applied per side on
+    entry+exit notional; 0 keeps the historical gross P&L behavior.
+    """
     pos.exit_price = exit_price
     pos.exit_date = exit_date
     pos.exit_reason = reason
-    pos.pnl = (exit_price - pos.entry_price) * pos.shares
-    pos.pnl_pct = (exit_price / pos.entry_price - 1) * 100
+    gross = (exit_price - pos.entry_price) * pos.shares
+    notional = (exit_price + pos.entry_price) * pos.shares
+    commission = notional * commission_pct / 100.0
+    pos.pnl = gross - commission
+    invested = pos.entry_price * pos.shares
+    pos.pnl_pct = (pos.pnl / invested * 100) if invested > 0 else 0.0
     pos.days_held = (exit_date - pos.entry_date).days
     return TradeResult(
         ticker=pos.ticker,
@@ -86,6 +110,6 @@ def _close_position(
         pnl=pos.pnl,
         pnl_pct=pos.pnl_pct,
         days_held=pos.days_held,
-        investment=pos.entry_price * pos.shares,
+        investment=invested,
         sector=pos.sector,
     )

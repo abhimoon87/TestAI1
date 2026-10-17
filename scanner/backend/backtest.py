@@ -202,12 +202,13 @@ class BacktestEngine:
             all_dates.update(stock.df.index)
         trading_dates = sorted(all_dates)
 
-        if len(trading_dates) <= WARMUP_BARS:
+        warmup = int(settings.get("warmup_bars", WARMUP_BARS))
+        if len(trading_dates) <= warmup:
             logger.info("  Not enough data after warmup period. Aborting.")
             return None
 
-        # Skip first WARMUP_BARS days
-        backtest_dates = trading_dates[WARMUP_BARS:]
+        # Skip first warmup bars (default WARMUP_BARS; per-run override)
+        backtest_dates = trading_dates[warmup:]
 
         # Optional calendar-window restriction (in-sample / out-of-sample runs)
         sim_start = settings.get("sim_start")
@@ -394,16 +395,30 @@ class BacktestEngine:
             # -- ENTRY SIGNAL CONFIRMED --
             self._open_position(stock, bar_idx, day, stock_sector, score_result)
 
-    def _open_position(self, stock, bar_idx, day, stock_sector, score_result):
-        """Open a new position at the next day's open for a confirmed signal."""
+    def _open_position(
+        self,
+        stock,
+        bar_idx,
+        day,
+        stock_sector,
+        score_result,
+        entry_price=None,
+        entry_date=None,
+    ):
+        """Open a position for a confirmed signal.
+
+        Default: next day's open. When entry_price/entry_date are given
+        (highbreak stop fill), use them as-is.
+        """
         settings = self.settings
 
-        # Entry on next day's open
-        next_idx = bar_idx + 1
-        if next_idx >= len(stock.df):
-            return
-        entry_date = stock.df.index[next_idx]
-        entry_price = stock.df["open"].iloc[next_idx]
+        if entry_price is None:
+            # Entry on next day's open
+            next_idx = bar_idx + 1
+            if next_idx >= len(stock.df):
+                return
+            entry_date = stock.df.index[next_idx]
+            entry_price = stock.df["open"].iloc[next_idx]
 
         if np.isnan(entry_price) or entry_price <= 0:
             return
@@ -515,7 +530,13 @@ class BacktestEngine:
             else:
                 last_close = stock.df["close"].iloc[-1]
                 last_date = stock.df.index[-1]
-            result = _close_position(pos, last_close, last_date, "END_OF_DATA")
+            result = _close_position(
+                pos,
+                last_close,
+                last_date,
+                "END_OF_DATA",
+                commission_pct=self.settings.get("commission_pct", 0.0),
+            )
             self.trades.append(result)
         self.positions.clear()
 
@@ -566,7 +587,15 @@ class BacktestEngine:
                 max_dd_pct = dd_pct
                 max_dd = dd
 
-        # Daily returns for Sharpe/Sortino
+        # Bar frequency: equity bars are daily or weekly (weekly mode), so
+        # annualize from the calendar span instead of assuming 252 bars/year.
+        if len(eq) > 1:
+            years = (eq[-1][0] - eq[0][0]).days / 365.25 or 1.0
+            periods_per_year = len(eq) / years if years > 0 else 252.0
+        else:
+            years, periods_per_year = 1.0, 252.0
+
+        # Per-bar returns for Sharpe/Sortino
         if len(eq) > 1:
             daily_vals = [v for _, v in eq]
             daily_rets = [
@@ -577,12 +606,18 @@ class BacktestEngine:
             if daily_rets:
                 avg_daily = np.mean(daily_rets)
                 std_daily = np.std(daily_rets)
-                sharpe = (avg_daily / std_daily) * np.sqrt(252) if std_daily > 0 else 0
+                sharpe = (
+                    (avg_daily / std_daily) * np.sqrt(periods_per_year)
+                    if std_daily > 0
+                    else 0
+                )
                 # Sortino: downside deviation uses sqrt(mean(min(r, 0)^2))
                 downside_sq = [min(r, 0) ** 2 for r in daily_rets]
                 downside_std = np.sqrt(np.mean(downside_sq)) if downside_sq else 0.001
                 sortino = (
-                    (avg_daily / downside_std) * np.sqrt(252) if downside_std > 0 else 0
+                    (avg_daily / downside_std) * np.sqrt(periods_per_year)
+                    if downside_std > 0
+                    else 0
                 )
             else:
                 sharpe = sortino = 0
@@ -590,7 +625,6 @@ class BacktestEngine:
             sharpe = sortino = 0
 
         # Annualized return
-        years = len(eq) / 252 if len(eq) > 0 else 1
         final_val = eq[-1][1] if eq else initial_capital
         annual_return = ((final_val / initial_capital) ** (1 / years) - 1) * 100
 

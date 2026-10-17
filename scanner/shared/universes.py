@@ -761,6 +761,7 @@ _BSE_ALL_PLACEHOLDER: list = list(NIFTY_BROAD)  # ~4,500 BSE active (live → 4,
 _FULL_MARKET_PLACEHOLDER: list = list(
     NIFTY_BROAD
 )  # ~5,900 unique NSE+BSE (live → ~5,470)
+_NIFTY500_PLACEHOLDER: list = list(NIFTY_BROAD)  # 500 CNX500 (live → 500)
 
 # ── Universe Map ────────────────────────────────────────────────────────────
 UNIVERSES = {
@@ -790,6 +791,8 @@ UNIVERSES = {
     "HIGH MOMENTUM STOCKS": HIGH_MOMENTUM_STOCKS,
     # Combined (static broad)
     "ALL (Combined)": NIFTY_BROAD,
+    # ── Live index lists (symbol_fetcher, 4h cache) ──────────────────────────
+    "NIFTY 500": _NIFTY500_PLACEHOLDER,
     # ── Full Market — Live (chunked fetch, 5,900 unique) ──────────────────
     "NSE ALL (Live ~2,200)": _NSE_ALL_PLACEHOLDER,
     "BSE ALL (Live ~4,500)": _BSE_ALL_PLACEHOLDER,
@@ -799,6 +802,8 @@ UNIVERSES = {
 # No-space alias → canonical lowercased universe name (keys match low without spaces)
 _UNIVERSE_ALIASES = {
     "nifty50": "nifty 50",
+    "nifty500": "nifty 500",
+    "cnx500": "nifty 500",
     "banknifty": "bank nifty",
     "niftynext50": "nifty next 50",
     "niftymidcap100": "nifty midcap 100",
@@ -835,6 +840,21 @@ def get_universe(name: str) -> list:
     low = _UNIVERSE_ALIASES.get(_alias, low)
     if low == "all":
         low = "all (combined)"
+
+    if low in ("nifty 500", "cnx500"):
+        try:
+            from ..api.symbol_fetcher import fetch_nifty500
+
+            live = fetch_nifty500()
+            if live and len(live) > 300:
+                UNIVERSES["NIFTY 500"] = live
+                return live
+        except Exception:
+            logger.info(
+                "NIFTY 500 live fetch failed, falling back to NIFTY_BROAD",
+                exc_info=True,
+            )
+        return UNIVERSES.get("NIFTY 500") or NIFTY_BROAD
 
     if low in ("nse all (live ~2,200)", "nse all", "nse all (live)"):
         try:
