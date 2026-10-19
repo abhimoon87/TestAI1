@@ -1111,9 +1111,7 @@ class TestScanLatest:
         st.df.iloc[n_w - 2, cols.get_loc("close")] = signal_high - 10.0
         # Make the last weekly bar red: green-candle gate fails.
         last = len(st.df) - 1
-        st.df.iloc[last, cols.get_loc("close")] = (
-            float(st.df["open"].iloc[last]) - 1.0
-        )
+        st.df.iloc[last, cols.get_loc("close")] = float(st.df["open"].iloc[last]) - 1.0
         rows = eng.scan_latest()
         assert len(rows) == 1
         r = rows[0]
@@ -1220,9 +1218,7 @@ class TestScanLatest:
         out = tmp_path / "scan.html"
         from scanner.backend.backtest_report import generate_scan_html
 
-        generate_scan_html(
-            rows, eng.settings, eng.scan_meta, str(out)
-        )
+        generate_scan_html(rows, eng.settings, eng.scan_meta, str(out))
         html = out.read_text(encoding="utf-8")
         assert "TEST" in html
         assert "Entry now" in html

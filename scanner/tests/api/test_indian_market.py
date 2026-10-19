@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+from scanner.api.data_providers import _normalize_nselib_ohlcv
 from scanner.api.indian_market import (
     _FLOW_CACHE,
     _INDIA_CACHE,
@@ -266,6 +267,46 @@ class TestDeliveryFromDf:
         assert _delivery_from_df(None, "X") is None
         bad = _nse_df([{"Date": "25-Sep-2026"}])  # all-zero quantities
         assert _delivery_from_df(bad, "X") is None
+
+
+class TestNormalizeNselibOhlcv:
+    def test_single_close_and_volume_columns(self):
+        df = _nse_df(
+            [
+                {
+                    "Date": "24-Sep-2026",
+                    "PrevClose": 99.0,
+                    "OpenPrice": 100.0,
+                    "HighPrice": 105.0,
+                    "LowPrice": 98.0,
+                    "LastPrice": 101.0,
+                    "ClosePrice": 102.0,
+                    "TotalTradedQuantity": 1000,
+                },
+                {
+                    "Date": "25-Sep-2026",
+                    "PrevClose": 102.0,
+                    "OpenPrice": 103.0,
+                    "HighPrice": 108.0,
+                    "LowPrice": 101.0,
+                    "LastPrice": 104.0,
+                    "ClosePrice": 107.0,
+                    "TotalTradedQuantity": 1200,
+                },
+            ]
+        )
+        out = _normalize_nselib_ohlcv(df)
+        assert out is not None
+        assert list(out.columns) == ["open", "high", "low", "close", "volume"]
+        # ClosePrice wins — PrevClose/LastPrice must not shadow it
+        assert out["close"].iloc[-1] == 107.0
+        assert out["volume"].iloc[-1] == 1200
+        assert isinstance(out.index, pd.DatetimeIndex)
+        assert out.index.is_monotonic_increasing  # newest-first flipped
+
+    def test_missing_ohlc_returns_none(self):
+        bare = pd.DataFrame({"Symbol": ["X"], "Date": ["25-Sep-2026"]})
+        assert _normalize_nselib_ohlcv(bare) is None
 
 
 def test_week52_retries_bo_after_ns_miss():

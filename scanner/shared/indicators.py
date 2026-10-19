@@ -305,7 +305,13 @@ def volume_profile_poc(
         price_min = rolling_low[i]
         price_max = rolling_high[i]
 
-        if np.isnan(price_min) or np.isnan(price_max) or price_max == price_min:
+        if (
+            np.isnan(price_min)
+            or np.isnan(price_max)
+            or price_max == price_min
+            or not np.isfinite(close_arr[i])
+            or close_arr[i] <= 0
+        ):
             poc_series.iat[i] = price_min if not np.isnan(price_min) else close_arr[i]
             continue
 

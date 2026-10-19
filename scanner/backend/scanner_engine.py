@@ -117,6 +117,99 @@ def rating_ok_for_trend_filter(trend_filter: str, combined_rating: str | None) -
     return (combined_rating or "") not in POOR_RATINGS
 
 
+def _scan_timeframe(settings: dict, timeframe: str) -> str:
+    """Effective data timeframe for a scan.
+
+    The Weekly V4 Swing strategy is defined on daily bars — it derives its
+    own weekly crosses and confirm window from them. A weekly/monthly fetch
+    would starve that window (``precompute_stock`` rejects short non-daily
+    history), so the timeframe control is ignored for it.
+    """
+    if settings.get("strategy") == "weekly_v4_swing":
+        return "D"
+    return timeframe
+
+
+def _score_ticker_v4(
+    ticker: str,
+    df: Any,
+    *,
+    settings: dict,
+    index_df: Any,
+    is_large: bool,
+    global_data: dict | None,
+    enrich: Callable,
+    trend_filter: str = "All",
+    use_enrichment_cache: bool = True,
+) -> tuple[dict | None, str]:
+    """Score one ticker under the Weekly V4 Swing strategy.
+
+    Replaces the daily-crossover filter with the backtest_v2 arm/confirm
+    state machine (scan_ticker_v4) and maps its TRIGGERED/ARMED/EXPIRED
+    state onto the standard grid row: entry_signal is True only for
+    TRIGGERED; the state and its detail (level, missing gates, cross
+    date) ride along as ``state`` / ``v4_*`` keys for the UI. Tickers
+    with no recent V4 activity are dropped (``filtered``), mirroring how
+    the daily path drops stocks with no crossover. The daily
+    trend/direction filters do not apply (the weekly state machine has
+    its own regime gate); the rating gate still does.
+    """
+    try:
+        if df is None or df.empty:
+            return None, "empty"
+        from .backtest_v2 import scan_ticker_v4
+
+        v4 = scan_ticker_v4(ticker, df, index_df, settings)
+        if v4 is None:
+            return None, "filtered"
+        if is_large:
+            enriched = {**settings, **(global_data or {})}
+        else:
+            enriched = _enrich_small_cached(
+                ticker,
+                df,
+                settings,
+                global_data,
+                enrich,
+                use_cache=use_enrichment_cache,
+            )
+        scores = compute_scores(df, timeframe="D", index_df=index_df, settings=enriched)
+        if scores is None:
+            return None, "no_score"
+        if not rating_ok_for_trend_filter(trend_filter, scores.get("combined_rating")):
+            return None, "poor_rating"
+        state = v4.get("state")
+        scores["entry_signal"] = state == "TRIGGERED"
+        scores["entry_missing"] = []  # daily gates don't apply; v4_missing does
+        scores["state"] = state
+        scores["v4_note"] = v4.get("note") or ""
+        scores["v4_n"] = v4.get("n")
+        scores["v4_level"] = v4.get("level")
+        scores["v4_missing"] = v4.get("missing") or []
+        cd = v4.get("cross_date")
+        scores["v4_cross_date"] = str(cd.date()) if cd is not None else None
+        scores["ticker"] = ticker
+        direction = "Bull" if scores.get("ma_bullish") else "Bear"
+        scores["trend_dir"] = direction
+        scores["trend_color"] = direction.lower()
+        try:
+            if "close" in df.columns:
+                closes = df["close"].dropna()
+                px = [float(x) for x in closes.tail(SPARK_BARS)]
+                if len(px) >= 2:
+                    scores["px_tail"] = px
+        except (TypeError, ValueError):
+            logger.debug("Sparkline px_tail build failed for %s", ticker, exc_info=True)
+        if not is_large:
+            for k, v in enriched.items():
+                if k.startswith("_") and k not in scores:
+                    scores[k] = v
+        return scores, direction
+    except Exception as e:
+        logger.info("V4 scoring failed for %s: %s", ticker, e)
+        return None, "error"
+
+
 def _score_ticker(
     ticker: str,
     df: Any,
@@ -146,6 +239,18 @@ def _score_ticker(
     try:
         if df is None or df.empty:
             return None, "empty"
+        if settings.get("strategy") == "weekly_v4_swing":
+            return _score_ticker_v4(
+                ticker,
+                df,
+                settings=settings,
+                index_df=index_df,
+                is_large=is_large,
+                global_data=global_data,
+                enrich=enrich,
+                trend_filter=trend_filter,
+                use_enrichment_cache=use_enrichment_cache,
+            )
         filter_result = check_filter(
             df,
             fast_ma_type=settings.get("fast_ma_type", "HMA"),
@@ -167,7 +272,7 @@ def _score_ticker(
         # Skip fundamentals/enrichment in fast mode phase 1 (large universes
         # attach them later in the top-200 pass and re-score there).
         if is_large:
-            enriched = {**settings, **(global_data or {}), "_skip_vp": True}
+            enriched = {**settings, **(global_data or {})}
         else:
             enriched = _enrich_small_cached(
                 ticker,
@@ -177,7 +282,6 @@ def _score_ticker(
                 enrich,
                 use_cache=use_enrichment_cache,
             )
-            enriched["_skip_vp"] = False
         scores = compute_scores(
             df, timeframe=timeframe, index_df=index_df, settings=enriched
         )
@@ -450,7 +554,6 @@ def _enrich_rows_in_place(
                             settings={
                                 **settings,
                                 **(global_data or {}),
-                                "_skip_vp": True,
                                 # Provider "_"-keys (flows, delivery, …) so
                                 # score_bar's institutional bonus applies in
                                 # phase-2 like fundamentals do via df.attrs.
@@ -468,6 +571,11 @@ def _enrich_rows_in_place(
                     recomputed = None
                 if recomputed is not None and recomputed is not _TIMEOUT:
                     r.update(recomputed)
+                    # Weekly V4 rows carry their own entry logic — the daily
+                    # entry_signal recomputed above must not clobber it.
+                    if "state" in r:
+                        r["entry_signal"] = r["state"] == "TRIGGERED"
+                        r["entry_missing"] = []
         except Exception as e:
             logger.info("Top enrichment failed for %s: %s", ticker, e)
         return r
@@ -561,6 +669,16 @@ def _build_scan_warnings(
     healthy or too small to judge).
     """
     warnings = []
+    if settings.get("strategy") == "weekly_v4_swing":
+        # The breadth warnings below only describe the daily crossover
+        # filter; V4 rows are arm/confirm candidates, not filter passers.
+        if settings.get("data_period") != "2y":
+            warnings.append(
+                "Weekly V4 needs >= ~1.2 years of daily bars for its weekly "
+                "trigger — set Data Period to 2 Years or most stocks are "
+                "skipped for insufficient history."
+            )
+        return warnings
     if not results or total <= 0:
         return warnings
     min_score = float(settings.get("min_score", min_score_default))
@@ -1120,6 +1238,7 @@ class ScannerEngine:
         Returns:
             ScanResult with results list and metadata
         """
+        timeframe = _scan_timeframe(settings, timeframe)
         self._cancel_event.clear()
         result = ScanResult()
         import time as _time
@@ -1401,6 +1520,7 @@ class ScannerEngine:
         then after all chunks enrich the global top-200 and emit an update
         batch (existing rows are replaced in-place in the UI).
         """
+        timeframe = _scan_timeframe(settings, timeframe)
         batch_cb = on_batch
         self._cancel_event.clear()
         result = ScanResult()

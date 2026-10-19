@@ -15,6 +15,7 @@ from scanner.backend.scanner_engine import (
     _build_scan_warnings,
     _enrich_rows_in_place,
     _find_stale_members,
+    _scan_timeframe,
     _score_ticker,
     _stale_members_message,
     rating_ok_for_trend_filter,
@@ -39,6 +40,18 @@ def _isolate_enrichment_cache(tmp_path, monkeypatch):
 def _tiny_df():
     """Minimal non-empty frame — compute_scores is patched in these tests."""
     return pd.DataFrame({"close": [1.0, 2.0], "volume": [1, 1]})
+
+
+class TestScanTimeframe:
+    """Weekly V4 always fetches daily bars; other strategies honour the UI."""
+
+    def test_v4_forces_daily(self):
+        assert _scan_timeframe({"strategy": "weekly_v4_swing"}, "W") == "D"
+        assert _scan_timeframe({"strategy": "weekly_v4_swing"}, "M") == "D"
+
+    def test_daily_screener_honours_timeframe(self):
+        assert _scan_timeframe({"strategy": "daily_screener"}, "W") == "W"
+        assert _scan_timeframe({}, "D") == "D"
 
 
 class TestTrendFilterRating:
@@ -605,6 +618,161 @@ class TestScanWarnings:
         settings = {"fast_ma_len": 20, "slow_ma_len": 40, "min_score": 50.0}
         results = [{"total": 52.0, "entry_signal": False} for _ in range(20)]
         assert _build_scan_warnings(settings, total=51, results=results, passed=5) == []
+
+
+class TestV4ScanWarnings:
+    """Weekly V4 warns when the data period is too short for the weekly trigger."""
+
+    def test_v4_short_period_warns(self):
+        settings = {"strategy": "weekly_v4_swing", "data_period": "6mo"}
+        warnings = _build_scan_warnings(settings, total=10, results=[], passed=0)
+        assert len(warnings) == 1
+        assert "2 Years" in warnings[0]
+
+    def test_v4_two_years_no_warning(self):
+        settings = {"strategy": "weekly_v4_swing", "data_period": "2y"}
+        assert _build_scan_warnings(settings, total=10, results=[], passed=0) == []
+
+    def test_v4_skips_daily_breadth_warnings(self):
+        settings = {"strategy": "weekly_v4_swing", "data_period": "2y"}
+        results = [{"total": 40.0, "entry_signal": False} for _ in range(40)]
+        assert _build_scan_warnings(settings, total=50, results=results, passed=0) == []
+
+
+class TestScoreTickerV4:
+    """The strategy=weekly_v4_swing branch of _score_ticker: the backtest_v2
+    arm/confirm state replaces the daily crossover filter, and the V4 state
+    maps onto entry_signal / state / v4_* grid keys."""
+
+    @staticmethod
+    def _score(monkeypatch, v4_row, settings_extra=None, trend_filter="All"):
+        settings = {
+            "min_score": 50.0,
+            "strategy": "weekly_v4_swing",
+            **(settings_extra or {}),
+        }
+        monkeypatch.setattr(
+            scanner_engine,
+            "compute_scores",
+            lambda *a, **k: {
+                "total": 70.0,
+                "combined_rating": "GOOD",
+                "ma_bullish": True,
+            },
+        )
+        import scanner.backend.backtest_v2 as btv2
+
+        monkeypatch.setattr(btv2, "scan_ticker_v4", lambda *a, **k: v4_row)
+        return _score_ticker(
+            "TCS",
+            _tiny_df(),
+            settings=settings,
+            timeframe="D",
+            index_df=None,
+            trend_filter=trend_filter,
+            is_large=True,  # skip enrichment providers in this unit test
+            global_data=None,
+            enrich=lambda *a: {},
+            use_enrichment_cache=False,
+        )
+
+    @staticmethod
+    def _row(state):
+        return {
+            "ticker": "TCS",
+            "sector": "IT",
+            "state": state,
+            "cross_date": pd.Timestamp("2026-09-01"),
+            "n": 10,
+            "score": 62.0,
+            "close": 4000.0,
+            "level": 3950.0,
+            "missing": [] if state == "TRIGGERED" else ["green week"],
+            "note": "all gates OK" if state == "TRIGGERED" else "missing: green week",
+        }
+
+    def test_triggered_maps_to_entry(self, monkeypatch):
+        out, reason = self._score(monkeypatch, self._row("TRIGGERED"))
+        assert out is not None
+        assert reason == "Bull"
+        assert out["state"] == "TRIGGERED"
+        assert out["entry_signal"] is True
+        assert out["v4_n"] == 10
+        assert out["v4_level"] == 3950.0
+        assert out["v4_cross_date"] == "2026-09-01"
+
+    def test_armed_row_shows_without_entry(self, monkeypatch):
+        out, _ = self._score(monkeypatch, self._row("ARMED"))
+        assert out is not None
+        assert out["state"] == "ARMED"
+        assert out["entry_signal"] is False
+        assert out["v4_missing"] == ["green week"]
+
+    def test_none_row_is_filtered(self, monkeypatch):
+        out, reason = self._score(monkeypatch, None)
+        assert out is None
+        assert reason == "filtered"
+
+    def test_poor_rating_gate_still_applies(self, monkeypatch):
+        import scanner.backend.backtest_v2 as btv2
+
+        monkeypatch.setattr(
+            btv2, "scan_ticker_v4", lambda *a, **k: self._row("TRIGGERED")
+        )
+        monkeypatch.setattr(
+            scanner_engine,
+            "compute_scores",
+            lambda *a, **k: {
+                "total": 70.0,
+                "combined_rating": "POOR",
+                "ma_bullish": True,
+            },
+        )
+        out, reason = _score_ticker(
+            "TCS",
+            _tiny_df(),
+            settings={"min_score": 50.0, "strategy": "weekly_v4_swing"},
+            timeframe="D",
+            index_df=None,
+            trend_filter="Bullish Only",
+            is_large=True,
+            global_data=None,
+            enrich=lambda *a: {},
+            use_enrichment_cache=False,
+        )
+        assert out is None
+        assert reason == "poor_rating"
+
+    def test_daily_strategy_untouched(self, monkeypatch):
+        """No strategy key (or daily_screener) keeps the crossover path."""
+        monkeypatch.setattr(
+            scanner_engine,
+            "check_filter",
+            lambda *a, **k: {"ma_bullish": True, "crossover_bars_ago": 0},
+        )
+        monkeypatch.setattr(
+            scanner_engine,
+            "compute_scores",
+            lambda *a, **k: {
+                "total": 88.0,
+                "combined_rating": "EXCELLENT",
+                "ma_bullish": True,
+            },
+        )
+        out, reason = _score_ticker(
+            "TCS",
+            _tiny_df(),
+            settings={"min_score": 50.0, "strategy": "daily_screener"},
+            timeframe="D",
+            index_df=None,
+            trend_filter="All",
+            is_large=True,
+            global_data=None,
+            enrich=lambda *a: {},
+            use_enrichment_cache=False,
+        )
+        assert out is not None
+        assert "state" not in out  # daily rows carry no V4 state
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -482,6 +482,119 @@ class TestComputeScores:
         assert result is not None
         assert isinstance(result["entry_signal"], bool)
 
+    def test_entry_signal_honors_min_score_setting(self):
+        """Regression: entry_signal used a hardcoded >= 50; it must respect
+        the user's min_score setting (both below and above the default)."""
+        n = 200
+        # Decline then a sharp recent rise -> bullish cross within lookback.
+        close = np.concatenate([np.linspace(120, 90, 185), np.linspace(90, 140, 15)])
+        df = pd.DataFrame(
+            {
+                # open below close so the green-day gate passes
+                "open": close * 0.999,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": np.full(n, 1_000_000.0),
+            },
+            index=pd.bdate_range("2024-01-01", periods=n),
+        )
+        base = compute_scores(df, timeframe="D")
+        assert base is not None and base["entry_signal"] is True
+        total = float(base["total"])
+        # Raising min_score above the stock's total must suppress the entry.
+        above = compute_scores(df, timeframe="D", settings={"min_score": total + 1})
+        assert above is not None and above["entry_signal"] is False
+        # Sitting exactly at the total keeps it (gate is >=).
+        at = compute_scores(df, timeframe="D", settings={"min_score": total})
+        assert at is not None and at["entry_signal"] is True
+        # A lower threshold must not block.
+        below = compute_scores(df, timeframe="D", settings={"min_score": total - 10})
+        assert below is not None and below["entry_signal"] is True
+
+    @staticmethod
+    def _rising_entry_df():
+        """Decline then sharp rise: bullish cross ~8 bars back, green last bar,
+        close above cross-day high / both MAs / POC — passes every daily gate."""
+        n = 200
+        close = np.concatenate([np.linspace(120, 90, 185), np.linspace(90, 140, 15)])
+        return pd.DataFrame(
+            {
+                "open": close * 0.999,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": np.full(n, 1_000_000.0),
+            },
+            index=pd.bdate_range("2024-01-01", periods=n),
+        )
+
+    @staticmethod
+    def _index_df(rising=True, n=150):
+        close = (
+            np.linspace(20_000, 22_000, n) if rising else np.linspace(22_000, 20_000, n)
+        )
+        return pd.DataFrame(
+            {"close": close},
+            index=pd.bdate_range("2024-01-01", periods=n),
+        )
+
+    def test_entry_regime_gate_blocks_on_downtrend_index(self):
+        """NIFTY below its EMA blocks entry and names the gate."""
+        df = self._rising_entry_df()
+        base = compute_scores(df, timeframe="D", index_df=self._index_df(rising=True))
+        assert base is not None and base["entry_signal"] is True
+        down = compute_scores(df, timeframe="D", index_df=self._index_df(rising=False))
+        assert down is not None and down["entry_signal"] is False
+        assert "NIFTY regime" in down["entry_missing"]
+
+    def test_entry_regime_fail_open_without_index(self):
+        """No index frame (fetch failure) must not hide entries."""
+        df = self._rising_entry_df()
+        base = compute_scores(df, timeframe="D", index_df=None)
+        assert base is not None and base["entry_signal"] is True
+        assert "NIFTY regime" not in base["entry_missing"]
+
+    def test_entry_regime_toggle_off_skips_gate(self):
+        """index_regime_filter=False restores the ungated behavior."""
+        df = self._rising_entry_df()
+        off = compute_scores(
+            df,
+            timeframe="D",
+            index_df=self._index_df(rising=False),
+            settings={"index_regime_filter": False},
+        )
+        assert off is not None and off["entry_signal"] is True
+
+    def test_entry_green_gate_blocks_red_day(self):
+        """A red last bar (close <= open) fails the green-day gate."""
+        df = self._rising_entry_df()
+        df.iloc[-1, df.columns.get_loc("open")] = float(df["close"].iloc[-1]) * 1.05
+        out = compute_scores(df, timeframe="D", index_df=self._index_df())
+        assert out is not None and out["entry_signal"] is False
+        assert "green day" in out["entry_missing"]
+
+    def test_entry_cross_high_gate_blocks(self):
+        """Close at/below the cross-day high fails the break-cross-high gate."""
+        df = self._rising_entry_df()
+        xo_high = float(df["high"].iloc[-8])  # fixture crosses ~8 bars back
+        df.iloc[-1, df.columns.get_loc("close")] = xo_high * 0.99
+        df.iloc[-1, df.columns.get_loc("open")] = xo_high * 0.98
+        out = compute_scores(df, timeframe="D", index_df=self._index_df())
+        assert out is not None and out["entry_signal"] is False
+        assert "break cross high" in out["entry_missing"]
+
+    def test_entry_missing_lists_all_failed_gates(self):
+        """entry_missing names every failed gate, in stack order."""
+        df = self._rising_entry_df()
+        df.iloc[-1, df.columns.get_loc("open")] = float(df["close"].iloc[-1]) * 1.05
+        out = compute_scores(df, timeframe="D", index_df=self._index_df(rising=False))
+        assert out is not None and out["entry_signal"] is False
+        missing = out["entry_missing"]
+        assert "green day" in missing
+        assert "NIFTY regime" in missing
+        assert missing.index("green day") < missing.index("NIFTY regime")
+
     def test_entry_signal_adx_gate_off_matches_legacy(self, synthetic_ohlcv):
         """min_adx_entry absent or 0 must leave the entry signal unchanged."""
         base = compute_scores(synthetic_ohlcv, timeframe="D")
@@ -546,6 +659,94 @@ class TestComputeScores:
         result = compute_scores(synthetic_ohlcv, timeframe="D")
         assert result is not None
         assert result["fundamentals"] == 0.0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Volume Profile POC — 12-week window + strict gate (V4 parity)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestVolumeProfilePoc:
+    @staticmethod
+    def _fall_then_plateau(
+        n_fall=190, n_flat=60, fall_px=200.0, flat_lo=118.0, flat_hi=122.0
+    ):
+        """Heavy distribution up at ``fall_px``, recent quiet plateau below.
+
+        The old 200-bar window still sees the heavy zone (POC = fall_px,
+        close Below); the new 12-week (~60-bar) window only sees the
+        plateau (POC near flat close, Above).
+        """
+        n = n_fall + n_flat
+        close = np.concatenate(
+            [np.full(n_fall, fall_px), np.linspace(flat_lo, flat_hi, n_flat)]
+        )
+        volume = np.concatenate(
+            [np.full(n_fall, 5_000_000.0), np.full(n_flat, 1_000_000.0)]
+        )
+        return pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.005,
+                "low": close * 0.995,
+                "close": close,
+                "volume": volume,
+            },
+            index=pd.bdate_range("2024-01-01", periods=n),
+        )
+
+    def test_window_is_12_weeks_not_200_bars(self):
+        """Default window rolls the old heavy zone out; long window keeps it."""
+        df = self._fall_then_plateau()
+        new = compute_scores(df, timeframe="D")  # default 12wk = 60 daily bars
+        assert new is not None and bool(new["above_poc"])
+        old_w = compute_scores(df, timeframe="D", settings={"vp_weekly_lookback": 40})
+        assert old_w is not None and not bool(old_w["above_poc"])
+        assert new["vp_poc"] < float(df["close"].iloc[-1]) < old_w["vp_poc"]
+
+    def test_strict_gate_fails_when_close_equals_poc(self):
+        """close == POC is NOT above (V4/Pine strict >)."""
+        n = 120
+        close = np.full(n, 120.0)
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": np.full(n, 1_000_000.0),
+            },
+            index=pd.bdate_range("2024-01-01", periods=n),
+        )
+        base = compute_scores(df, timeframe="D")
+        assert base is not None
+        poc = float(base["vp_poc"])
+        df2 = df.copy()
+        df2.iloc[-1, df2.columns.get_loc("close")] = poc  # touch close only
+        out = compute_scores(df2, timeframe="D")
+        assert out is not None
+        # Window/bin stability: same POC (close-only edit, last bar not extreme)
+        assert abs(float(out["vp_poc"]) - poc) < 1e-6
+        assert not bool(out["above_poc"])
+
+    def test_zero_volume_window_fails_closed(self):
+        """Empty profile -> fallback POC=close -> strict gate fails, not passes."""
+        n = 120
+        close = np.full(n, 120.0)
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.01,
+                "low": close * 0.99,
+                "close": close,
+                "volume": np.zeros(n),
+            },
+            index=pd.bdate_range("2024-01-01", periods=n),
+        )
+        out = compute_scores(df, timeframe="D")
+        assert out is not None
+        assert not bool(out["above_poc"])
+        assert "above POC" in out["entry_missing"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

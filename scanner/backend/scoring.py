@@ -1191,6 +1191,10 @@ def compute_scores(
 
     # Entry-gate config (mirrors backtest.py's min_adx_entry gate)
     min_adx_entry = float(settings.get("min_adx_entry", 0.0) or 0.0)
+    # ENTRY's score gate tracks the user's min_score setting (the UI slider),
+    # not a hardcoded 50 — a 70 threshold must also gate ENTRY.
+    _ms = settings.get("min_score", 50.0)
+    min_score = float(_ms) if _ms is not None else 50.0
 
     n = len(df)
     min_required = {"D": 100, "W": 50, "M": 25}.get(timeframe, 100)
@@ -1201,23 +1205,22 @@ def compute_scores(
     ind = _compute_indicators(df, settings)
     curr = _last_values(ind)
 
-    # ── Volume Profile POC ─────────────────────────────────────────────────
+    # ── Volume Profile POC (V4 parity: 12-week window, strict gate) ────────
+    # Window = vp_weekly_lookback weeks of bars (x5 daily bars, x1 for
+    # resampled W/M frames). Bins stay adaptive; the strict > matches the
+    # V4/Pine gate and makes the NaN->close fallback fail closed.
     close = ind["close"]
     high = ind["high"]
     low = ind["low"]
     volume = ind["volume"]
-    if settings.get("_skip_vp") or settings.get("skip_volume_profile"):
-        curr["vp_poc"] = close.iloc[-1]
-        curr["above_poc"] = True
-    else:
-        vp_lookback = settings.get("vp_lookback", 200)
-        vp_bars = max(int(vp_lookback), 10)
-        vp_bars = min(vp_bars, len(df))
-        vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
-        curr["vp_poc"] = (
-            vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
-        )
-        curr["above_poc"] = curr["close"] >= curr["vp_poc"]
+    _look_w = int(settings.get("vp_weekly_lookback", 12))
+    vp_bars = max(_look_w * (5 if timeframe == "D" else 1), 10)
+    vp_bars = min(vp_bars, len(df))
+    vp_poc = volume_profile_poc(high, low, close, volume, lookback=vp_bars)
+    curr["vp_poc"] = (
+        vp_poc.iloc[-1] if not np.isnan(vp_poc.iloc[-1]) else close.iloc[-1]
+    )
+    curr["above_poc"] = curr["close"] > curr["vp_poc"]
     curr["ma_bullish"] = curr["fast_ma"] > curr["slow_ma"]
     curr["close_above_both_ma"] = (
         curr["close"] > curr["fast_ma"] and curr["close"] > curr["slow_ma"]
@@ -1242,10 +1245,6 @@ def compute_scores(
     curr["crossover_bars_ago"] = xo["bars_ago"] if xo["crossed"] else -1
     curr["crossover_count"] = xo["count"]
     curr["crossover_dates"] = xo["dates"]
-    curr["crossover_level"] = xo["level"]
-    curr["close_above_crossover"] = (
-        xo["level"] is not None and curr["close"] > xo["level"]
-    )
 
     # ── Weekly HMA higher-timeframe check ──────────────────────────────────
     weekly = _compute_weekly_hma(df)
@@ -1280,6 +1279,49 @@ def compute_scores(
     fund_score = scores["fundamentals"]
     fund_detail = scores["fund_detail"]
     total = scores["total"]
+
+    # ── Daily 9-gate ENTRY stack (V4 spec-B parity, same-day evaluation) ──
+    # Gates: cross, green day, break cross-day high, above both MAs, above
+    # POC, index regime, score, ADX. Fail-open on a missing/short index
+    # (backtest parity: no NIFTY data must not hide entries). The
+    # cross-day-high gate subsumes the old close_above_crossover check and,
+    # because close <= high on the cross bar itself, blocks same-bar entry
+    # (V4's n>=1 semantics).
+    entry_missing: list[str] = []
+    if not curr["ma_crossed_above"]:
+        entry_missing.append("cross")
+    if not (curr["close"] > float(df["open"].iloc[-1])):
+        entry_missing.append("green day")
+    _bars_ago = curr["crossover_bars_ago"]
+    _cross_high = (
+        float(df["high"].iloc[-_bars_ago])
+        if curr["ma_crossed_above"] and 1 <= _bars_ago <= len(df)
+        else None
+    )
+    if _cross_high is None or not (curr["close"] > _cross_high):
+        entry_missing.append("break cross high")
+    if not curr["close_above_both_ma"]:
+        entry_missing.append("above both MAs")
+    if not curr["above_poc"]:
+        entry_missing.append("above POC")
+    regime_ok = True
+    if settings.get("index_regime_filter", True) and index_df is not None:
+        try:
+            _ic = index_df["close"].dropna()
+            _ema_len = int(settings.get("index_regime_ema_len", 50) or 50)
+            if len(_ic) >= _ema_len:
+                _ie = get_ma("EMA", _ic, _ema_len)
+                regime_ok = not np.isnan(_ie.iloc[-1]) and (
+                    float(_ic.iloc[-1]) > float(_ie.iloc[-1])
+                )
+        except (KeyError, TypeError, IndexError, ValueError):
+            regime_ok = True  # fail-open: unusable index frame
+    if not regime_ok:
+        entry_missing.append("NIFTY regime")
+    if total < min_score:
+        entry_missing.append("score")
+    if min_adx_entry > 0 and (np.isnan(curr["adx"]) or curr["adx"] < min_adx_entry):
+        entry_missing.append("ADX")
 
     # ── Build result ───────────────────────────────────────────────────────
     return {
@@ -1327,19 +1369,10 @@ def compute_scores(
         "combined_rating": _get_combined_rating(
             total, curr["ma_bullish"], curr["above_poc"], curr["close_above_both_ma"]
         ),
-        # Swing-trading ENTRY signal (ADX gate mirrors the backtest engine:
-        # backtest skips entries when ADX < min_adx_entry at the signal bar,
-        # and NaN ADX fails the gate there just as it does here)
-        "entry_signal": bool(
-            curr["ma_crossed_above"]
-            and curr["close_above_crossover"]
-            and curr["above_poc"]
-            and total >= 50
-            and (
-                min_adx_entry <= 0
-                or (not np.isnan(curr["adx"]) and curr["adx"] >= min_adx_entry)
-            )
-        ),
+        # Swing-trading ENTRY signal: every daily gate above must pass.
+        # The missing-gate list rides along for the grid tooltip.
+        "entry_signal": not entry_missing,
+        "entry_missing": entry_missing,
         # Weekly HMA buy trigger
         "weekly_entry_signal": bool(weekly["cross"]),
     }

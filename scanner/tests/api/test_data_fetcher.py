@@ -911,6 +911,23 @@ class TestNegativeCache:
         # ...but NOT cached as dead — next scan attempts it again
         assert not data_fetcher._negative_cache_contains("NEWIPO")
 
+    def test_provider_error_is_not_marked_dead(self):
+        """A transient provider exception must not blacklist the symbol."""
+        mock_data = _make_yf_download_result(["RELIANCE.NS"], n=200, force_multi=True)
+        mock_yf = MagicMock()
+        mock_yf.download.return_value = mock_data
+
+        flaky = MagicMock()
+        flaky.fetch_stock.side_effect = RuntimeError("provider 503")
+
+        with patch.dict("sys.modules", {"yfinance": mock_yf}):
+            with patch("scanner.api.data_fetcher._get_provider", return_value=flaky):
+                result = fetch_batch_yfinance(["RELIANCE", "FLAKY"], period="1y")
+
+        assert "FLAKY" not in result
+        # Not cached as dead — the next scan retries it.
+        assert not data_fetcher._negative_cache_contains("FLAKY")
+
     def test_mark_survives_new_process_load_from_disk(self):
         """Marks persist to the kv store and are read back on a fresh (re)load."""
         from scanner.shared import db

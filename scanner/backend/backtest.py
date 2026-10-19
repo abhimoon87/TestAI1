@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from ..api.data_fetcher import fetch_batch_yfinance, fetch_index_data
+from ..shared.indicators import atr as atr_fn
 from ..shared.universes import FNO_STOCKS, NIFTY_50, NIFTY_BROAD
 from .backtest_indicators import (
     precompute_nifty,
@@ -42,11 +43,12 @@ from .backtest_position import (
     update_position,
 )
 from .backtest_report import (
-    generate_html_report,
+    generate_backtest_report,
     save_trades_csv,
 )
 from .backtest_scoring import compute_score_at_bar
-from .scoring import detect_crossover, get_ma
+from .scoring import detect_crossover, get_ma, to_weekly
+from .settings_store import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,10 @@ class BacktestEngine:
         self.positions: list[Position] = []
         self.trades: list[TradeResult] = []
         self.equity_curve: list[tuple] = []
+        self._exit_pending: set[str] = set()  # signal-issued exits awaiting next open
+        self._rolls: dict[str, np.ndarray] = {}  # week-start row indices
+        self._periods: dict[str, pd.PeriodIndex] = {}  # W-period id per bar
+        self._w_atr: dict[str, pd.Series] = {}  # weekly ATR(14) per ticker
         self.sector_tracker = SectorTracker(
             lookback=self.settings.get("sector_rotation_lookback", 8),
             block_threshold=self.settings.get("sector_block_threshold", -0.05),
@@ -87,18 +93,40 @@ class BacktestEngine:
         logger.info("  BACKTEST: HMA/EMA Multi-Score Swing Strategy")
         logger.info("=" * 60)
         logger.info(f"  Stocks: {len(tickers)}")
-        logger.info(f"  Period: {period} (daily)")
+        logger.info(f"  Period: {period} ({self.settings.get('timeframe', 'D')})")
+        logger.info(
+            f"  Regime gate: index_regime_filter="
+            f"{self.settings.get('index_regime_filter', False)} "
+            f"(EMA{self.settings.get('index_regime_ema_len', 50)}, "
+            f"index={self.settings.get('index_symbol', 'NSEI')})"
+        )
         logger.info(
             f"  Settings: HMA({self.settings['fast_ma_len']}) x "
             f"EMA({self.settings['slow_ma_len']}), "
             f"RSI({self.settings['rsi_len']}), "
             f"Crossover lookback: {self.settings['crossover_lookback']}"
         )
-        logger.info(
-            f"  Risk: {self.settings['stop_loss_pct']}% stop / "
-            f"{self.settings['target_pct']}% target / "
-            f"{self.settings['trail_pct']}% trail"
-        )
+        exit_mode = self.settings.get("exit_mode", "signals")
+        if exit_mode == "signals":
+            logger.info(
+                f"  Exit: signals — weekly HMA({self.settings.get('w_fast_len', 44)}) x "
+                f"EMA({self.settings.get('w_slow_len', 50)}) bear cross "
+                f"-> next open (commission {self.settings.get('commission_pct', 0.0)}%)"
+            )
+        elif exit_mode == "legacy":
+            logger.info(
+                f"  Exit: legacy — {self.settings['stop_loss_pct']}% stop / "
+                f"{self.settings['target_pct']}% target / "
+                f"{self.settings['trail_pct']}% trail"
+            )
+        else:
+            logger.info(
+                f"  Exit: {exit_mode} + weekly bear cross "
+                f"(sl {self.settings.get('sl_pct', 8.0)}%, "
+                f"rr {self.settings.get('rr_ratio', 3.0)}, "
+                f"atr x{self.settings.get('atr_stop_multiplier', 2.0)}, "
+                f"commission {self.settings.get('commission_pct', 0.0)}%)"
+            )
         logger.info("=" * 60)
         logger.info("")
 
@@ -111,6 +139,20 @@ class BacktestEngine:
         nifty_raw = fetch_index_data("^NSEI", period=period)
         self.nifty_df = precompute_nifty(nifty_raw)
 
+        # Weekly mode: the whole simulation runs on chart-TF weekly bars
+        # (same route as the V4 engine — fetch daily, resample here, so both
+        # systems see identical bars).
+        if self.settings.get("timeframe") == "weekly":
+            all_data = {
+                t: w
+                for t, df in all_data.items()
+                if df is not None and (w := to_weekly(df)) is not None and not w.empty
+            }
+            if nifty_raw is not None and not nifty_raw.empty:
+                w_idx = to_weekly(nifty_raw)
+                if w_idx is not None:
+                    self.nifty_df = precompute_nifty(w_idx)
+
         # Precompute indicators
         logger.info("  Computing indicators...")
         for ticker in tickers:
@@ -120,8 +162,140 @@ class BacktestEngine:
                 if stock is not None:
                     self.stocks.append(stock)
 
+        # Week infrastructure for the weekly-bear-cross exit (matches V4:
+        # calendar-week id per bar + week-start roll points + weekly ATR).
+        for stock in self.stocks:
+            per = stock.df.index.to_period("W")
+            self._rolls[stock.ticker] = (
+                np.flatnonzero(np.asarray(per[1:] != per[:-1])) + 1
+            )
+            self._periods[stock.ticker] = per
+            if stock.weekly_df is not None:
+                w = stock.weekly_df
+                self._w_atr[stock.ticker] = atr_fn(
+                    w["high"], w["low"], w["close"], int(self.settings["atr_len"])
+                )
+
         logger.info(f"  Ready: {len(self.stocks)}/{len(tickers)} stocks loaded")
         logger.info("")
+
+    # ── Weekly helpers (week-end evaluation, no look-ahead) ──────────────────
+
+    def _week_id(self, ticker: str, bar_idx: int) -> int:
+        """Calendar-week index of a bar (matches weekly_df row order)."""
+        rolls = self._rolls[ticker]
+        return int(np.searchsorted(rolls, bar_idx, side="right"))
+
+    def _week_start(self, ticker: str, w: int) -> int:
+        """First bar index of week w."""
+        rolls = self._rolls[ticker]
+        return int(rolls[w - 1]) if w > 0 else 0
+
+    def _week_ended(self, ticker: str, bar_idx: int) -> bool:
+        """True when the bar is its week's last session — the weekly close.
+
+        The last loaded bar counts only once Friday's session is in (daily)
+        or a Sunday label (weekly bars)."""
+        per = self._periods.get(ticker)
+        if per is None:
+            return False
+        if bar_idx < len(per) - 1:
+            return bool(per[bar_idx] != per[bar_idx + 1])
+        stock = self._stock_map.get(ticker)
+        if stock is None:
+            return False
+        wd = stock.df.index[bar_idx].weekday()
+        return wd in (4, 6)
+
+    def _weekly_cross(self, stock, w_idx: int) -> tuple[bool, bool]:
+        """(bullish, bearish) HMA x EMA cross at weekly bar w_idx."""
+        wf, ws = stock.w_hma, stock.w_ema50
+        if (
+            wf is None
+            or ws is None
+            or w_idx < 1
+            or w_idx >= len(wf)
+            or w_idx >= len(ws)
+        ):
+            return False, False
+        c_f, c_s = wf.iloc[w_idx], ws.iloc[w_idx]
+        p_f, p_s = wf.iloc[w_idx - 1], ws.iloc[w_idx - 1]
+        if any(pd.isna(v) for v in (c_f, c_s, p_f, p_s)):
+            return False, False
+        return c_f > c_s and p_f <= p_s, c_f < c_s and p_f >= p_s
+
+    def _weekly_atr_asof(self, stock, day) -> float | None:
+        s = self._w_atr.get(stock.ticker)
+        if s is None:
+            return None
+        idx = int(s.index.searchsorted(day, side="right") - 1)
+        if idx < 0:
+            return None
+        val = s.iloc[idx]
+        return None if pd.isna(val) else float(val)
+
+    def _risk_exit(self, pos, stock, bar) -> TradeResult | None:
+        """R-Bracket / Chandelier intraday exit. Levels carried from the
+        previous bar (orders issued on bar N fill on bar N+1 — Pine semantics).
+        Returns None in signals mode (weekly cross only) and on non-risk days."""
+        mode = self.settings.get("exit_mode", "signals")
+        if mode == "signals":
+            return None
+        high = float(bar["high"])
+        low = float(bar["low"])
+        opn = float(bar["open"])
+        day = bar.name
+        entry = pos.entry_price
+
+        if mode == "rbracket":
+            r = entry * self.settings.get("sl_pct", 8.0) / 100.0
+            base = entry - r
+            be = self.settings.get("be_act_r", 1.0)
+            if pos.peak_price >= entry + be * r:
+                stop = max(base, pos.peak_price - be * r)
+            else:
+                stop = base
+            tp = entry + r * self.settings.get("rr_ratio", 3.0)
+            if low <= stop:
+                exit_px = opn if opn < stop else max(stop, low)
+                return self._close(pos, exit_px, day, "RBRACKET_STOP")
+            if high >= tp:
+                exit_px = opn if opn > tp else tp  # limit: gap-up fills better
+                return self._close(pos, exit_px, day, "TARGET")
+            if high > pos.peak_price:
+                pos.peak_price = high  # riskHi for the next bar
+            return None
+
+        # chandelier: pos.stop_loss IS the chandelier stop (seeded at fill)
+        if low <= pos.stop_loss:
+            exit_px = opn if opn < pos.stop_loss else max(pos.stop_loss, low)
+            return self._close(pos, exit_px, day, "CHAND_STOP")
+        atr_w = self._weekly_atr_asof(stock, day)
+        if high > pos.peak_price:
+            pos.peak_price = high
+        if atr_w is not None and atr_w > 0:
+            cand = (
+                pos.peak_price - self.settings.get("atr_stop_multiplier", 2.0) * atr_w
+            )
+            if cand > pos.stop_loss:
+                pos.stop_loss = cand
+        return None
+
+    def _close(
+        self,
+        pos: Position,
+        exit_price: float,
+        exit_date,
+        reason: str,
+    ) -> TradeResult:
+        """Close at a price with the configured commission (V4 parity)."""
+        return _close_position(
+            pos,
+            exit_price,
+            exit_date,
+            reason,
+            commission_pct=self.settings.get("commission_pct", 0.0),
+        )
 
     def run(self) -> dict:
         """Run the full backtest simulation."""
@@ -245,24 +419,50 @@ class BacktestEngine:
         return regime_close, regime_ema
 
     def _check_exits(self, day):
-        """Check exits on open positions for the given day."""
+        """Check exits on open positions for the given day.
+
+        Non-legacy modes mirror V4: a weekly HMA x EMA bear cross is issued
+        at the weekly close and filled at the next bar's open, with the
+        mode's risk exits (rbracket/chandelier) active alongside. `legacy`
+        keeps the original price-stop path (2%/20%/2% by default).
+        """
+        mode = self.settings.get("exit_mode", "signals")
         closed_today = []
         for pos in self.positions:
             stock = self._stock_map.get(pos.ticker)
             if stock is None or day not in stock.df.index:
                 continue
-            bar_idx = stock.df.index.get_loc(day)
+            bar_idx = int(stock.df.index.get_loc(day))
             bar = stock.df.iloc[bar_idx]
-            result = update_position(pos, bar, bar_idx, self.settings)
+
+            # Signal-issued exit (scheduled at last week's close) -> fill now.
+            if mode != "legacy" and pos.ticker in self._exit_pending:
+                closed_today.append(self._close(pos, bar["open"], day, "WEEKLY_SELL"))
+                continue
+
+            if mode == "legacy":
+                result = update_position(pos, bar, bar_idx, self.settings)
+            else:
+                # Bear cross at the weekly close schedules a next-open exit.
+                if self._week_ended(pos.ticker, bar_idx):
+                    _, bear = self._weekly_cross(
+                        stock, self._week_id(pos.ticker, bar_idx)
+                    )
+                    if bear:
+                        self._exit_pending.add(pos.ticker)
+                result = self._risk_exit(pos, stock, bar)  # None in signals mode
+
             if result:
                 closed_today.append(result)
-                self._cash += result.pnl + result.investment
 
         for trade in closed_today:
+            self._cash += trade.pnl + trade.investment
             self.trades.append(trade)
+            self._exit_pending.discard(trade.ticker)
             # Record in sector tracker for rotation
             if self._rotation_enabled:
                 self.sector_tracker.record_trade(trade)
+        if closed_today:
             self.positions = [p for p in self.positions if p.exit_date is None]
 
     def _try_entries(self, day):
@@ -935,7 +1135,10 @@ def main():
         help="Specific tickers to test (default: NIFTY 50)",
     )
     parser.add_argument(
-        "--score", type=float, default=50, help="Minimum score threshold (default: 50)"
+        "--score",
+        type=float,
+        default=None,
+        help="Minimum score threshold (overrides app settings)",
     )
     parser.add_argument(
         "--stop", type=float, default=2.0, help="Stop loss %% (default: 2.0)"
@@ -955,8 +1158,8 @@ def main():
     parser.add_argument(
         "--crossover-lookback",
         type=int,
-        default=6,
-        help="Crossover detection lookback bars (default: 6)",
+        default=None,
+        help="Crossover detection lookback bars (overrides app settings)",
     )
     parser.add_argument(
         "--max-per-sector",
@@ -1038,28 +1241,104 @@ def main():
         choices=["classic", "high_probability", "custom"],
         help="Entry mode: classic (default), high_probability, or custom",
     )
+    parser.add_argument(
+        "--exit-mode",
+        type=str,
+        default="signals",
+        choices=["signals", "rbracket", "chandelier", "legacy"],
+        help=(
+            "Exit model: signals (default, weekly bear cross -> next open, "
+            "matches V4), rbracket, chandelier, or legacy (original 2/20/2 "
+            "price stops)"
+        ),
+    )
+    parser.add_argument(
+        "--no-app-settings",
+        action="store_true",
+        help="Ignore the app's current settings; use engine defaults only",
+    )
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=None,
+        help=(
+            "Bars skipped before the sim window for indicator warmup "
+            "(default: 260 daily / 52 weekly)"
+        ),
+    )
+    parser.add_argument(
+        "--regime",
+        type=str,
+        default="app",
+        choices=["on", "off", "app"],
+        help="NIFTY > EMA index regime gate: on, off, or app (use app settings)",
+    )
+    parser.add_argument(
+        "--sl-pct", type=float, default=8.0, help="R-Bracket 1R stop %% (default: 8)"
+    )
+    parser.add_argument(
+        "--rr", type=float, default=3.0, help="R-Bracket reward:risk (default: 3)"
+    )
+    parser.add_argument(
+        "--be-act-r",
+        type=float,
+        default=1.0,
+        help="R-Bracket breakeven activation in R (default: 1.0)",
+    )
     args = parser.parse_args()
 
-    # Build settings
-    settings = {
-        "score_threshold": args.score,
-        "stop_loss_pct": args.stop,
-        "target_pct": args.target,
-        "trail_pct": args.trail,
-        "initial_capital": args.capital,
-        "max_positions_per_sector": args.max_per_sector,
-        "sector_rotation_enabled": args.sector_rotation,
-        "sector_rotation_lookback": args.rotation_lookback,
-        "sector_boost_weight": args.rotation_boost,
-        "sector_block_threshold": args.rotation_block,
-        "atr_stop_enabled": args.atr_stop,
-        "atr_stop_multiplier": args.atr_mult,
-        "atr_trail_enabled": args.atr_trail,
-        "atr_trail_multiplier": args.atr_trail_mult,
-        "max_risk_per_trade": args.max_risk,
-        "crossover_lookback": args.crossover_lookback,
-        "entry_mode": args.entry_mode,
-    }
+    # Build settings: seed from the app's current settings, then overlay the
+    # v1-only keys from the CLI (--no-app-settings restores engine defaults).
+    settings = {} if args.no_app_settings else dict(load_settings())
+    settings.update(
+        {
+            # v1-only keys — always from the CLI
+            "stop_loss_pct": args.stop,
+            "target_pct": args.target,
+            "trail_pct": args.trail,
+            "initial_capital": args.capital,
+            "max_positions_per_sector": args.max_per_sector,
+            "sector_rotation_enabled": args.sector_rotation,
+            "sector_rotation_lookback": args.rotation_lookback,
+            "sector_boost_weight": args.rotation_boost,
+            "sector_block_threshold": args.rotation_block,
+            "atr_stop_enabled": args.atr_stop,
+            "atr_stop_multiplier": args.atr_mult,
+            "atr_trail_enabled": args.atr_trail,
+            "atr_trail_multiplier": args.atr_trail_mult,
+            "max_risk_per_trade": args.max_risk,
+            "entry_mode": args.entry_mode,
+            # Exit/cost model — V4 parity
+            "exit_mode": args.exit_mode,
+            "commission_pct": 0.1,
+            "sl_pct": args.sl_pct,
+            "rr_ratio": args.rr,
+            "be_act_r": args.be_act_r,
+        }
+    )
+    # Explicit CLI overrides (only when passed)
+    if args.score is not None:
+        settings["score_threshold"] = settings["min_score"] = args.score
+    else:
+        settings["score_threshold"] = settings.get("min_score", 50)
+    if args.crossover_lookback is not None:
+        settings["crossover_lookback"] = args.crossover_lookback
+    if args.regime != "app":
+        settings["index_regime_filter"] = args.regime == "on"
+    # Weekly bear-cross exit legs track the app's entry MAs
+    settings["w_fast_len"] = int(settings.get("fast_ma_len", 18))
+    settings["w_slow_len"] = int(settings.get("slow_ma_len", 44))
+    # App stores "D"|"W"|"M"; the weekly-resample gate expects "weekly"
+    _tf = str(settings.get("timeframe", "D")).upper()
+    settings["timeframe"] = "weekly" if _tf in ("W", "WEEKLY") else "daily"
+    # Warmup is a bar count: 260 daily (~1y) or 52 weekly (~1y). The daily
+    # default would swallow an entire 5y weekly run.
+    if args.warmup is not None:
+        settings["warmup_bars"] = args.warmup
+    else:
+        settings.setdefault(
+            "warmup_bars", 52 if settings["timeframe"] == "weekly" else WARMUP_BARS
+        )
 
     # Select tickers
     if args.tickers:
@@ -1086,7 +1365,7 @@ def main():
     if metrics.get("total_trades", 0) > 0:
         save_trades_csv(engine.trades, args.csv)
         if not args.no_html:
-            generate_html_report(engine, metrics, args.html)
+            generate_backtest_report(engine, metrics, args.html)
 
 
 if __name__ == "__main__":

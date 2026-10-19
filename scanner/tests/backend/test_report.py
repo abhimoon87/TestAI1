@@ -1013,6 +1013,8 @@ class TestReportElegance:
         js = _js_block()
         assert "function setFilter" in js
         assert 'classList.add("active")' in js
+        # Trend filter must read the Dir cell (14), never the spark cell (18).
+        assert "row.cells[14].textContent" in js
 
     def test_results_head_shows_app_filter_context(self):
         html = generate_html_report(

@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 from ..backend.settings_store import (  # noqa: F401 — re-exported for tests
     DEFAULT_SETTINGS,
+    STRATEGY_LABELS,
     load_settings,
 )
 from ..shared.themes import THEMES
@@ -141,6 +142,10 @@ class ScannerApp(
         self._pending_tier = None
         self._right_pinned = False
         self._auto_side = False
+        # Grid view toggles: row density preset + columns the user turned
+        # off in the Columns menu (both persisted as ui_* prefs).
+        self.row_density = "comfort"
+        self.user_hidden_cols: set[str] = set()
 
         # Initial window geometry — set exactly once here. View switches and
         # theme changes rebuild controls but must never touch the window, so a
@@ -157,6 +162,8 @@ class ScannerApp(
         self.page.on_resize = self._on_page_resize
         self._load_settings_to_ui()
         self._load_ui_prefs()
+        # Prefs load after the UI is built, so re-stamp the menu checks.
+        self._sync_menu_checks()
         self._log("Scanner ready — pick a universe and hit RUN SCAN")
 
         def _warm_symbols():
@@ -367,6 +374,14 @@ class ScannerApp(
         lbl = getattr(self, "topbar_title", None)
         if lbl is not None:
             lbl.value = "Settings"
+        # Strategy lives in the sidebar too — re-sync this page's dropdown
+        # from the saved setting before showing (the page is built once).
+        ctrl = getattr(self, "_settings_inputs", {}).get("strategy")
+        if ctrl is not None:
+            ctrl.value = STRATEGY_LABELS.get(
+                str(self.settings.get("strategy", "daily_screener")),
+                "Daily Screener",
+            )
         # Overlay on — dashboard stays visible and laid out underneath.
         self.settings_view.visible = True
         self._fade_view_in(self.settings_view)
@@ -414,6 +429,7 @@ class ScannerApp(
     def _apply_width_tier(self, tier, render=True):
         """Pane + column reflow for a new width tier."""
         self.width_tier = tier
+        self._sync_menu_checks()  # tier decides which columns are visible
         compact = tier == TIER_COMPACT
 
         rp = getattr(self, "right_panel", None)
@@ -899,6 +915,8 @@ class ScannerApp(
             self.settings.get("timeframe", "D"), "Daily"
         )
         self.trend_filter_dd.value = self.settings.get("trend_filter", "All")
+        strat_key = str(self.settings.get("strategy", "daily_screener"))
+        self.strategy_dd.value = STRATEGY_LABELS.get(strat_key, "Daily Screener")
 
     def _collect_settings(self) -> dict:
         s = dict(self.settings)
@@ -919,6 +937,10 @@ class ScannerApp(
         s["timeframe"] = tf_map.get(self.timeframe_dd.value or "Daily", "D")
         # trend_filter dropdown
         s["trend_filter"] = self.trend_filter_dd.value or "All"
+        # strategy dropdown: map display label → engine key
+        strat_label = self.strategy_dd.value or "Daily Screener"
+        rev = {v: k for k, v in STRATEGY_LABELS.items()}
+        s["strategy"] = rev.get(strat_label, "daily_screener")
         # universe dropdown
         s["universe"] = self.universe_dd.value or "NIFTY 50"
         return s

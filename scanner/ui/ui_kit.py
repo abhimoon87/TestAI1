@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 import flet as ft
 
+from ..shared.constants import RESULT_COLS
+
 # ── Animation presets ───────────────────────────────────────────────
 ANIM_FAST = ft.Animation(200, ft.AnimationCurve.EASE_OUT)
 ANIM_NORMAL = ft.Animation(300, ft.AnimationCurve.EASE_OUT)
@@ -61,6 +63,13 @@ def width_tier(w) -> str:
 # RESULT_COLS only — the positional row specials at indexes 0/1/3/4/6
 # must never shift, so nothing before index 9 may appear here).
 COL_HIDE_ORDER = ("Chop", "Dir", "ADX", "F/20", "RS/10", "Vol/10")
+# Columns the Columns menu may toggle: RESULT_COLS tail only, by the same
+# rule as COL_HIDE_ORDER — the positional row specials at indexes 0/1/3/4/6
+# shift cells in _create_row_controls if they were ever hidden.
+OPTIONAL_COLS = tuple(RESULT_COLS[9:])
+
+# Row height per density preset (Density menu) — Comfort is the default.
+ROW_H = {"comfort": 34, "compact": 27}
 _HIDDEN_AT_TIER = {
     TIER_WIDE: (),
     TIER_STANDARD: COL_HIDE_ORDER[:3],
@@ -114,7 +123,10 @@ def _glass_border() -> ft.Border:
 def _card_shadow() -> list[ft.BoxShadow]:
     return [
         ft.BoxShadow(
-            blur_radius=24, color=ft.Colors.with_opacity(0.55, ft.Colors.BLACK)
+            blur_radius=26,
+            spread_radius=-4,
+            offset=ft.Offset(0, 6),
+            color=ft.Colors.with_opacity(0.6, ft.Colors.BLACK),
         ),
         ft.BoxShadow(blur_radius=40, spread_radius=-6, color="#10b98126"),
     ]

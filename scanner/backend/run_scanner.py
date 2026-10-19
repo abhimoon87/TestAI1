@@ -353,8 +353,7 @@ def run_scan():
     # ── Open report ──────────────────────────────────────────────────────────
     open_report = input("\n  Open report in browser? [Y/n]: ").strip().lower()
     if open_report != "n":
-        filepath = os.path.abspath(filename)
-        webbrowser.open(f"file://{filepath}")
+        webbrowser.open(f"file://{os.path.abspath(filepath)}")
 
     logger.info("\n  ✓ Done!\n")
 

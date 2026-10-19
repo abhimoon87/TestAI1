@@ -59,7 +59,9 @@ def _generate_trade_chart(
     def sy(p):
         return margin_t + int((1 - (p - min_p) / p_range) * inner_h)
 
-    parts = [f'<svg width="{chart_w}" height="{chart_h}" class="spark" font-family="ui-monospace,monospace">']
+    parts = [
+        f'<svg width="{chart_w}" height="{chart_h}" class="spark" font-family="ui-monospace,monospace">'
+    ]
 
     for i in range(4):
         gy = margin_t + int(i / 3 * inner_h)
@@ -99,7 +101,9 @@ def _generate_trade_chart(
 
     price_points = " ".join(f"{sx(i)},{sy(c)}" for i, c in enumerate(closes))
     line_color = "#34d399" if t.pnl > 0 else "#fb7185"
-    parts.append(f'<polyline points="{price_points}" fill="none" stroke="{line_color}" stroke-width="1.3"/>')
+    parts.append(
+        f'<polyline points="{price_points}" fill="none" stroke="{line_color}" stroke-width="1.3"/>'
+    )
 
     trail_idx = -1
     for i, c in enumerate(closes):
@@ -112,7 +116,9 @@ def _generate_trade_chart(
             f'<polygon points="{tx},{ty - 4} {tx + 4},{ty} {tx},{ty + 4} {tx - 4},{ty}" fill="#facc15" stroke="#facc15" stroke-width="0.5"/>'
         )
 
-    parts.append(f'<circle cx="{sx(0)}" cy="{sy(closes[0])}" r="3" fill="#38bdf8" stroke="#0d131a" stroke-width="1"/>')
+    parts.append(
+        f'<circle cx="{sx(0)}" cy="{sy(closes[0])}" r="3" fill="#38bdf8" stroke="#0d131a" stroke-width="1"/>'
+    )
     parts.append(
         f'<circle cx="{sx(n - 1)}" cy="{sy(closes[-1])}" r="3" fill="{line_color}" stroke="#0d131a" stroke-width="1"/>'
     )
@@ -516,7 +522,7 @@ _JS = r"""
 """
 
 
-def generate_html_report(
+def generate_backtest_report(
     engine: BacktestEngine,
     metrics: dict,
     filepath: str = "Reports/backtest_report.html",
@@ -572,8 +578,10 @@ def generate_html_report(
         peak = max(peak, v)
         dds.append(v / peak - 1 if peak else 0.0)
     eq_json = json.dumps(
-        [[d.strftime("%Y-%m-%d"), round(v, 2), round(dd * 100, 2)]
-         for d, v, dd in zip(eq_days, eq_vals, dds)]
+        [
+            [d.strftime("%Y-%m-%d"), round(v, 2), round(dd * 100, 2)]
+            for d, v, dd in zip(eq_days, eq_vals, dds, strict=False)
+        ]
     )
 
     # ── hero mini equity card ───────────────────────────────────────────────
@@ -618,8 +626,9 @@ def generate_html_report(
         out.append("</div>")
         return "".join(out)
 
-    def kpi(lab, val_html, foot, count=None, kind=None, hero=False,
-            hex="#5eead4", viz=""):
+    def kpi(
+        lab, val_html, foot, count=None, kind=None, hero=False, kc="#5eead4", viz=""
+    ):
         cls = "kpi hero" if hero else "kpi"
         vcls = "val num"
         if count is not None:
@@ -632,7 +641,7 @@ def generate_html_report(
             else ""
         )
         return (
-            f'<div class="{cls}" style="--kc:{hex}"><div class="lab">{lab}</div>'
+            f'<div class="{cls}" style="--kc:{kc}"><div class="lab">{lab}</div>'
             f'<div class="{vcls}"{cnt}>{val_html}</div>{viz}'
             f'<div class="foot">{foot}</div></div>'
         )
@@ -657,65 +666,87 @@ def generate_html_report(
     kpis = (
         kpi(
             "Total Return",
-            f'{m["total_return_pct"]:+.1f}%',
+            f"{m['total_return_pct']:+.1f}%",
             f'CAGR <b class="num">{m["annual_return_pct"]:+.1f}%</b> · {m["years"]:.1f} yrs',
-            count=m["total_return_pct"], kind="pct", hero=True, hex="#34d399",
+            count=m["total_return_pct"],
+            kind="pct",
+            hero=True,
+            kc="#34d399",
         )
         + kpi(
             "Final Equity",
-            f'Rs.{_inr(v_eq)}',
-            f'from Rs.{_inr(m["initial_capital"])} · exact '
+            f"Rs.{_inr(v_eq)}",
+            f"from Rs.{_inr(m['initial_capital'])} · exact "
             f'<b class="num">Rs.{v_eq:,.0f}</b>',
-            count=v_eq, kind="rsC", hex="#34d399",
+            count=v_eq,
+            kind="rsC",
+            kc="#34d399",
         )
         + kpi(
             "Max Drawdown",
-            f'-{m["max_drawdown_pct"]:.1f}%',
-            f'Rs.{_inr(m["max_drawdown"])} peak-to-trough',
-            count=-m["max_drawdown_pct"], kind="pct", hex="#fb7185",
+            f"-{m['max_drawdown_pct']:.1f}%",
+            f"Rs.{_inr(m['max_drawdown'])} peak-to-trough",
+            count=-m["max_drawdown_pct"],
+            kind="pct",
+            kc="#fb7185",
             viz=_mbars(
-                ("dd", m["max_drawdown_pct"], "#fb7185", f'-{m["max_drawdown_pct"]:.1f}%'),
+                (
+                    "dd",
+                    m["max_drawdown_pct"],
+                    "#fb7185",
+                    f"-{m['max_drawdown_pct']:.1f}%",
+                ),
                 ("run", max(0, 100 - m["max_drawdown_pct"]), "#1a2532", ""),
             ),
         )
         + kpi(
             "Sharpe",
-            f'{m["sharpe_ratio"]:.2f}',
+            f"{m['sharpe_ratio']:.2f}",
             f'Sortino <b class="num">{m["sortino_ratio"]:.2f}</b>',
-            count=m["sharpe_ratio"], kind="ratio", hex="#38bdf8",
+            count=m["sharpe_ratio"],
+            kind="ratio",
+            kc="#38bdf8",
         )
         + kpi(
             "Win Rate",
-            f'{m["win_rate"]:.1f}%',
-            f'{m["total_trades"]} trades closed',
-            count=m["win_rate"], kind="pct", hex="#34d399",
+            f"{m['win_rate']:.1f}%",
+            f"{m['total_trades']} trades closed",
+            count=m["win_rate"],
+            kind="pct",
+            kc="#34d399",
             viz=_mbars(
-                ("win", m["win_rate"], "#34d399", f'{m["win_rate"]:.1f}%'),
-                ("loss", 100 - m["win_rate"], "#fb7185", f'{100 - m["win_rate"]:.1f}%'),
+                ("win", m["win_rate"], "#34d399", f"{m['win_rate']:.1f}%"),
+                ("loss", 100 - m["win_rate"], "#fb7185", f"{100 - m['win_rate']:.1f}%"),
             ),
         )
         + kpi(
             "Profit Factor",
-            f'{m["profit_factor"]:.2f}',
+            f"{m['profit_factor']:.2f}",
             f'avg win <b class="num pos">{m["avg_win_pct"]:+.1f}%</b> / '
             f'loss <b class="num neg">{m["avg_loss_pct"]:+.1f}%</b>',
-            count=m["profit_factor"], kind="ratio", hex="#38bdf8",
+            count=m["profit_factor"],
+            kind="ratio",
+            kc="#38bdf8",
             viz=_mbars(
-                ("win", aw / pf_max * 100, "#34d399", f'+{aw:.1f}%'),
-                ("loss", al / pf_max * 100, "#fb7185", f'-{al:.1f}%'),
+                ("win", aw / pf_max * 100, "#34d399", f"+{aw:.1f}%"),
+                ("loss", al / pf_max * 100, "#fb7185", f"-{al:.1f}%"),
             ),
         )
         + kpi(
             "Expectancy",
-            f'{expectancy:+.1f}%',
-            f'median {median_trade:+.1f}% · per trade',
-            count=expectancy, kind="pct", hex="#34d399",
+            f"{expectancy:+.1f}%",
+            f"median {median_trade:+.1f}% · per trade",
+            count=expectancy,
+            kind="pct",
+            kc="#34d399",
         )
         + kpi(
             "Signals",
-            f'{taken}',
-            f'{m["signals_generated"]} generated · {conv:.1f}% conversion',
-            count=taken, kind="int", hex="#facc15",
+            f"{taken}",
+            f"{m['signals_generated']} generated · {conv:.1f}% conversion",
+            count=taken,
+            kind="int",
+            kc="#facc15",
             viz=_mbars(
                 ("took", max(conv, 1.5), "#38bdf8", str(taken)),
                 ("skip", 100 - max(conv, 1.5), "#1a2532", str(missed)),
@@ -723,32 +754,39 @@ def generate_html_report(
         )
         + kpi(
             "Avg Hold",
-            f'{avg_hold:.0f}d',
+            f"{avg_hold:.0f}d",
             f'best <b class="num pos">{best_trade:+.1f}%</b> / '
             f'worst <b class="num neg">{worst_trade:+.1f}%</b>',
-            count=avg_hold, kind="int", hex="#facc15",
+            count=avg_hold,
+            kind="int",
+            kc="#facc15",
             viz=_mbars(
-                ("win", win_hold / hold_max * 100, "#34d399", f'{win_hold:.0f}d'),
-                ("loss", loss_hold / hold_max * 100, "#fb7185", f'{loss_hold:.0f}d'),
+                ("win", win_hold / hold_max * 100, "#34d399", f"{win_hold:.0f}d"),
+                ("loss", loss_hold / hold_max * 100, "#fb7185", f"{loss_hold:.0f}d"),
             ),
         )
         + kpi(
             "Streaks",
             f'{max_win_streak}<span class="muted" style="font-size:.6em"> / {max_loss_streak}</span>',
             "max wins / losses in a row",
-            hex="#facc15", viz=dots_html,
+            kc="#facc15",
+            viz=dots_html,
         )
         + kpi(
             "Winner Score",
-            f'{m["avg_winner_score"]:.0f}',
-            f'losers avg {m["avg_loser_score"]:.0f}',
-            count=m["avg_winner_score"], kind="int", hex="#5eead4",
+            f"{m['avg_winner_score']:.0f}",
+            f"losers avg {m['avg_loser_score']:.0f}",
+            count=m["avg_winner_score"],
+            kind="int",
+            kc="#5eead4",
         )
         + kpi(
             "Net P&L",
-            f'{"+" if v_pnl >= 0 else "-"}Rs.{_inr(abs(v_pnl))}',
-            f'Rs.{v_pnl:+,.0f} net of commission',
-            count=v_pnl, kind="rsP", hex="#34d399",
+            f"{'+' if v_pnl >= 0 else '-'}Rs.{_inr(abs(v_pnl))}",
+            f"Rs.{v_pnl:+,.0f} net of commission",
+            count=v_pnl,
+            kind="rsP",
+            kc="#34d399",
         )
     )
 
@@ -802,8 +840,20 @@ def generate_html_report(
     by_year: dict[int, dict[int, float]] = {}
     for (yy, mm), r in month_rets:
         by_year.setdefault(yy, {})[mm] = r
-    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    month_names = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ]
     hm_rows = ""
     for yy in sorted(by_year):
         cells = ""
@@ -823,11 +873,13 @@ def generate_html_report(
         hm_rows += (
             f'<tr><td class="ycol"><b>{yy}</b></td>{cells}'
             f'<td class="ytot" style="color:{yrgb}" title="FY {yy}: {yr:+.1f}%">'
-            f'<b>{yr:+.1f}%</b></td></tr>'
+            f"<b>{yr:+.1f}%</b></td></tr>"
         )
-    hm_head = '<tr><th class="ycol">Year</th>' + "".join(
-        f"<th>{n}</th>" for n in month_names
-    ) + "<th>Year</th></tr>"
+    hm_head = (
+        '<tr><th class="ycol">Year</th>'
+        + "".join(f"<th>{n}</th>" for n in month_names)
+        + "<th>Year</th></tr>"
+    )
 
     # ── exits ───────────────────────────────────────────────────────────────
     exit_items = sorted(m["exit_reasons"].items(), key=lambda x: -x[1])
@@ -873,7 +925,7 @@ def generate_html_report(
             out += (
                 f'<div class="lrow"><span class="rank">#{i}</span>'
                 f'<span class="tk">{esc(t.ticker)}<small>{esc(t.sector)} · '
-                f'{t.entry_date.strftime("%y-%m-%d")}→{t.exit_date.strftime("%y-%m-%d")}</small></span>'
+                f"{t.entry_date.strftime('%y-%m-%d')}→{t.exit_date.strftime('%y-%m-%d')}</small></span>"
                 f'<span class="pc {c}">{t.pnl_pct:+.1f}%</span></div>'
             )
         return out
@@ -905,19 +957,39 @@ def generate_html_report(
     )
     statlist = (
         f'<div class="statlist">'
-        f"<div><span>Avg win</span><b class=\"pos\">{m['avg_win_pct']:+.1f}%</b></div>"
-        f"<div><span>Avg loss</span><b class=\"neg\">{m['avg_loss_pct']:+.1f}%</b></div>"
-        f"<div><span>Best</span><b class=\"pos\">{best_trade:+.1f}%</b></div>"
-        f"<div><span>Worst</span><b class=\"neg\">{worst_trade:+.1f}%</b></div>"
+        f'<div><span>Avg win</span><b class="pos">{m["avg_win_pct"]:+.1f}%</b></div>'
+        f'<div><span>Avg loss</span><b class="neg">{m["avg_loss_pct"]:+.1f}%</b></div>'
+        f'<div><span>Best</span><b class="pos">{best_trade:+.1f}%</b></div>'
+        f'<div><span>Worst</span><b class="neg">{worst_trade:+.1f}%</b></div>'
         f"<div><span>Median</span><b>{median_trade:+.1f}%</b></div>"
         f"<div><span>Avg hold</span><b>{avg_hold:.0f}d</b></div>"
         f"</div>"
     )
 
-    edges = [(-1e9, -30), (-30, -15), (-15, -5), (-5, 0), (0, 5),
-             (5, 15), (15, 30), (30, 50), (50, 100), (100, 1e9)]
-    labels = ["<-30", "-30..-15", "-15..-5", "-5..0", "0..5",
-              "5..15", "15..30", "30..50", "50..100", ">100"]
+    edges = [
+        (-1e9, -30),
+        (-30, -15),
+        (-15, -5),
+        (-5, 0),
+        (0, 5),
+        (5, 15),
+        (15, 30),
+        (30, 50),
+        (50, 100),
+        (100, 1e9),
+    ]
+    labels = [
+        "<-30",
+        "-30..-15",
+        "-15..-5",
+        "-5..0",
+        "0..5",
+        "5..15",
+        "15..30",
+        "30..50",
+        "50..100",
+        ">100",
+    ]
     counts = [0] * len(edges)
     for p in pnl_pcts:
         for i, (lo, hi) in enumerate(edges):
@@ -925,8 +997,10 @@ def generate_html_report(
                 counts[i] += 1
                 break
     max_c = max(counts, default=1) or 1
-    hist_svg = ['<svg viewBox="0 0 1000 230" class="hist" font-family="ui-monospace,monospace">']
-    for i, (cnt, lab) in enumerate(zip(counts, labels)):
+    hist_svg = [
+        '<svg viewBox="0 0 1000 230" class="hist" font-family="ui-monospace,monospace">'
+    ]
+    for i, (cnt, lab) in enumerate(zip(counts, labels, strict=False)):
         bw = 1000 / len(counts)
         x = i * bw + 8
         h = cnt / max_c * 160
@@ -967,11 +1041,13 @@ def generate_html_report(
     # ── per-stock table ─────────────────────────────────────────────────────
     sector_of = {t.ticker: t.sector for t in engine.trades}
     stock_rows = ""
-    for ticker in sorted(m["stock_stats"], key=lambda t: -m["stock_stats"][t]["total_pnl"]):
+    for ticker in sorted(
+        m["stock_stats"], key=lambda t: -m["stock_stats"][t]["total_pnl"]
+    ):
         s = m["stock_stats"][ticker]
         c = "pos" if s["total_pnl"] > 0 else "neg"
         stock_rows += (
-            f'<tr><td><b>{esc(ticker)}</b></td>'
+            f"<tr><td><b>{esc(ticker)}</b></td>"
             f'<td class="muted">{esc(str(sector_of.get(ticker, "-")))}</td>'
             f'<td class="tnum" data-num="{s["trades"]}">{s["trades"]}</td>'
             f'<td class="tnum" data-num="{s["win_rate"]}">{s["win_rate"]:.0f}%</td>'
@@ -984,12 +1060,18 @@ def generate_html_report(
     trade_rows = ""
     for t in sorted(engine.trades, key=lambda x: x.entry_date):
         c = "pos" if t.pnl > 0 else "neg"
-        sbg = "#34d399" if t.entry_score >= 70 else "#facc15" if t.entry_score >= 50 else "#7d93a8"
+        sbg = (
+            "#34d399"
+            if t.entry_score >= 70
+            else "#facc15"
+            if t.entry_score >= 50
+            else "#7d93a8"
+        )
         chart_svg = _generate_trade_chart(t, stock_data_for_charts)
         trade_rows += (
             f'<tr data-t="{esc(t.ticker.upper())}" data-y="{t.entry_date.year}" '
             f'data-r="{esc(t.exit_reason)}" data-p="{t.pnl_pct:.2f}">'
-            f'<td><b>{esc(t.ticker)}</b><br>'
+            f"<td><b>{esc(t.ticker)}</b><br>"
             f'<span class="muted" style="font-size:.8em">{esc(t.sector)}</span></td>'
             f'<td class="tnum" data-num="{t.entry_date.toordinal()}">{t.entry_date.strftime("%Y-%m-%d")}'
             f'<br><span class="muted" style="font-size:.8em">Rs.{t.entry_price:,.0f}</span></td>'
@@ -1000,7 +1082,7 @@ def generate_html_report(
             f'<td class="tnum {c}" data-num="{t.pnl_pct}"><b>{t.pnl_pct:+.1f}%</b></td>'
             f'<td class="tnum {c}" data-num="{t.pnl}">{t.pnl:+,.0f}</td>'
             f'<td><span class="muted" style="font-size:.85em">{esc(t.exit_reason)}</span></td>'
-            f'<td>{chart_svg}</td></tr>'
+            f"<td>{chart_svg}</td></tr>"
         )
 
     years_opts = sorted({t.entry_date.year for t in engine.trades}, reverse=True)
@@ -1008,7 +1090,8 @@ def generate_html_report(
         f'<option value="{y}">{y}</option>' for y in years_opts
     )
     reason_opts_html = '<option value="">all reasons</option>' + "".join(
-        f'<option value="{esc(str(r))}">{esc(str(r))} ({c})</option>' for r, c in exit_items
+        f'<option value="{esc(str(r))}">{esc(str(r))} ({c})</option>'
+        for r, c in exit_items
     )
 
     # ── equity + drawdown charts (viewBox 1000-wide for JS crosshair) ───────
@@ -1027,7 +1110,9 @@ def generate_html_report(
             return mT + (1 - (v - min_v) / v_range) * ih
 
         eqp = [" ".join(f"{sx(i):.1f},{sy(v):.1f}" for i, v in enumerate(eq_vals))]
-        area_pts = f"{sx(0):.1f},{sy(min_v):.1f} {eqp[0]} {sx(n - 1):.1f},{sy(min_v):.1f}"
+        area_pts = (
+            f"{sx(0):.1f},{sy(min_v):.1f} {eqp[0]} {sx(n - 1):.1f},{sy(min_v):.1f}"
+        )
         grid = ""
         for i in range(5):
             gv = min_v + i / 4 * v_range
@@ -1096,7 +1181,9 @@ def generate_html_report(
             '<span class="muted">hover for crosshair</span></div></div>'
             '<div class="panel" style="margin-top:14px"><div class="ptitle">'
             '<span class="idx">DD</span><h2 style="font-size:.9em">Underwater — drawdown from peak</h2></div>'
-            '<div class="chart" id="ddChart">' + dd_svg + '<div class="tip"></div></div></div>'
+            '<div class="chart" id="ddChart">'
+            + dd_svg
+            + '<div class="tip"></div></div></div>'
         )
     else:
         charts_html = '<div class="panel"><p class="muted">No equity data</p></div>'
@@ -1325,9 +1412,7 @@ def generate_scan_html(
         (r for r in rows if r["state"] == "TRIGGERED"),
         key=lambda r: -(r["score"] or 0),
     )
-    armed = sorted(
-        (r for r in rows if r["state"] == "ARMED"), key=lambda r: -r["n"]
-    )
+    armed = sorted((r for r in rows if r["state"] == "ARMED"), key=lambda r: -r["n"])
     expired = sorted(
         (r for r in rows if r["state"] == "EXPIRED"),
         key=lambda r: r["cross_date"],
@@ -1342,16 +1427,14 @@ def generate_scan_html(
 
     trig_html = ""
     for r in trig:
-        lvl = (
-            f'→ <b>Rs.{r["level"]:,.1f}</b>' if r["level"] is not None else ""
-        )
+        lvl = f"→ <b>Rs.{r['level']:,.1f}</b>" if r["level"] is not None else ""
         trig_html += (
             f'<div class="trigcard"><div class="tk">{esc(r["ticker"])}'
-            f'<small>{esc(str(r["sector"]))}</small></div>'
+            f"<small>{esc(str(r['sector']))}</small></div>"
             f'<div class="row"><span>score {_scorechip(r["score"])}</span>'
-            f'<span>n={r["n"]}/{confirm}w</span></div>'
+            f"<span>n={r['n']}/{confirm}w</span></div>"
             f'<div class="row"><span>cross</span>'
-            f'<b>{r["cross_date"].strftime("%Y-%m-%d")}</b></div>'
+            f"<b>{r['cross_date'].strftime('%Y-%m-%d')}</b></div>"
             f'<div class="row"><span>close Rs.{r["close"]:,.1f}</span>'
             f"<span>{lvl}</span></div>"
             f'<div class="gchip">{esc(r["note"])} &middot; {fill_note}</div></div>'
@@ -1362,11 +1445,11 @@ def generate_scan_html(
     armed_html = ""
     for r in armed:
         w = min(r["n"] / confirm * 100, 100) if confirm else 0
-        sc = f'{r["score"]:.0f}' if r["score"] is not None else "-"
+        f"{r['score']:.0f}" if r["score"] is not None else "-"
         armed_html += (
-            f'<tr><td><b>{esc(r["ticker"])}</b><br>'
+            f"<tr><td><b>{esc(r['ticker'])}</b><br>"
             f'<span class="muted" style="font-size:.8em">{esc(str(r["sector"]))}</span></td>'
-            f'<td>{_scorechip(r["score"])}</td>'
+            f"<td>{_scorechip(r['score'])}</td>"
             f'<td class="tnum"><b>{r["n"]}</b>/{confirm}w'
             f'<span class="nbar"><i style="width:{w:.0f}%"></i></span></td>'
             f'<td class="tnum">{r["cross_date"].strftime("%Y-%m-%d")}</td>'
@@ -1382,7 +1465,7 @@ def generate_scan_html(
     expired_html = ""
     for r in expired:
         expired_html += (
-            f'<tr><td><b>{esc(r["ticker"])}</b></td>'
+            f"<tr><td><b>{esc(r['ticker'])}</b></td>"
             f'<td class="muted">{esc(str(r["sector"]))}</td>'
             f'<td class="tnum">{r["cross_date"].strftime("%Y-%m-%d")}</td>'
             f'<td class="muted">{esc(r["note"])}</td></tr>'

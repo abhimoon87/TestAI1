@@ -49,9 +49,29 @@ class SettingsViewMixin:
             ],
         ),
         (
+            "Strategy",
+            [
+                ("strategy", "Strategy", "strategy", None, None),
+            ],
+        ),
+        (
             "Entry mode",
             [
                 ("entry_mode", "Entry mode", "entry_mode", None, None),
+                (
+                    "index_regime_filter",
+                    "Index regime gate (NIFTY close > EMA)",
+                    "bool",
+                    None,
+                    None,
+                ),
+                (
+                    "index_regime_ema_len",
+                    "Regime EMA length",
+                    "int",
+                    2,
+                    500,
+                ),
             ],
         ),
         (
@@ -178,6 +198,14 @@ class SettingsViewMixin:
             cur = str(self.settings.get(key, "classic"))
             ctrl = themed_dropdown(
                 opts, cur if cur in opts else "classic", c, width=190
+            )
+        elif kind == "strategy":
+            from ..backend.settings_store import STRATEGY_LABELS
+
+            labels = list(STRATEGY_LABELS.values())
+            cur_key = str(self.settings.get(key, "daily_screener"))
+            ctrl = themed_dropdown(
+                labels, STRATEGY_LABELS.get(cur_key, labels[0]), c, width=190
             )
         else:
             ctrl = ft.TextField(
@@ -345,7 +373,16 @@ class SettingsViewMixin:
             if kind == "bool":
                 updates[key] = bool(ctrl.value)
                 continue
-            if kind in ("ma_type", "entry_mode"):
+            if kind == "strategy":
+                from ..backend.settings_store import STRATEGY_LABELS
+
+                # Dropdown stores labels; persist the enum key.
+                rev = {v: k for k, v in STRATEGY_LABELS.items()}
+                val = rev.get(ctrl.value or "")
+                if val is None:
+                    bad.append(key)
+                    continue
+            elif kind in ("ma_type", "entry_mode"):
                 val = ctrl.value
                 ok_opts = (
                     self._MA_TYPES

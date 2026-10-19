@@ -25,10 +25,12 @@ from .ui_kit import (
     FS_LG,
     FS_XL,
     FS_XS,
+    OPTIONAL_COLS,
     RADIUS_LG,
     RADIUS_MD,
     RADIUS_SM,
     RADIUS_XL,
+    ROW_H,
     _border_all,
     _card_shadow,
     _glass_bg,
@@ -211,7 +213,7 @@ class LayoutViewMixin:
                     t.upper(),
                     size=FS_XS,
                     weight=ft.FontWeight.BOLD,
-                    color=c["text_faint"],
+                    color=c["text_dim"],
                 ),
                 padding=_padding_only(left=16, top=14, bottom=4),
             )
@@ -243,6 +245,9 @@ class LayoutViewMixin:
 
         self.timeframe_dd = self._styled_dropdown(
             ["Daily", "Weekly", "Monthly"], "Daily"
+        )
+        self.strategy_dd = self._styled_dropdown(
+            ["Daily Screener", "Weekly V4 Swing"], "Daily Screener"
         )
         self.period_dd = self._styled_dropdown(
             ["6 Months", "1 Year", "2 Years"], "1 Year"
@@ -381,6 +386,8 @@ class LayoutViewMixin:
                 field(self.universe_dd),
                 self.universe_count_container,
                 self.watchlist_import_container,
+                section("Strategy"),
+                field(self.strategy_dd),
                 section("Timeframe"),
                 field(self.timeframe_dd),
                 section("Data Period"),
@@ -437,7 +444,70 @@ class LayoutViewMixin:
             ),
             width=SIDE_W,
             bgcolor=c["side_bg"],
+            border=ft.Border(right=ft.BorderSide(1, c["border"])),
         )
+
+    # ── Grid view menus (Density / Columns) ──────────────────────────
+    # Items are rebuilt each time the menu opens, so checkmarks track live
+    # state even though prefs load *after* the UI is built.
+
+    def _density_items(self) -> list:
+        c = self.theme_colors
+        cur = self._row_density()
+        return [
+            ft.PopupMenuItem(
+                content=ft.Text(
+                    f"{name.title()}  ·  {h}px rows", size=11, color=c["text"]
+                ),
+                checked=name == cur,
+                height=32,
+                on_click=lambda e, n=name: self._set_density(n),
+            )
+            for name, h in ROW_H.items()
+        ]
+
+    def _columns_items(self) -> list:
+        c = self.theme_colors
+        hidden = self._hidden_cols()
+        return [
+            ft.PopupMenuItem(
+                content=ft.Text(
+                    name,
+                    size=11,
+                    color=c["text"] if name not in hidden else c["text_faint"],
+                ),
+                checked=name not in hidden,
+                height=32,
+                on_click=lambda e, n=name: self._toggle_user_col(n),
+            )
+            for name in OPTIONAL_COLS
+        ]
+
+    def _sync_menu_checks(self) -> None:
+        """Reflect live density/hidden-column state in the menu checkmarks.
+
+        Items are mutated in place: replacing the ``items`` list reassigns
+        control ids, and an open menu then dispatches taps against the old
+        ids — the handler silently never fires.
+        """
+        if getattr(self, "density_menu", None) is None:
+            return
+        c = self.theme_colors
+        cur = self._row_density()
+        for i, name in enumerate(ROW_H):
+            if i < len(self.density_menu.items):
+                self.density_menu.items[i].checked = name == cur
+        hidden = self._hidden_cols()
+        for i, name in enumerate(OPTIONAL_COLS):
+            item = (
+                self.columns_menu.items[i] if i < len(self.columns_menu.items) else None
+            )
+            if item is None:
+                continue
+            shown = name not in hidden
+            item.checked = shown
+            if isinstance(item.content, ft.Text):
+                item.content.color = c["text"] if shown else c["text_faint"]
 
     def _build_main_area(self) -> ft.Container:
         c = self.theme_colors
@@ -511,6 +581,7 @@ class LayoutViewMixin:
             ),
             height=56,
             bgcolor=c["panel_bg"],
+            border=ft.Border(bottom=ft.BorderSide(1, c["border"])),
             padding=_padding_only(left=16, right=14),
         )
 
@@ -678,6 +749,32 @@ class LayoutViewMixin:
         self.filter_chips_row = ft.Row(
             [], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER
         )
+        # Density + Columns: the grid's two view toggles. Shared pill style
+        # so they read as buttons beside the filter checkboxes.
+        menu_style = ft.ButtonStyle(
+            bgcolor=c["option_bg"],
+            side=ft.BorderSide(1, c["border"]),
+            shape=ft.RoundedRectangleBorder(radius=RADIUS_SM),
+            padding=6,
+        )
+        self.density_menu = ft.PopupMenuButton(
+            content=ft.Text("Density", size=11, color=c["text_dim"]),
+            items=self._density_items(),
+            bgcolor=c["option_drop"],
+            elevation=8,
+            menu_position=ft.PopupMenuPosition.UNDER,
+            style=menu_style,
+            tooltip="Row height: Comfort or Compact",
+        )
+        self.columns_menu = ft.PopupMenuButton(
+            content=ft.Text("Columns", size=11, color=c["text_dim"]),
+            items=self._columns_items(),
+            bgcolor=c["option_drop"],
+            elevation=8,
+            menu_position=ft.PopupMenuPosition.UNDER,
+            style=menu_style,
+            tooltip="Show or hide optional columns",
+        )
         self.section_header = ft.Container(
             content=ft.Row(
                 controls=[
@@ -695,6 +792,10 @@ class LayoutViewMixin:
                     self.fund_filter_cb,
                     ft.Container(width=10),
                     self.filter_chips_row,
+                    ft.Container(width=14),
+                    self.density_menu,
+                    ft.Container(width=8),
+                    self.columns_menu,
                     ft.Container(expand=True),
                     self.scan_inline_label,
                     ft.Container(width=10),
@@ -976,6 +1077,14 @@ class LayoutViewMixin:
             border=_border_all(1, c["border"]),
             border_radius=RADIUS_LG,
             padding=10,
+            shadow=[
+                ft.BoxShadow(
+                    blur_radius=14,
+                    spread_radius=-2,
+                    offset=ft.Offset(0, 3),
+                    color=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
+                )
+            ],
         )
         self.log_clear_btn = ft.TextButton(
             content=ft.Text("Clear", size=10),
@@ -1060,6 +1169,7 @@ class LayoutViewMixin:
             content=panel_content,
             width=RIGHT_W,
             bgcolor=c["side_bg"],
+            border=ft.Border(left=ft.BorderSide(1, c["border"])),
         )
 
     def _make_score_gauge(

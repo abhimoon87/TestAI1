@@ -45,7 +45,8 @@ class ScannerSettings(TypedDict, total=False):
     # Relative Strength
     index_symbol: str
     # Volume Profile
-    vp_lookback: int
+    vp_lookback: int  # v1 backtest POC window (daily bars)
+    vp_weekly_lookback: int  # daily-screener POC window in weeks (V4 parity)
     # Sideways Filter
     adx_len: int
     adx_threshold: float
@@ -89,6 +90,11 @@ class ScannerSettings(TypedDict, total=False):
     hp_counter_signal_penalty: bool
     hp_freshness_max_bars: int
     hp_volume_confirmation: bool
+    # Index regime gate (entry only): require index close > its EMA
+    index_regime_filter: bool
+    index_regime_ema_len: int
+    # Strategy: which selection logic the scan runs
+    strategy: str  # daily_screener | weekly_v4_swing
 
 
 SCANNER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -112,6 +118,7 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "index_symbol": "NSEI",
     # Volume Profile
     "vp_lookback": 200,
+    "vp_weekly_lookback": 12,
     # Sideways Filter
     "adx_len": 14,
     "adx_threshold": 20.0,
@@ -127,6 +134,10 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "crossover_lookback": 20,
     # Entry gate (mirrors backtest engine): require ADX >= this for entry signal
     "min_adx_entry": 20.0,
+    # Index regime gate (V4 spec A parity): entry requires index close > EMA.
+    # Fail-open when the index frame is missing/unfetchable.
+    "index_regime_filter": True,
+    "index_regime_ema_len": 50,
     # Scanner
     "min_score": 50.0,
     "data_period": "1y",
@@ -154,7 +165,16 @@ DEFAULT_SETTINGS: ScannerSettings = {
     "hp_counter_signal_penalty": True,
     "hp_freshness_max_bars": 2,
     "hp_volume_confirmation": True,
+    # Strategy: which selection logic the scan runs
+    "strategy": "daily_screener",
 }
+
+# Human labels for the strategy enum (Settings page + sidebar dropdowns).
+STRATEGY_LABELS = {
+    "daily_screener": "Daily Screener",
+    "weekly_v4_swing": "Weekly V4 Swing",
+}
+STRATEGY_KEYS = tuple(STRATEGY_LABELS)
 
 
 # ── API Key Management ───────────────────────────────────────────────────────
@@ -236,6 +256,8 @@ def _sanitize_settings(saved: dict) -> dict:
                 )
                 or (key == "ui_sort_reverse" and isinstance(val, bool))
                 or (key == "ui_page_size" and isinstance(val, int) and 0 < val <= 500)
+                or (key == "ui_density" and val in ("comfort", "compact"))
+                or (key == "ui_hidden_cols" and isinstance(val, str))
                 or (
                     key == "ui_rating_filter"
                     and val
@@ -279,6 +301,7 @@ def _sanitize_settings(saved: dict) -> dict:
                 sval = str(val)
                 enums = {
                     "entry_mode": ("classic", "high_probability", "custom"),
+                    "strategy": STRATEGY_KEYS,
                     "fast_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
                     "slow_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),
                     "slope_ma_type": ("HMA", "EMA", "SMA", "KAMA", "VWMA"),

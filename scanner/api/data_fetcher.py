@@ -674,8 +674,10 @@ def _fetch_fallback_batch(
             # (e.g. recent IPO), so don't negative-cache it.
             return "short", t, None
         except Exception as e:
+            # A provider error is NOT proof the symbol is dead — don't
+            # negative-cache it (it gets retried on the next scan).
             logger.info("Fallback fetch failed for %s: %s", t, e)
-            return "dead", t, None
+            return "error", t, None
 
     executor = _DaemonThreadPoolExecutor(max_workers=workers)
     future_to_ticker = {executor.submit(_fetch_one, t): t for t in tickers}

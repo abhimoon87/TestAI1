@@ -635,6 +635,47 @@ def _fetch_yfinance_index(ticker: str, period: str) -> pd.DataFrame | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+def _normalize_nselib_ohlcv(df: pd.DataFrame) -> pd.DataFrame | None:
+    """Map nselib's verbose columns to open/high/low/close/volume.
+
+    Each target maps to exactly one source, by priority: nselib ships several
+    close/volume aliases (PrevClose / LastPrice / ClosePrice,
+    TotalTradedQuantity / %DlyQttoTradedQty) and a substring match would
+    collapse them into duplicate columns — e.g. picking PrevClose as `close`
+    would be a day stale. Date becomes the DatetimeIndex so weekly/monthly
+    resampling works (nselib returns rows newest-first → sort ascending).
+    """
+    lower = {str(c).lower().strip(): c for c in df.columns}
+    prefs = {
+        "open": ["openprice", "open"],
+        "high": ["highprice", "high"],
+        "low": ["lowprice", "low"],
+        "close": ["closeprice", "close", "lastprice", "last"],
+        "volume": ["totaltradedquantity", "volume", "quantity", "traded"],
+    }
+    col_map = {}
+    for target, names in prefs.items():
+        for name in names:
+            if name in lower:
+                col_map[lower[name]] = target
+                break
+    df = df.rename(columns=col_map)
+
+    cols = ["open", "high", "low", "close", "volume"]
+    available = [c for c in cols if c in df.columns]
+    if len(available) < 4:
+        return None
+
+    date_col = next((c for c in df.columns if str(c).lower().strip() == "date"), None)
+    if date_col is not None:
+        df = df.copy()
+        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+        df = df.set_index(date_col).sort_index()
+        df.index.name = None
+
+    return df[available].dropna()
+
+
 def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
     """Fetch OHLCV from NSE via nselib."""
     try:
@@ -655,30 +696,7 @@ def _fetch_nselib(ticker: str, period: str) -> pd.DataFrame | None:
         if df is None or df.empty:
             return None
 
-        # Normalize columns
-        col_map = {}
-        for c in df.columns:
-            cl = c.lower().strip()
-            if "open" in cl:
-                col_map[c] = "open"
-            elif "high" in cl:
-                col_map[c] = "high"
-            elif "low" in cl:
-                col_map[c] = "low"
-            elif "close" in cl or "last" in cl:
-                col_map[c] = "close"
-            elif "quantity" in cl or "volume" in cl or "traded" in cl:
-                col_map[c] = "volume"
-
-        df = df.rename(columns=col_map)
-        cols = ["open", "high", "low", "close", "volume"]
-        available = [c for c in cols if c in df.columns]
-
-        if len(available) < 4:
-            return None
-
-        df = df[available].copy()
-        return df.dropna()
+        return _normalize_nselib_ohlcv(df)
 
     except ImportError:
         return None

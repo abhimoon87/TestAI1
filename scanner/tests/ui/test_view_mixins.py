@@ -527,6 +527,104 @@ class TestDataRowColoring:
         assert _cell(row, 14).value == "v Bear"  # Dir
 
 
+class TestEntryMissingTooltip:
+    """Daily rows surface the failed entry gates on the ENTRY cell."""
+
+    @staticmethod
+    def _entry_cell(row):
+        """The ENTRY cell Container (tooltip lives on the cell, not its Text)."""
+        return row.content.controls[4]
+
+    def test_entry_cell_shows_missing_gates(self):
+        app = _make_app()
+        c = app.theme_colors
+        row = app._create_row_controls(
+            _row(
+                ticker="ABC",
+                entry_signal=False,
+                entry_missing=["green day", "NIFTY regime"],
+            ),
+            1,
+            c,
+            c["card"],
+            50,
+        )
+        assert self._entry_cell(row).tooltip == "missing: green day, NIFTY regime"
+
+    def test_entry_cell_no_tooltip_when_all_gates_pass(self):
+        app = _make_app()
+        c = app.theme_colors
+        row = app._create_row_controls(
+            _row(ticker="ABC", entry_signal=True, entry_missing=[]),
+            1,
+            c,
+            c["card"],
+            50,
+        )
+        assert self._entry_cell(row).tooltip is None
+
+    def test_v4_state_tooltip_takes_precedence(self):
+        """V4 rows have their own detail tooltip — entry_missing must not win."""
+        app = _make_app()
+        c = app.theme_colors
+        row = app._create_row_controls(
+            _row(
+                ticker="XYZ",
+                entry_signal=False,
+                entry_missing=["green day"],
+                state="ARMED",
+                v4_missing=["above level"],
+            ),
+            1,
+            c,
+            c["card"],
+            50,
+        )
+        assert "V4: ARMED" in self._entry_cell(row).tooltip
+        assert "missing: green day" not in self._entry_cell(row).tooltip
+
+    def test_update_row_refreshes_tooltip(self):
+        app = _make_app()
+        c = app.theme_colors
+        r = _row(ticker="ABC", entry_signal=False, entry_missing=["green day"])
+        row = app._create_row_controls(r, 1, c, c["card"], 50)
+        assert self._entry_cell(row).tooltip == "missing: green day"
+        r["entry_missing"] = ["NIFTY regime", "score"]
+        assert app._update_row(r, 1, c, 50) is True
+        assert self._entry_cell(row).tooltip == "missing: NIFTY regime, score"
+
+    def test_update_row_clears_tooltip_when_entry_turns_on(self):
+        app = _make_app()
+        c = app.theme_colors
+        r = _row(ticker="ABC", entry_signal=False, entry_missing=["green day"])
+        row = app._create_row_controls(r, 1, c, c["card"], 50)
+        r["entry_signal"] = True
+        r["entry_missing"] = []
+        assert app._update_row(r, 1, c, 50) is True
+        assert self._entry_cell(row).tooltip is None
+
+    def test_update_row_keeps_v4_detail(self):
+        """An in-place update must not downgrade the rich V4 tooltip."""
+        app = _make_app()
+        c = app.theme_colors
+        r = _row(
+            ticker="ABC",
+            entry_signal=False,
+            state="ARMED",
+            v4_cross_date="2026-09-01",
+            v4_n=3,
+            v4_level=3950.0,
+            v4_missing=["green week"],
+        )
+        row = app._create_row_controls(r, 1, c, c["card"], 50)
+        assert app._update_row(r, 1, c, 50) is True
+        tip = self._entry_cell(row).tooltip
+        assert "V4: ARMED" in tip
+        assert "cross 2026-09-01" in tip
+        assert "3/15 bars" in tip
+        assert "missing: green week" in tip
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Layout mixin — top-pick cards and summary updates
 # ══════════════════════════════════════════════════════════════════════════════

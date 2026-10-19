@@ -92,6 +92,79 @@ def test_reduce_motion_rejects_non_bool(tmp_path, monkeypatch):
     assert store_mod.load_settings()["reduce_motion"] is False
 
 
+# ── Strategy selector (daily screener vs Weekly V4 swing) ────────────────────
+
+
+def test_strategy_default_and_labels():
+    """Default strategy is the daily screener; labels cover both enum keys."""
+    assert store_mod.DEFAULT_SETTINGS["strategy"] == "daily_screener"
+    assert set(store_mod.STRATEGY_LABELS) == set(store_mod.STRATEGY_KEYS)
+    assert "daily_screener" in store_mod.STRATEGY_LABELS
+    assert "weekly_v4_swing" in store_mod.STRATEGY_LABELS
+
+
+def test_strategy_persists_through_round_trip(tmp_path, monkeypatch):
+    """weekly_v4_swing survives save_settings -> load_settings."""
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    s = store_mod.load_settings()
+    assert s["strategy"] == "daily_screener"
+    s["strategy"] = "weekly_v4_swing"
+    store_mod.save_settings(s)
+    assert store_mod.load_settings()["strategy"] == "weekly_v4_swing"
+
+
+def test_strategy_rejects_bad_value(tmp_path, monkeypatch):
+    """An unknown strategy key falls back to the default."""
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"strategy": "crypto"}), encoding="utf-8")
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    assert store_mod.load_settings()["strategy"] == "daily_screener"
+
+
+# ── Index regime gate ────────────────────────────────────────────────────────
+
+
+def test_regime_gate_defaults():
+    """Regime gate ships on with a 50-bar index EMA (V4 spec-A parity)."""
+    assert store_mod.DEFAULT_SETTINGS["index_regime_filter"] is True
+    assert store_mod.DEFAULT_SETTINGS["index_regime_ema_len"] == 50
+
+
+def test_regime_gate_round_trip(tmp_path, monkeypatch):
+    """Both regime keys persist through save -> load."""
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    s = store_mod.load_settings()
+    s["index_regime_filter"] = False
+    s["index_regime_ema_len"] = 100
+    store_mod.save_settings(s)
+    reloaded = store_mod.load_settings()
+    assert reloaded["index_regime_filter"] is False
+    assert reloaded["index_regime_ema_len"] == 100
+
+
+def test_regime_gate_rejects_non_bool(tmp_path, monkeypatch):
+    """A garbage value for index_regime_filter falls back to the default."""
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(
+        json.dumps({"index_regime_filter": "banana"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    assert store_mod.load_settings()["index_regime_filter"] is True
+
+
+def test_vp_weekly_lookback_default_and_round_trip(tmp_path, monkeypatch):
+    """Daily-screener POC window defaults to 12 weeks and persists."""
+    assert store_mod.DEFAULT_SETTINGS["vp_weekly_lookback"] == 12
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(store_mod, "SETTINGS_FILE", str(settings_file))
+    s = store_mod.load_settings()
+    s["vp_weekly_lookback"] = 8
+    store_mod.save_settings(s)
+    assert store_mod.load_settings()["vp_weekly_lookback"] == 8
+
+
 # ── Results persistence ──────────────────────────────────────────────────────
 
 

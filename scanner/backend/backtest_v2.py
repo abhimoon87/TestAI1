@@ -648,7 +648,6 @@ class V2Engine(BacktestEngine):
         `expired_weeks`, timed out or bear-cancelled). Skips the full
         simulation.
         """
-        confirm = int(self.settings["confirm_weeks"])
         # run() normally builds these; the scan path skips run().
         if not getattr(self, "_stock_map", None):
             self._stock_map = {s.ticker: s for s in self.stocks}
@@ -657,166 +656,158 @@ class V2Engine(BacktestEngine):
         self._pending, self.positions = {}, []
         self._signals_generated = 0
         self._signals_blocked = 0
-        expired: dict[str, dict] = {}
-        first: dict[str, dict] = {}
-
-        for stock in self.stocks:
-            t = stock.ticker
-            start = max(0, len(stock.df) - (confirm * 5 + 3))
-            for i in range(start, len(stock.df)):
-                day_i = stock.df.index[i]
-                regime_ok = self._regime_ok(day_i)
-                before = self._pending.get(t)
-                self._advance_pending(stock, i, day_i, regime_ok)
-                if before is not None and self._pending.get(t) is None:
-                    w = self._week_id(t, i)
-                    expired[t] = {
-                        "cross_bar": before.bar_idx,
-                        "bar_idx": i,
-                        "reason": (
-                            "timeout"
-                            if w - before.w_idx > confirm
-                            else "bearish cross"
-                        ),
-                    }
-                # Backtest parity: the first window week where every gate
-                # passes IS the entry (mirrors _try_entries' order —
-                # advance, then gates at the week end; n=0 at the arm bar
-                # fails n_window, so no same-bar false trigger).
-                pend = self._pending.get(t)
-                if (
-                    pend is not None
-                    and first.get(t) is None
-                    and self._week_ended(t, i)
-                ):
-                    _g, sr = self._entry_gates(stock, i, pend, regime_ok)
-                    if sr is not None:
-                        first[t] = {
-                            "bar_idx": i,
-                            "cross_bar": pend.bar_idx,
-                            "entry_date": stock.df.index[i],
-                            "n": self._week_id(t, i) - pend.w_idx,
-                            "score": float(sr["total"]),
-                            "level": pend.level,
-                        }
-
-        def _arm_score(stock, bar_idx):
-            sr = compute_score_at_bar(
-                stock, bar_idx, self.nifty_df, self.settings
-            )
-            return float(sr["total"]) if sr else None
-
         rows: list[dict] = []
         for stock in self.stocks:
-            t = stock.ticker
-            bar_idx = len(stock.df) - 1
-            # Gates evaluate at the last COMPLETED week — a mid-week run's
-            # latest bar has not closed its week yet.
-            eval_bar = bar_idx
-            while eval_bar > 0 and not self._week_ended(t, eval_bar):
-                eval_bar -= 1
-            w_last = self._week_id(t, eval_bar)
-            close = float(stock.df["close"].iloc[bar_idx])
-            sector = get_sector(t)
-            pend = self._pending.get(t)
-            hit = first.get(t)
-            cur_n = (
-                w_last - self._week_id(t, hit["cross_bar"])
-                if hit is not None
-                else None
-            )
-            if hit is not None and cur_n <= confirm:
-                # Backtest parity: the first window week where all gates
-                # passed — survives a later bear/timeout and a retrace.
-                # Only while the cross's confirm window still covers the
-                # scan date: a stale qualification falls through to
-                # EXPIRED/hidden, never a live Long.
-                note = (
-                    "all gates OK"
-                    if hit["bar_idx"] == eval_bar
-                    else f"qualified {hit['entry_date']:%Y-%m-%d}"
-                )
-                rows.append(
-                    {
-                        "ticker": t,
-                        "sector": sector,
-                        "state": "TRIGGERED",
-                        "cross_date": stock.df.index[hit["cross_bar"]],
-                        "n": cur_n,
-                        "score": hit["score"],
-                        "close": close,
-                        "level": hit["level"],
-                        "missing": [],
-                        "note": note,
-                    }
-                )
-            elif pend is not None:
-                # A pass at eval_bar would have been recorded as `hit`
-                # during the replay — this branch is ARMED-only.
-                n = w_last - pend.w_idx
-                regime_ok = self._regime_ok(stock.df.index[eval_bar])
-                g, _sr = self._entry_gates(stock, eval_bar, pend, regime_ok)
-                if not g["week_ended"]:
-                    state, note = "ARMED", "awaiting weekly close"
-                    missing = [k for k in _GATE_ORDER if not g[k]]
-                elif not g["n_window"]:
-                    state, note = "ARMED", f"cross bar n={n}/{confirm}"
-                    missing = [k for k in _GATE_ORDER if not g[k]]
-                elif not g["regime"]:
-                    state, note = "ARMED", "NIFTY regime off"
-                    missing = [k for k in _GATE_ORDER if not g[k]]
-                else:
-                    state = "ARMED"
-                    missing = [k for k in _GATE_ORDER if not g[k]]
-                    note = "missing: " + ", ".join(
-                        _GATE_LABELS[k] for k in missing
-                    )
-                rows.append(
-                    {
-                        "ticker": t,
-                        "sector": sector,
-                        "state": state,
-                        "cross_date": stock.df.index[pend.bar_idx],
-                        "n": n,
-                        "score": _arm_score(stock, pend.bar_idx),
-                        "close": close,
-                        "level": pend.level,
-                        "missing": missing,
-                        "note": note,
-                    }
-                )
-            else:
-                exp = expired.get(t)
-                if exp is None:
-                    continue
-                if w_last - self._week_id(t, exp["bar_idx"]) > expired_weeks:
-                    continue
-                rows.append(
-                    {
-                        "ticker": t,
-                        "sector": sector,
-                        "state": "EXPIRED",
-                        "cross_date": stock.df.index[exp["cross_bar"]],
-                        "n": confirm + 1,
-                        "score": _arm_score(stock, exp["cross_bar"]),
-                        "close": close,
-                        "level": None,
-                        "missing": [],
-                        "note": exp["reason"],
-                    }
-                )
-
+            rows.extend(self._scan_one_stock(stock, expired_weeks))
         self._pending, self.positions = saved_pending, saved_positions
         self.scan_meta = {
             "as_of": (
-                max(s.df.index[-1] for s in self.stocks)
-                if self.stocks else None
+                max(s.df.index[-1] for s in self.stocks) if self.stocks else None
             ),
             "scanned": len(self.stocks),
             "crosses_in_window": self._signals_generated,
             "expired_weeks": expired_weeks,
         }
         return rows
+
+    def _scan_one_stock(self, stock, expired_weeks: int = 6) -> list[dict]:
+        """Replay the trailing confirm window for ONE stock and classify it.
+
+        Shared by scan_latest (whole universe) and scan_ticker_v4 (single
+        ticker, the scanner app's live path). Expects _stock_map / regime
+        series to be set up; _pending must be the scan's fresh dict.
+        Returns 0 or 1 row (TRIGGERED / ARMED / EXPIRED).
+        """
+        confirm = int(self.settings["confirm_weeks"])
+        t = stock.ticker
+        expired: dict | None = None
+        first: dict | None = None
+
+        start = max(0, len(stock.df) - (confirm * 5 + 3))
+        for i in range(start, len(stock.df)):
+            day_i = stock.df.index[i]
+            regime_ok = self._regime_ok(day_i)
+            before = self._pending.get(t)
+            self._advance_pending(stock, i, day_i, regime_ok)
+            if before is not None and self._pending.get(t) is None:
+                w = self._week_id(t, i)
+                expired = {
+                    "cross_bar": before.bar_idx,
+                    "bar_idx": i,
+                    "reason": (
+                        "timeout" if w - before.w_idx > confirm else "bearish cross"
+                    ),
+                }
+            # Backtest parity: the first window week where every gate
+            # passes IS the entry (mirrors _try_entries' order —
+            # advance, then gates at the week end; n=0 at the arm bar
+            # fails n_window, so no same-bar false trigger).
+            pend = self._pending.get(t)
+            if pend is not None and first is None and self._week_ended(t, i):
+                _g, sr = self._entry_gates(stock, i, pend, regime_ok)
+                if sr is not None:
+                    first = {
+                        "bar_idx": i,
+                        "cross_bar": pend.bar_idx,
+                        "entry_date": stock.df.index[i],
+                        "n": self._week_id(t, i) - pend.w_idx,
+                        "score": float(sr["total"]),
+                        "level": pend.level,
+                    }
+
+        def _arm_score(bar_idx):
+            sr = compute_score_at_bar(stock, bar_idx, self.nifty_df, self.settings)
+            return float(sr["total"]) if sr else None
+
+        bar_idx = len(stock.df) - 1
+        # Gates evaluate at the last COMPLETED week — a mid-week run's
+        # latest bar has not closed its week yet.
+        eval_bar = bar_idx
+        while eval_bar > 0 and not self._week_ended(t, eval_bar):
+            eval_bar -= 1
+        w_last = self._week_id(t, eval_bar)
+        close = float(stock.df["close"].iloc[bar_idx])
+        sector = get_sector(t)
+        pend = self._pending.get(t)
+        cur_n = (
+            w_last - self._week_id(t, first["cross_bar"]) if first is not None else None
+        )
+        if first is not None and cur_n <= confirm:
+            # Backtest parity: the first window week where all gates
+            # passed — survives a later bear/timeout and a retrace.
+            # Only while the cross's confirm window still covers the
+            # scan date: a stale qualification falls through to
+            # EXPIRED/hidden, never a live Long.
+            note = (
+                "all gates OK"
+                if first["bar_idx"] == eval_bar
+                else f"qualified {first['entry_date']:%Y-%m-%d}"
+            )
+            return [
+                {
+                    "ticker": t,
+                    "sector": sector,
+                    "state": "TRIGGERED",
+                    "cross_date": stock.df.index[first["cross_bar"]],
+                    "n": cur_n,
+                    "score": first["score"],
+                    "close": close,
+                    "level": first["level"],
+                    "missing": [],
+                    "note": note,
+                }
+            ]
+        if pend is not None:
+            # A pass at eval_bar would have been recorded as `first`
+            # during the replay — this branch is ARMED-only.
+            n = w_last - pend.w_idx
+            regime_ok = self._regime_ok(stock.df.index[eval_bar])
+            g, _sr = self._entry_gates(stock, eval_bar, pend, regime_ok)
+            if not g["week_ended"]:
+                state, note = "ARMED", "awaiting weekly close"
+                missing = [k for k in _GATE_ORDER if not g[k]]
+            elif not g["n_window"]:
+                state, note = "ARMED", f"cross bar n={n}/{confirm}"
+                missing = [k for k in _GATE_ORDER if not g[k]]
+            elif not g["regime"]:
+                state, note = "ARMED", "NIFTY regime off"
+                missing = [k for k in _GATE_ORDER if not g[k]]
+            else:
+                state = "ARMED"
+                missing = [k for k in _GATE_ORDER if not g[k]]
+                note = "missing: " + ", ".join(_GATE_LABELS[k] for k in missing)
+            return [
+                {
+                    "ticker": t,
+                    "sector": sector,
+                    "state": state,
+                    "cross_date": stock.df.index[pend.bar_idx],
+                    "n": n,
+                    "score": _arm_score(pend.bar_idx),
+                    "close": close,
+                    "level": pend.level,
+                    "missing": missing,
+                    "note": note,
+                }
+            ]
+        if expired is None:
+            return []
+        if w_last - self._week_id(t, expired["bar_idx"]) > expired_weeks:
+            return []
+        return [
+            {
+                "ticker": t,
+                "sector": sector,
+                "state": "EXPIRED",
+                "cross_date": stock.df.index[expired["cross_bar"]],
+                "n": confirm + 1,
+                "score": _arm_score(expired["cross_bar"]),
+                "close": close,
+                "level": None,
+                "missing": [],
+                "note": expired["reason"],
+            }
+        ]
 
     # ── Exits (all modes) ────────────────────────────────────────────────────
 
@@ -943,6 +934,49 @@ class V2Engine(BacktestEngine):
                 )
 
 
+def scan_ticker_v4(
+    ticker: str,
+    df: pd.DataFrame,
+    index_df: pd.DataFrame | None,
+    settings: dict,
+    expired_weeks: int = 6,
+) -> dict | None:
+    """Live Weekly-V4 state for one ticker — the scanner app's V4 path.
+
+    Builds a single-stock engine context and replays the trailing confirm
+    window through the same _advance_pending / _entry_gates code the
+    backtest and ``--scan`` use. Returns the scan row (state / cross_date /
+    n / score / level / missing / note / close / sector) or None when the
+    stock has no recent V4 activity or too little history for the weekly
+    trigger (needs ~1.2y of daily bars).
+    """
+    eng = V2Engine(dict(settings))
+    stock = precompute_stock(ticker, df, eng.settings)
+    if stock is None or stock.weekly_df is None:
+        return None
+    eng.stocks = [stock]
+    eng._stock_map = {ticker: stock}
+    per = stock.df.index.to_period("W")
+    eng._rolls[ticker] = np.flatnonzero(np.asarray(per[1:] != per[:-1])) + 1
+    eng._periods[ticker] = per
+    w = stock.weekly_df
+    eng._w_atr[ticker] = atr_fn(
+        w["high"], w["low"], w["close"], int(eng.settings["atr_len"])
+    )
+    eng.nifty_df = (
+        precompute_nifty(index_df)
+        if index_df is not None and not index_df.empty
+        else None
+    )
+    # V4 arms only in a bull regime (spec A) — the scanner settings dict
+    # doesn't carry the backtest's index_regime_filter flag, so enable it
+    # here to match the documented strategy.
+    eng.settings["index_regime_filter"] = True
+    eng._regime_close, eng._regime_ema = eng._index_regime_gate()
+    rows = eng._scan_one_stock(stock, expired_weeks)
+    return rows[0] if rows else None
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -1014,7 +1048,8 @@ def print_scan(engine: V2Engine, rows: list[dict]) -> None:
     armed = [r for r in rows if r["state"] == "ARMED"]
     expired = [r for r in rows if r["state"] == "EXPIRED"]
     fill_note = (
-        f"buy-stop fill at level" if s["entry_trigger"] == "highbreak"
+        "buy-stop fill at level"
+        if s["entry_trigger"] == "highbreak"
         else "fill next open"
     )
 
@@ -1270,11 +1305,13 @@ def main():
     engine.print_report(metrics)
 
     if metrics.get("total_trades", 0) > 0:
-        from .backtest_report import generate_html_report, save_trades_csv
+        from .backtest_report import generate_backtest_report, save_trades_csv
 
         save_trades_csv(engine.trades, args.csv)
         if not args.no_html:
-            generate_html_report(engine, metrics, args.html or "Reports/backtest_v2_report.html")
+            generate_backtest_report(
+                engine, metrics, args.html or "Reports/backtest_v2_report.html"
+            )
 
 
 if __name__ == "__main__":

@@ -71,6 +71,9 @@ def settings():
             "slow_ma_len": 40,
             "crossover_lookback": 20,
             "vp_lookback": 50,  # keep VP window well under slice length
+            # Live scorer uses vp_weekly_lookback x 5 daily bars — pin it to
+            # the same 50-bar window so both scorers see the same POC.
+            "vp_weekly_lookback": 10,
             "adx_threshold": 20.0,
             "chop_threshold": 61.8,
             "flat_threshold": 0.5,

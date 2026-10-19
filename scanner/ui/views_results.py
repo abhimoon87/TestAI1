@@ -31,9 +31,11 @@ from .ui_kit import (
     FS_LG,
     FS_MD,
     FS_XS,
+    OPTIONAL_COLS,
     RADIUS_LG,
     RADIUS_MD,
     RADIUS_SM,
+    ROW_H,
     _border_all,
     _card_shadow,
     _margin_only,
@@ -75,16 +77,24 @@ def _row_specs(r, rank, c, threshold):
     trend_dir = r.get("trend_dir") or ""
     rating = r.get("combined_rating", "POOR")
     entry = bool(r.get("entry_signal"))
+    state = r.get("state")  # Weekly V4 rows: TRIGGERED / ARMED / EXPIRED
     above = bool(r.get("above_poc"))
     both_ma = bool(r.get("close_above_both_ma"))
     rsi_val = r.get("rsi_val")
     fund_pts = r.get("fundamentals", 0) or 0
+    if state == "TRIGGERED":
+        entry_text, entry_color = "YES", c["green"]
+    elif state == "ARMED":
+        entry_text, entry_color = "ARMED", c["orange"]
+    else:
+        entry_text = "YES" if entry else "--"
+        entry_color = c["green"] if entry else c["text_dim"]
     return [
         (str(rank), c["text_dim"]),
         (r.get("ticker", "?"), c["green"] if is_above else c["text"]),
         (f"{total:.0f}", score_color(total, c)),
         (rating, rating_color(rating, c)),
-        ("YES" if entry else "--", c["green"] if entry else c["text_dim"]),
+        (entry_text, entry_color),
         (f"₹{r.get('close', 0) or 0:.0f}", c["text"]),
         (None, None),  # MA cell — caller patches via _ma_text/_ma_color
         ("Above" if above else "Below", c["green"] if above else c["red"]),
@@ -121,6 +131,27 @@ def _row_specs(r, rank, c, threshold):
     ]
 
 
+def _entry_cell_tooltip(r) -> str | None:
+    """Tooltip for the ENTRY cell: Weekly-V4 detail when the row has a
+    state, else the daily gates that failed. Shared by row creation and
+    in-place updates so a live re-render never loses the detail."""
+    if r.get("state"):
+        tip = [f"V4: {r['state']}"]
+        if r.get("v4_cross_date"):
+            tip.append(f"cross {r['v4_cross_date']}")
+        if r.get("v4_n") is not None:
+            tip.append(f"{r['v4_n']}/15 bars")
+        if r.get("v4_level"):
+            tip.append(f"level {r['v4_level']:.1f}")
+        if r.get("v4_missing"):
+            tip.append("missing: " + ", ".join(r["v4_missing"]))
+        if r.get("v4_note"):
+            tip.append(str(r["v4_note"]))
+        return " · ".join(tip)
+    miss = r.get("entry_missing") or []
+    return "missing: " + ", ".join(miss) if miss else None
+
+
 class ResultsViewMixin:
     # ── Row control pool (performance optimisation) ─────────────────
     # Maps ticker → ft.Container (the outermost row wrapper).  When a
@@ -130,9 +161,28 @@ class ResultsViewMixin:
     # Maps ticker → list[ft.Text] (the 22 text cells in column order).
     _row_cells: dict[str, list[ft.Text]]
 
+    def _user_hidden(self) -> set[str]:
+        """Columns turned off in the Columns menu (lazy-init: the test
+        harness builds ScannerApp with ``__new__`` and never runs
+        ``__init__``)."""
+        if not hasattr(self, "user_hidden_cols"):
+            self.user_hidden_cols = set()
+        return self.user_hidden_cols
+
+    def _row_density(self) -> str:
+        """Active density preset name (unknown → Comfort)."""
+        name = getattr(self, "row_density", "comfort")
+        return name if name in ROW_H else "comfort"
+
+    def _row_h(self) -> int:
+        """Row height for the active density."""
+        return ROW_H[self._row_density()]
+
     def _hidden_cols(self) -> frozenset:
-        """Columns dropped at the current width tier (empty at wide)."""
-        return hidden_cols(getattr(self, "width_tier", "wide"))
+        """Columns dropped at the current width tier plus any the user hid."""
+        return hidden_cols(getattr(self, "width_tier", "wide")) | frozenset(
+            self._user_hidden()
+        )
 
     def _row_specs(self, r, rank, c, threshold):
         """Shared (text, color) pairs for the columns visible at this tier."""
@@ -393,14 +443,16 @@ class ResultsViewMixin:
                         f"{text}{arrow}",
                         size=10,
                         weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.with_opacity(0.55, color)
+                        color=ft.Colors.with_opacity(0.7, color)
                         if not is_sorted
                         else color,
                         text_align=ft.TextAlign.LEFT if idx in (0, 1) else None,
                         max_lines=1,
                         no_wrap=True,
                     ),
-                    expand=2 if idx == 1 else True,
+                    # Ticker + Rating are double-width (18 chars of
+                    # "EXCELLENT" clip at one share), rest flex equally.
+                    expand=2 if idx in (1, 3) else True,
                     on_click=lambda e, i=idx: self._on_sort(i),
                     tooltip=f"Sort by {text}",
                     ink=True,
@@ -411,9 +463,18 @@ class ResultsViewMixin:
             bgcolor=c["card2"],
             border_radius=RADIUS_MD,
             border=_border_all(1, c["border"]),
-            height=34,
+            height=self._row_h(),
             padding=_padding_only(left=6, right=6, top=4, bottom=4),
             margin=_margin_only(bottom=6),
+            # Pinned above the scrolling grid — a soft drop shadow keeps
+            # the seam readable while rows pass underneath.
+            shadow=[
+                ft.BoxShadow(
+                    blur_radius=8,
+                    offset=ft.Offset(0, 3),
+                    color=ft.Colors.with_opacity(0.35, ft.Colors.BLACK),
+                )
+            ],
         )
 
     # ── Active-filter chips (pinned section header) ───────────────────
@@ -674,6 +735,8 @@ class ResultsViewMixin:
         wash_for = {}
         if entry:
             wash_for[4] = ft.Colors.with_opacity(0.14, c["green"])
+        elif r.get("state") == "ARMED":
+            wash_for[4] = ft.Colors.with_opacity(0.10, c["orange"])
         wash_for[3] = {
             "EXCELLENT": ft.Colors.with_opacity(0.12, c["green"]),
             "GOOD": ft.Colors.with_opacity(0.09, c["lime"]),
@@ -685,8 +748,8 @@ class ResultsViewMixin:
         cell_texts = []
         for idx, (text, color, size, bold) in enumerate(cols):
             cell, txt = self._build_cell(text, color, size, bold)
-            # Match header: Ticker is double-width, rest flex equally
-            if idx == 1:
+            # Match header: Ticker + Rating are double-width.
+            if idx in (1, 3):
                 cell.expand = 2
             cell_texts.append(txt)
 
@@ -701,6 +764,9 @@ class ResultsViewMixin:
             if idx in wash_for and wash_for[idx] is not None:
                 cell.bgcolor = wash_for[idx]
                 cell.border_radius = 6
+            if idx == 4:
+                # Entry cell: V4 detail or failed daily gates (shared builder).
+                cell.tooltip = _entry_cell_tooltip(r)
             if idx == 1:
                 txt.text_align = ft.TextAlign.LEFT
                 txt.max_lines = 1
@@ -723,13 +789,16 @@ class ResultsViewMixin:
                     )
             cell_containers.append(cell)
 
-        # Sparkline
+        # Sparkline (the "1M" column) — skipped when the user hid it, so
+        # the cell count stays aligned with the header.
         px = [
             v
             for v in (r.get("px_tail") or [])
             if v is not None and isinstance(v, (int, float))
         ]
-        if len(px) >= 2:
+        if "1M" in hidden:
+            spark_cell = None
+        elif len(px) >= 2:
             spark_cell = self._make_sparkline(px, ticker, c)
         else:
             spark_cell = ft.Container(
@@ -738,9 +807,10 @@ class ResultsViewMixin:
                 ),
                 expand=True,
             )
-        spark_cell.on_click = lambda e, t=ticker: self._show_stock_detail(t)
-        spark_cell.tooltip = "Click for detail view"
-        cell_containers.append(spark_cell)
+        if spark_cell is not None:
+            spark_cell.on_click = lambda e, t=ticker: self._show_stock_detail(t)
+            spark_cell.tooltip = "Click for detail view"
+            cell_containers.append(spark_cell)
 
         if badge is not None:
             # Only the sentiment badge opens the news frame — ticker text
@@ -756,7 +826,7 @@ class ResultsViewMixin:
             bgcolor=bg,
             border_radius=RADIUS_SM,
             border=_border_all(1, c["border"]) if is_above else None,
-            height=34,
+            height=self._row_h(),
             padding=_padding_only(left=6, right=6),
             margin=_margin_only(bottom=1),
         )
@@ -818,6 +888,20 @@ class ResultsViewMixin:
             if isinstance(rail, ft.Container):
                 rail.bgcolor = accent
 
+        # ENTRY cell (idx 4) wash + V4 tooltip — pooled rows outlive scans,
+        # so a ticker can flip TRIGGERED/ARMED/clear between renders.
+        hidden = self._hidden_cols()
+        if "ENTRY" not in hidden:
+            entry_idx = [col for col in RESULT_COLS if col not in hidden].index("ENTRY")
+            entry_cell = row.content.controls[entry_idx]
+            if bool(r.get("entry_signal")):
+                entry_cell.bgcolor = ft.Colors.with_opacity(0.14, c["green"])
+            elif r.get("state") == "ARMED":
+                entry_cell.bgcolor = ft.Colors.with_opacity(0.10, c["orange"])
+            else:
+                entry_cell.bgcolor = None
+            entry_cell.tooltip = _entry_cell_tooltip(r)
+
         return True
 
     def _on_row_hover(self, container, base_bg, e):
@@ -859,6 +943,49 @@ class ResultsViewMixin:
             self._scroll_to_top()
 
         self._safe_update(_apply)
+
+    # ── Grid view toggles (Columns menu / Density menu) ──────────────
+
+    def _toggle_user_col(self, name: str) -> None:
+        """Show or hide an optional column from the Columns menu.
+
+        The visible cell count changes, so pooled rows are dropped and the
+        page is rebuilt instead of patched (``_update_row`` zips cells to
+        specs with ``strict=True``).
+        """
+        logger.info(
+            "_toggle_user_col: %s (hidden=%s)", name, sorted(self._user_hidden())
+        )
+        # Only tail columns may be toggled: the positional row specials at
+        # indexes 0/1/3/4/6 shift cells in _create_row_controls if hidden,
+        # and a column the window width already hides is out of the menu's
+        # hands — recording it would keep it hidden after a reflow to wide.
+        if name not in OPTIONAL_COLS or name in hidden_cols(
+            getattr(self, "width_tier", "wide")
+        ):
+            return
+        hidden = self._user_hidden()
+        if name in hidden:
+            hidden.discard(name)
+        else:
+            hidden.add(name)
+        self._apply_grid_layout()
+
+    def _set_density(self, name: str) -> None:
+        """Switch row density preset (row height is baked into pooled rows)."""
+        logger.info("_set_density: %s (was %s)", name, self._row_density())
+        if name not in ROW_H or name == self._row_density():
+            return
+        self.row_density = name
+        self._apply_grid_layout()
+
+    def _apply_grid_layout(self) -> None:
+        """Re-render after a layout toggle and persist both prefs."""
+        if hasattr(self, "_row_pool"):
+            self._row_pool.clear()
+        self._save_ui_prefs()
+        self._sync_menu_checks()
+        self._safe_update(self._render_current_page)
 
     def _get_sort_key(self, col_idx):
         rating_order = {"EXCELLENT": 4, "GOOD": 3, "MODERATE": 2, "POOR": 1, "WEAK": 0}
@@ -980,7 +1107,8 @@ class ResultsViewMixin:
 
     def _load_ui_prefs(self):
         """Re-apply the table prefs saved by the last session (sort column,
-        direction, page size and rating filter) after a fresh UI build."""
+        direction, page size, rating filter, density and hidden columns)
+        after a fresh UI build."""
         try:
             sc = self.settings.get("ui_sort_col")
             if isinstance(sc, int) and 0 <= sc < len(RESULT_COLS):
@@ -1001,11 +1129,22 @@ class ResultsViewMixin:
                 "POOR",
             ):
                 dd.value = rf.title() if rf != "ALL" else "All"
+            dens = self.settings.get("ui_density")
+            self.row_density = dens if dens in ROW_H else "comfort"
+            # Stale or renamed column names are dropped against the menu's
+            # allow-list, so a hand-edited prefs file can't desync the grid.
+            saved = {
+                n
+                for n in str(self.settings.get("ui_hidden_cols") or "").split(",")
+                if n
+            }
+            self.user_hidden_cols = saved & set(OPTIONAL_COLS)
         except Exception:
             logger.info("UI prefs restore failed", exc_info=True)
 
     def _save_ui_prefs(self):
-        """Persist current table view to settings (sort, size, filter).
+        """Persist current table view to settings (sort, size, filter,
+        density, hidden columns).
 
         Debounced on the page loop: column-header clicks fire a sort per
         click, and each save is a db write — coalesce bursts into one.
@@ -1019,6 +1158,8 @@ class ResultsViewMixin:
                 s["ui_sort_reverse"] = self.sort_reverse
                 s["ui_page_size"] = self.page_size
                 s["ui_rating_filter"] = self._rating_filter()
+                s["ui_density"] = self._row_density()
+                s["ui_hidden_cols"] = ",".join(sorted(self._user_hidden()))
                 # Late import: scanner.app imports this mixin at module load.
                 from ..backend.settings_store import save_settings
 
@@ -1694,7 +1835,7 @@ class ResultsViewMixin:
     def _make_scan_placeholder(self, headline="Scanning — fetching batches…"):
         """Animated shimmer skeleton shown in the results area during a scan."""
         c = self.theme_colors
-        skeleton_rows = [shimmer_row() for _ in range(8)]
+        skeleton_rows = [shimmer_row(row_height=self._row_h()) for _ in range(8)]
         spinner = ft.ProgressRing(width=36, height=36, stroke_width=3, color=c["green"])
         shimmer = ft.Shimmer(
             content=ft.Column(

@@ -7,10 +7,14 @@ scan, and header/row cell filtering that must stay aligned per tier.
 
 import flet as ft
 
+import scanner.backend.settings_store as store_mod
+import scanner.ui.app as app_mod
 from scanner.shared.constants import RESULT_COLS
 from scanner.tests.ui.conftest import make_app
 from scanner.ui.ui_kit import (
     COL_HIDE_ORDER,
+    OPTIONAL_COLS,
+    ROW_H,
     TIER_COMPACT,
     TIER_STANDARD,
     TIER_WIDE,
@@ -227,3 +231,134 @@ def test_resize_to_queued_tier_replaces_pending():
     app._apply_pending_width_tier()
     assert app.width_tier == TIER_STANDARD
     assert app._pending_tier is None
+
+
+# ── Columns menu + Density menu (grid view toggles) ─────────────────
+
+
+def test_optional_cols_menu_is_tail_only():
+    """The Columns menu never offers a positional row special."""
+    assert OPTIONAL_COLS == tuple(RESULT_COLS[9:])
+    assert {"1M", "Chop", "Volatility"} <= set(OPTIONAL_COLS)
+    assert not {"#", "Ticker", "ENTRY", "Rating", "MA"} & set(OPTIONAL_COLS)
+
+
+def test_user_hidden_columns_unite_with_tier_hides():
+    app = make_app()
+    c = app.theme_colors
+    app.user_hidden_cols = {"Chop"}
+
+    assert app._hidden_cols() == frozenset({"Chop"})
+    assert len(app._make_header_row(c).content.controls) == 18
+
+    app.width_tier = TIER_COMPACT  # tier drops six more on top
+    assert app._hidden_cols() == frozenset(COL_HIDE_ORDER) | {"Chop"}
+
+
+def test_toggle_user_col_guards_and_invalidates_pool():
+    app = make_app()
+    c = app.theme_colors
+    app._debounce = lambda *a, **k: None
+    app._row_pool = {"STALE": object()}
+
+    app._toggle_user_col("Ticker")  # positional special → refused
+    assert app._user_hidden() == set() and app._row_pool
+
+    app.width_tier = TIER_COMPACT
+    app._toggle_user_col("Chop")  # tier already hides it → refused
+    assert app._user_hidden() == set() and app._row_pool
+
+    app.width_tier = TIER_WIDE
+    app._toggle_user_col("Chop")  # hides it and drops pooled rows
+    assert app._user_hidden() == {"Chop"} and not app._row_pool
+    assert len(app._make_header_row(c).content.controls) == 18
+
+    app._toggle_user_col("Chop")  # toggle back restores the column
+    assert app._user_hidden() == set()
+    assert len(app._make_header_row(c).content.controls) == 19
+
+
+def test_density_switch_changes_row_and_header_height():
+    app = make_app()
+    c = app.theme_colors
+    app._debounce = lambda *a, **k: None
+
+    assert app._row_density() == "comfort"
+    assert app._row_h() == ROW_H["comfort"] == 34
+    app.row_density = "compact"
+    assert app._row_h() == 27
+    assert app._make_header_row(c).height == 27
+
+    app.row_density = "sunset"  # unknown preset falls back to Comfort
+    assert app._row_density() == "comfort" and app._row_h() == 34
+
+    app.row_density = "comfort"
+    app._row_pool = {"STALE": object()}
+    app._set_density("comfort")  # no-op leaves pooled rows alone
+    assert app._row_pool
+
+    app._set_density("compact")  # height is baked into pooled rows
+    assert app.row_density == "compact" and not app._row_pool
+
+
+def test_hiding_1m_drops_sparkline_so_cells_align_with_header():
+    """Column 18 draws its own cell — hiding it must drop both sides."""
+    app = make_app()
+    c = app.theme_colors
+    app.user_hidden_cols = {"1M"}
+
+    header = app._make_header_row(c)
+    row = app._create_row_controls(
+        {**_ROW, "px_tail": [1.0, 2.0, 3.0]}, 1, c, c["card"], 50
+    )
+
+    assert len(header.content.controls) == 18
+    assert len(row.content.controls) == 18
+    assert len(app._row_cells["TCS"]) == 18  # spec pairs, sparkline excluded
+
+
+def test_menu_checkmarks_follow_state_in_place():
+    """Checks are stamped onto the *existing* items: rebuilding the items
+    list reassigns control ids, and the open menu then dispatches taps
+    against the stale ids (handler never fires)."""
+    app = make_app()
+    app._debounce = lambda *a, **k: None
+    app._build_ui()
+    items = app.density_menu.items
+
+    app._set_density("compact")
+
+    assert app.density_menu.items is items  # never replaced
+    assert [i.checked for i in items] == [False, True]  # Comfort off
+
+    app.user_hidden_cols = {"Chop"}
+    app._sync_menu_checks()
+    chop = next(i for i in app.columns_menu.items if i.content.value == "Chop")
+    assert chop.checked is False
+
+
+def test_density_and_hidden_cols_round_trip_through_prefs(monkeypatch):
+    app = make_app()
+    app._debounce = lambda key, delay, fn: fn()  # run the save inline
+    app.row_density = "compact"
+    app.user_hidden_cols = {"Chop", "ADX"}
+    written = {}
+    monkeypatch.setattr(store_mod, "save_settings", lambda s: written.update(s))
+
+    app._save_ui_prefs()
+
+    assert written["ui_density"] == "compact"
+    assert written["ui_hidden_cols"] == "ADX,Chop"
+
+    app.settings = {
+        **app_mod.DEFAULT_SETTINGS,
+        "ui_density": "compact",
+        "ui_hidden_cols": "Chop,NotAColumn",
+    }
+    app._load_ui_prefs()
+    assert app.row_density == "compact"
+    assert app.user_hidden_cols == {"Chop"}  # unknown name dropped
+
+    app.settings = {**app_mod.DEFAULT_SETTINGS, "ui_density": "sunset"}
+    app._load_ui_prefs()
+    assert app.row_density == "comfort"
