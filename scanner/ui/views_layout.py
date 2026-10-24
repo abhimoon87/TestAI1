@@ -24,7 +24,6 @@ from .ui_kit import (
     FS_HERO,
     FS_LG,
     FS_XL,
-    FS_XS,
     OPTIONAL_COLS,
     RADIUS_LG,
     RADIUS_MD,
@@ -33,13 +32,20 @@ from .ui_kit import (
     ROW_H,
     _border_all,
     _card_shadow,
+    _deep_shadow,
     _glass_bg,
     _glass_border,
     _margin_only,
     _neon_glow,
     _padding_only,
+    depth,
+    glow,
+    grad_v,
     score_color,
     themed_dropdown,
+)
+from .ui_kit import (
+    label as micro_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,9 +124,9 @@ class LayoutViewMixin:
             width=44,
             height=44,
             border_radius=22,
-            bgcolor=c["purple"],
+            gradient=grad_v(["#34d399", "#059669"]),
             alignment=Alignment.CENTER,
-            shadow=_neon_glow(c["purple"], blur=16),
+            shadow=_deep_shadow(),
         )
 
         rail_items = ft.Column(
@@ -209,13 +215,24 @@ class LayoutViewMixin:
 
         def section(t):
             return ft.Container(
-                content=ft.Text(
-                    t.upper(),
-                    size=FS_XS,
-                    weight=ft.FontWeight.BOLD,
-                    color=c["text_dim"],
+                content=ft.Row(
+                    [
+                        micro_label(t, c["text_dim"]),
+                        ft.Container(expand=True),
+                        ft.Container(
+                            width=36,
+                            height=1,
+                            gradient=grad_v(
+                                [c["border_light"], c["border"]],
+                                begin=(0.0, 0.0),
+                                end=(1.0, 0.0),
+                            ),
+                        ),
+                    ],
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8,
                 ),
-                padding=_padding_only(left=16, top=14, bottom=4),
+                padding=_padding_only(left=16, top=14, right=16, bottom=4),
             )
 
         def field(ctrl):
@@ -301,12 +318,24 @@ class LayoutViewMixin:
             if self._motion_reduced():
                 return
             try:
-                self.action_btn.scale = 1.03 if e.data == "true" else 1.0
-                self.action_btn.update()
+                hover = e.data == "true"
+                self.action_btn.scale = 1.03 if hover else 1.0
+                self._run_glow_box.shadow = glow(
+                    c["glow_emerald"],
+                    blur=30 if hover else 16,
+                    spread=0 if hover else -2,
+                )
+                self._run_glow_box.update()
             except Exception:
                 logger.info("Run button hover failed", exc_info=True)
 
         self.action_btn.on_hover = _run_hover
+        self._run_glow_box = ft.Container(
+            content=self.action_btn,
+            border_radius=RADIUS_LG,
+            shadow=glow(c["glow_emerald"], blur=16, spread=-2),
+            animate_scale=ANIM_FAST,
+        )
         self.progress_bar = ft.ProgressBar(
             height=6,
             color=c["progress_fg"],
@@ -416,7 +445,7 @@ class LayoutViewMixin:
 
         bottom = ft.Column(
             controls=[
-                self.action_btn,
+                self._run_glow_box,
                 self.progress_bar,
                 self.progress_label,
                 self._cache_card(
@@ -443,7 +472,7 @@ class LayoutViewMixin:
                 expand=True,
             ),
             width=SIDE_W,
-            bgcolor=c["side_bg"],
+            gradient=grad_v(["#0c1310", "#090f0c"]),
             border=ft.Border(right=ft.BorderSide(1, c["border"])),
         )
 
@@ -524,6 +553,8 @@ class LayoutViewMixin:
             border_color=c["border"],
             border_width=1,
             border_radius=18,
+            focused_border_color=c["green"],
+            focused_border_width=1,
             prefix_icon=ft.Icons.SEARCH,
             suffix=ft.IconButton(
                 icon=ft.Icons.CLOSE,
@@ -580,8 +611,9 @@ class LayoutViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             height=56,
-            bgcolor=c["panel_bg"],
-            border=ft.Border(bottom=ft.BorderSide(1, c["border"])),
+            blur=ft.Blur(12, 12),
+            bgcolor=ft.Colors.with_opacity(0.82, c["panel_bg"]),
+            border=ft.Border(bottom=ft.BorderSide(1, c["border_light"])),
             padding=_padding_only(left=16, right=14),
         )
 
@@ -590,6 +622,7 @@ class LayoutViewMixin:
             size=FS_HERO,
             weight=ft.FontWeight.BOLD,
             color=c["hero_title"],
+            style=ft.TextStyle(letter_spacing=0.3),
         )
         self.hero_sub = ft.Text(
             "Set your universe on the left, then RUN SCAN — HMA×EMA crossover • 10-factor score • news sentiment",
@@ -621,7 +654,9 @@ class LayoutViewMixin:
             width=MARKET_BOX_W,
             border_radius=RADIUS_LG,
             border=_border_all(1, c["border_light"]),
-            bgcolor=c["card2"],
+            blur=ft.Blur(10, 10),
+            bgcolor=ft.Colors.with_opacity(0.78, c["card2"]),
+            shadow=_card_shadow(),
             padding=_padding_only(left=16, right=16, top=8, bottom=8),
             visible=False,
         )
@@ -655,13 +690,30 @@ class LayoutViewMixin:
             content=ft.Row(
                 controls=[
                     ft.Container(
-                        content=ft.Column(
+                        content=ft.Stack(
                             controls=[
-                                self.hero_text_col,
-                                ft.Container(height=10),
-                                self.market_strip,
+                                # Positioned wash: fills whatever size the
+                                # non-positioned content column defines.
+                                ft.Container(
+                                    left=0,
+                                    top=0,
+                                    right=0,
+                                    bottom=0,
+                                    gradient=ft.LinearGradient(
+                                        begin=Alignment.CENTER_LEFT,
+                                        end=Alignment.CENTER_RIGHT,
+                                        colors=c["hero_sweep"],
+                                    ),
+                                ),
+                                ft.Column(
+                                    controls=[
+                                        self.hero_text_col,
+                                        ft.Container(height=10),
+                                        self.market_strip,
+                                    ],
+                                    spacing=0,
+                                ),
                             ],
-                            spacing=0,
                         ),
                         gradient=ft.LinearGradient(
                             begin=Alignment.CENTER_LEFT,
@@ -669,7 +721,8 @@ class LayoutViewMixin:
                             colors=c["hero_grad"],
                         ),
                         border_radius=RADIUS_XL,
-                        shadow=_card_shadow(),
+                        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+                        shadow=depth(),
                         padding=_padding_only(left=28, right=20, top=18, bottom=14),
                         expand=True,
                     ),
@@ -708,10 +761,10 @@ class LayoutViewMixin:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
             ),
-            bgcolor=_glass_bg(),
+            gradient=grad_v(c["grad_surface"]),
             border=_glass_border(),
             border_radius=RADIUS_LG,
-            shadow=_card_shadow(),
+            shadow=depth(),
             padding=_padding_only(left=16, right=16, top=8, bottom=8),
         )
 
@@ -849,10 +902,10 @@ class LayoutViewMixin:
         )
         self.pagination_bar = ft.Container(
             content=self.pagination_row,
-            bgcolor=_glass_bg(),
+            gradient=grad_v(c["grad_surface"]),
             border=_glass_border(),
             border_radius=RADIUS_LG,
-            shadow=_card_shadow(),
+            shadow=depth(),
             padding=_padding_only(left=12, right=12, top=7, bottom=7),
             margin=_margin_only(left=6, right=6, top=10, bottom=14),
             visible=False,
@@ -995,28 +1048,30 @@ class LayoutViewMixin:
                 color=color,
                 animate_opacity=ANIM_FAST,
             )
-            self.summary_cards[key] = val_label
-            pill = ft.Container(
+            self.summary_cards[key] = val_labelpill = ft.Container(
                 content=ft.Row(
                     [
-                        ft.Text(
-                            label,
-                            size=FS_XS,
-                            weight=ft.FontWeight.BOLD,
-                            color=c["text_faint"],
+                        ft.Container(
+                            width=6,
+                            height=6,
+                            border_radius=3,
+                            gradient=grad_v(                                [color, ft.Colors.with_opacity(0.35, color)]
+                            ),
                         ),
+                        micro_label(label, c["text_faint"]),
                         val_label,
                     ],
-                    spacing=5,
+                    spacing=6,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 bgcolor=_glass_bg(),
                 border=_glass_border(),
                 border_radius=RADIUS_SM,
                 padding=_padding_only(left=10, right=10, top=5, bottom=5),
+                shadow=_card_shadow(),
             )
-            pill.on_hover = lambda e, p=pill: self._on_card_hover(e, p)
-            pills.append(pill)
+            val_labelpill.on_hover = lambda e, p=val_labelpill: self._on_card_hover(e, p)
+            pills.append(val_labelpill)
         return ft.Row(
             pills, spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER
         )
@@ -1029,13 +1084,7 @@ class LayoutViewMixin:
             if e.data == "true":
                 card.scale = ft.Scale(1.04)
                 card.opacity = 0.92
-                card.shadow = [
-                    ft.BoxShadow(
-                        blur_radius=32,
-                        color=ft.Colors.with_opacity(0.65, ft.Colors.BLACK),
-                        spread_radius=2,
-                    )
-                ]
+                card.shadow = glow(self.theme_colors["glow_emerald"], blur=32, spread=0)
             else:
                 card.scale = ft.Scale(1.0)
                 card.opacity = 1.0
@@ -1048,15 +1097,23 @@ class LayoutViewMixin:
         c = self.theme_colors
 
         avatar = ft.Container(
-            content=ft.Text(
-                "ABHI", size=13, weight=ft.FontWeight.BOLD, color=c["avatar_text"]
+            content=ft.Container(
+                content=ft.Text(
+                    "ABHI", size=13, weight=ft.FontWeight.BOLD, color=c["avatar_text"]
+                ),
+                width=50,
+                height=50,
+                border_radius=25,
+                bgcolor=c["avatar_bg"],
+                alignment=Alignment.CENTER,
             ),
             width=54,
             height=54,
             border_radius=27,
-            bgcolor=c["avatar_bg"],
-            border=_border_all(2, c["avatar_border"]),
+            gradient=grad_v(["#34d399", "#0d9488"]),
             alignment=Alignment.CENTER,
+            padding=2,
+            shadow=_neon_glow(c["avatar_border"], blur=14),
         )
 
         self.status_label = ft.Text("Status: Ready", size=10, color=c["text_dim"])
@@ -1073,18 +1130,11 @@ class LayoutViewMixin:
         self.log_view = ft.Container(
             content=self.log_column,
             expand=True,
-            bgcolor=c["panel_bg"],
+            gradient=grad_v(["#0d1512", "#0a100d"]),
             border=_border_all(1, c["border"]),
             border_radius=RADIUS_LG,
             padding=10,
-            shadow=[
-                ft.BoxShadow(
-                    blur_radius=14,
-                    spread_radius=-2,
-                    offset=ft.Offset(0, 3),
-                    color=ft.Colors.with_opacity(0.4, ft.Colors.BLACK),
-                )
-            ],
+            shadow=depth(),
         )
         self.log_clear_btn = ft.TextButton(
             content=ft.Text("Clear", size=10),
@@ -1122,15 +1172,11 @@ class LayoutViewMixin:
                 ft.Container(
                     content=ft.Row(
                         [
-                            ft.Text(
-                                "Top Picks",
-                                size=12,
-                                weight=ft.FontWeight.BOLD,
-                                color=c["text"],
-                            ),
-                            ft.Text("top 5", size=10, color=c["text_dim"]),
+                            micro_label("Top Picks", c["text_dim"], size=12),
+                            ft.Text("top 5", size=10, color=c["text_faint"]),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     padding=_padding_only(left=16, right=16, top=10, bottom=4),
                 ),
@@ -1141,14 +1187,9 @@ class LayoutViewMixin:
                 ft.Container(
                     content=ft.Row(
                         [
-                            ft.Text(
-                                "Recent Activity",
-                                size=12,
-                                weight=ft.FontWeight.BOLD,
-                                color=c["text"],
-                            ),
+                            micro_label("Recent Activity", c["text_dim"], size=12),
                             ft.Container(expand=True),
-                            ft.Text("live log", size=10, color=c["text_dim"]),
+                            ft.Text("live log", size=10, color=c["text_faint"]),
                             self.log_clear_btn,
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1168,7 +1209,7 @@ class LayoutViewMixin:
         return ft.Container(
             content=panel_content,
             width=RIGHT_W,
-            bgcolor=c["side_bg"],
+            gradient=grad_v(["#0c1310", "#090f0c"]),
             border=ft.Border(left=ft.BorderSide(1, c["border"])),
         )
 
@@ -1232,7 +1273,12 @@ class LayoutViewMixin:
                             width=28,
                             height=28,
                             border_radius=RADIUS_LG,
-                            bgcolor=c["card2"],
+                            gradient=grad_v(
+                                [
+                                    ft.Colors.with_opacity(0.4, color),
+                                    ft.Colors.with_opacity(0.15, color),
+                                ]
+                            ),
                             alignment=Alignment.CENTER,
                         ),
                         ft.Column(
@@ -1365,9 +1411,9 @@ class LayoutViewMixin:
                 spacing=7,
                 vertical_alignment=ft.CrossAxisAlignment.BASELINE,
             ),
-            bgcolor=c["chip_neutral"],
+            bgcolor=ft.Colors.with_opacity(0.14, move_color),
             border_radius=RADIUS_MD,
-            border=_border_all(1, c["border_light"]),
+            border=_border_all(1, ft.Colors.with_opacity(0.35, move_color)),
             padding=_padding_only(left=14, right=14, top=7, bottom=7),
             tooltip=f"{q['label']} · day change",
         )

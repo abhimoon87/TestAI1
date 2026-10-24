@@ -12,16 +12,13 @@ THEMES = {
     "dark": {
         # Base surfaces — deep black-green (canvas pulled down so the
         # elevated cards read as lifted rather than flush)
-        "root_bg": "#070b09",
         "rail_bg": "#050806",
-        "side_bg": "#0b120f",
         "main_bg": "#070b09",
         "panel_bg": "#0f1714",
         # Cards / rows — slightly elevated surfaces, brighter hairlines so
         # panels separate from the canvas without a heavier fill
         "card": "#16211b",
         "card2": "#1b2c24",
-        "card_hover": "#203529",
         "border": "#23392e",
         "border_light": "#315646",
         "row_alt": "#0b1210",
@@ -32,16 +29,12 @@ THEMES = {
         "text_faint": "#5a7a6a",
         # Accents — emerald / teal family + supporting hues
         "purple": "#10b981",
-        "purple_hover": "#34d399",
-        "purple_muted": "#052e16",
         "pink": "#a78bfa",
         "cyan": "#14b8a6",
-        "cyan_dim": "#0f766e",
         "green": "#10b981",
         "lime": "#a3e635",
         "orange": "#fb923c",
         "red": "#f87171",
-        "red_hover": "#ef4444",
         "blue": "#2dd4bf",
         "yellow": "#facc15",
         "neon": "#10b981",
@@ -50,14 +43,9 @@ THEMES = {
         "hero_value": "#ffffff",
         # Controls
         "option_bg": "#1a2a22",
-        "option_btn": "#1f3328",
         "option_drop": "#152019",
-        "entry_bg": "#152019",
-        "entry_border": "#1f3328",
-        "entry_focus": "#10b981",
         "progress_bg": "#1a2a22",
         "progress_fg": "#10b981",
-        "nav_active": "#1a2a22",
         "chip_good": "#0b2f2e",
         "chip_bad": "#3a1519",
         "chip_neutral": "#1a2a22",
@@ -73,6 +61,13 @@ THEMES = {
         "avatar_bg": "#052e16",
         "avatar_text": "#6ee7b7",
         "avatar_border": "#10b981",
-        "shadow": "#0000008c",
+        # ── Report-parity depth tokens (spike-verified) ──────────────
+        # Surface gradients (top → bottom) for cards / grid header
+        "grad_surface": ["#1b2c24", "#141e19"],
+        "grad_header": ["#1f3229", "#15221c"],
+        # Hero sweep overlay: emerald .22 → teal .08 → transparent
+        "hero_sweep": ["#10b98138", "#0d948814", "#0a0f0c00"],
+        # Glow shadow (premultiplied alpha hex)
+        "glow_emerald": "#10b98159",
     },
 }

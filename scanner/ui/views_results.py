@@ -12,6 +12,7 @@ and on the controls created by ``LayoutViewMixin._build_main_area``
 
 import asyncio
 import logging
+import os
 import threading
 import time
 
@@ -40,6 +41,8 @@ from .ui_kit import (
     _card_shadow,
     _margin_only,
     _padding_only,
+    glow,
+    grad_v,
     hidden_cols,
     rating_color,
     score_color,
@@ -275,6 +278,7 @@ class ResultsViewMixin:
                     row = self._create_row_controls(r, rank, c, row_bg, threshold)
                 new_controls.append(row)
             self.table_column.controls = new_controls
+            self._stagger_rows(new_controls)
 
             logger.info(
                 "_render_current_page POOLED DONE: table_ctrls=%d, shown=%d, results=%d",
@@ -376,6 +380,7 @@ class ResultsViewMixin:
                             r.get("ticker", "?"),
                             exc_info=True,
                         )
+                self._stagger_rows(list(self.table_column.controls))
 
         # ── Shared tail: pagination + summary/hero/chart ──────────────
         show_bar = bool(shown and len(shown) > page_size)
@@ -424,6 +429,44 @@ class ResultsViewMixin:
             len(results),
         )
 
+    def _stagger_rows(self, rows) -> None:
+        """Batched fade-in for freshly rendered rows (report's rise feel).
+
+        Flet animations have no delay field, so the stagger is three fixed
+        opacity batches on daemon timers rather than 150 per-row timers.
+        Skipped under reduce_motion, mid-scan (streaming re-renders would
+        flicker every batch), and in pytest (timers would race
+        update_calls asserts in tests).
+        """
+        if (
+            not rows
+            or self.scanning
+            or self._motion_reduced()
+            or "PYTEST_CURRENT_TEST" in os.environ
+        ):
+            return
+        try:
+            first = list(rows[:30])
+            for row in first:
+                row.opacity = 0.0
+                row.animate_opacity = ANIM_NORMAL
+            batch = max(1, len(first) // 3)
+            for i in range(0, len(first), batch):
+                chunk = first[i : i + batch]
+                delay = 0.05 * (i // batch)
+
+                def _reveal(chunk=chunk):
+                    # Timer threads cannot page.update() directly — Flet
+                    # drops it and rows stay at opacity=0. Marshal via
+                    # _safe_update (UI thread + single push).
+                    self._safe_update(
+                        lambda c=chunk: [setattr(r, "opacity", 1.0) for r in c]
+                    )
+
+                threading.Timer(delay, _reveal).start()
+        except Exception:
+            logger.info("Row stagger failed", exc_info=True)
+
     def _make_header_row(self, c):
         headers = []
         hidden = self._hidden_cols()
@@ -449,6 +492,7 @@ class ResultsViewMixin:
                         text_align=ft.TextAlign.LEFT if idx in (0, 1) else None,
                         max_lines=1,
                         no_wrap=True,
+                        style=ft.TextStyle(letter_spacing=0.6),
                     ),
                     # Ticker + Rating are double-width (18 chars of
                     # "EXCELLENT" clip at one share), rest flex equally.
@@ -460,9 +504,9 @@ class ResultsViewMixin:
             )
         return ft.Container(
             content=ft.Row(controls=headers, spacing=2),
-            bgcolor=c["card2"],
+            gradient=grad_v(c["grad_header"]),
             border_radius=RADIUS_MD,
-            border=_border_all(1, c["border"]),
+            border=_border_all(1, c["border_light"]),
             height=self._row_h(),
             padding=_padding_only(left=6, right=6, top=4, bottom=4),
             margin=_margin_only(bottom=6),
@@ -473,7 +517,13 @@ class ResultsViewMixin:
                     blur_radius=8,
                     offset=ft.Offset(0, 3),
                     color=ft.Colors.with_opacity(0.35, ft.Colors.BLACK),
-                )
+                ),
+                ft.BoxShadow(
+                    blur_style=ft.BlurStyle.INNER,
+                    blur_radius=4,
+                    offset=ft.Offset(0, 1),
+                    color=ft.Colors.with_opacity(0.08, ft.Colors.WHITE),
+                ),
             ],
         )
 
@@ -672,7 +722,7 @@ class ResultsViewMixin:
             elements=list(elements),
             paint=ft.Paint(
                 color=spark_color,
-                stroke_width=1.5,
+                stroke_width=1.8,
                 style=ft.PaintingStyle.STROKE,
                 stroke_cap=ft.StrokeCap.ROUND,
             ),
@@ -682,7 +732,7 @@ class ResultsViewMixin:
             Path.LineTo(W, H),
             Path.LineTo(0, H),
         ]
-        fill_color = ft.Colors.with_opacity(0.15, spark_color)
+        fill_color = ft.Colors.with_opacity(0.22, spark_color)
         fill_path = Path(
             elements=fill_elements,
             paint=ft.Paint(
@@ -826,6 +876,7 @@ class ResultsViewMixin:
             bgcolor=bg,
             border_radius=RADIUS_SM,
             border=_border_all(1, c["border"]) if is_above else None,
+            shadow=_card_shadow() if is_above else None,
             height=self._row_h(),
             padding=_padding_only(left=6, right=6),
             margin=_margin_only(bottom=1),
@@ -837,6 +888,7 @@ class ResultsViewMixin:
         row.on_click = lambda e, t=ticker: self._show_stock_detail(t)
         row.tooltip = "Click for detail view"
         row._base_bg = bg
+        row._above = is_above
 
         # Register in pool
         if not hasattr(self, "_row_pool"):
@@ -879,6 +931,8 @@ class ResultsViewMixin:
             c["card"] if is_above else (c["row_alt"] if rank % 2 else c["main_bg"])
         )
         row.border = _border_all(1, c["border"]) if is_above else None
+        row.shadow = glow(c["glow_emerald"], blur=12, spread=-2) if is_above else None
+        row._above = is_above
 
         # Update accent rail color (first cell's inner Row → first control)
         rank_cell = row.content.controls[0]
@@ -912,7 +966,8 @@ class ResultsViewMixin:
             if now_ms - last < 80:
                 return
             self._hover_last_ms = now_ms
-            hover_bg = self.theme_colors["row_hover"]
+            c = self.theme_colors
+            hover_bg = c["row_hover"]
             is_hover = e.data == "true"
             if not is_hover and getattr(container, "_pool_ticker", None) == getattr(
                 self, "_kb_ticker", None
@@ -920,6 +975,14 @@ class ResultsViewMixin:
                 container.bgcolor = hover_bg  # keep keyboard selection
             else:
                 container.bgcolor = hover_bg if is_hover else base_bg
+            if is_hover:
+                container.shadow = _soft_glow(c["glow_emerald"], blur=20, spread=0)
+            else:
+                container.shadow = (
+                    _card_shadow()
+                    if getattr(container, "_above", False)
+                    else None
+                )
             container.scale = ft.Scale(1.005) if is_hover else ft.Scale(1.0)
             container.animate_scale = ANIM_FAST
             container.update()

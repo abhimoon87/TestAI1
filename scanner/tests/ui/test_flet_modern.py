@@ -192,7 +192,9 @@ def test_toast_sets_snackbar_and_updates():
     assert len(app.page.shown) == 1
     bar = app.page.shown[0]
     assert isinstance(bar, ft.SnackBar)
-    assert bar.content.value == "Scan complete — 5 results"
+    assert isinstance(bar.content, ft.Row)
+    text = bar.content.controls[1]
+    assert text.value == "Scan complete — 5 results"
     assert bar.open is True
     assert app.page.update_calls == before + 1
 
@@ -200,7 +202,7 @@ def test_toast_sets_snackbar_and_updates():
 def test_toast_error_uses_white_text():
     app = _ready_app()
     app._toast("boom", "error")
-    assert app.page.shown[0].content.color == "#ffffff"
+    assert app.page.shown[0].content.controls[1].color == "#ffffff"
 
 
 # ── Sidebar collapse + keyboard ───────────────────────────────────────
@@ -443,3 +445,46 @@ def test_watchlist_import_rejects_empty_file(tmp_path):
     )
     assert len(app.page.shown) == before + 1  # error toast shown
     assert "WATCHLIST (" not in str(getattr(app.universe_dd, "value", ""))
+
+
+# ── Report-parity depth helpers (spike-verified) ──────────────────────
+
+
+def test_grad_v_builds_vertical_linear_gradient():
+    import flet as ft
+
+    from scanner.ui.ui_kit import grad_v
+
+    g = grad_v(["#1b2c24", "#141e19"])
+    assert isinstance(g, ft.LinearGradient)
+    assert g.colors == ["#1b2c24", "#141e19"]
+    assert (g.begin.x, g.begin.y) == (0.0, 0.0)
+    assert (g.end.x, g.end.y) == (0.0, 1.0)
+
+
+def test_depth_has_drop_shadow_plus_inset_highlight():
+    import flet as ft
+
+    from scanner.ui.ui_kit import depth
+
+    shadows = depth()
+    assert len(shadows) == 2
+    assert shadows[0].blur_style == ft.BlurStyle.NORMAL
+    assert shadows[1].blur_style == ft.BlurStyle.INNER
+
+
+def test_label_uppercases_with_letter_spacing():
+
+    from scanner.ui.ui_kit import label
+
+    t = label("Scan Results", "#8ca89a")
+    assert t.value == "SCAN RESULTS"
+    assert t.style.letter_spacing == 1.1
+
+
+def test_theme_depth_tokens_exist():
+    from scanner.shared.themes import THEMES
+
+    c = THEMES["dark"]
+    for key in ("grad_surface", "grad_header", "hero_sweep", "glow_emerald"):
+        assert key in c, key

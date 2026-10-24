@@ -15,7 +15,7 @@ from flet.controls.alignment import Alignment
 
 from ..shared.constants import score_of as _score_of
 from ..shared.detail_specs import SCORE_CATS
-from .ui_kit import RADIUS_LG, _border_all, _padding_only, score_color
+from .ui_kit import RADIUS_LG, _border_all, _padding_only, depth, glow, score_color
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,24 @@ def build_score_histogram(
                     paint=ft.Paint(color=color, style=ft.PaintingStyle.FILL),
                 )
             )
+            # Gloss strip across the bar top — fake gradient (canvas
+            # Paint.gradient kills the render tree in Flet 1.0.4).
+            if bar_h >= 10:
+                shapes.append(
+                    Path(
+                        elements=[
+                            Path.MoveTo(x0 + r + 1, y0),
+                            Path.LineTo(x1 - r - 1, y0),
+                            Path.LineTo(x1 - r - 1, y0 + 2),
+                            Path.LineTo(x0 + r + 1, y0 + 2),
+                            Path.Close(),
+                        ],
+                        paint=ft.Paint(
+                            color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE),
+                            style=ft.PaintingStyle.FILL,
+                        ),
+                    )
+                )
 
         # Count label: inside tall bars (keeps the top band clear for
         # the threshold tag), above the bar when it's too short.
@@ -119,6 +137,7 @@ def build_score_histogram(
                     color=c["main_bg"] if inside else color,
                     left=x0 + (x1 - x0) / 2 - 6,
                     top=y0 + 2 if inside else y0 - 16,
+                    style=ft.TextStyle(letter_spacing=0.4),
                 )
             )
 
@@ -188,9 +207,16 @@ def build_score_histogram(
             tooltip="Click a bar to set min score",
         )
 
-    return ft.Container(
-        content=content,
-    )
+    container = ft.Container(content=content)
+
+    def _hover(e):
+        container.shadow = (
+            glow(c["glow_emerald"], blur=14, spread=0) if e.data == "true" else None
+        )
+        container.update()
+
+    container.on_hover = _hover
+    return container
 
 
 # ── Price Line Chart ────────────────────────────────────────────────
@@ -293,6 +319,7 @@ def build_price_chart(
         border_radius=RADIUS_LG,
         border=_border_all(1, c.get("border", "#1f3328")),
         padding=_padding_only(left=2, right=2, top=2, bottom=2),
+        shadow=depth(),
     )
     if title:
         return ft.Container(
@@ -403,4 +430,5 @@ def build_score_breakdown(
         border_radius=RADIUS_LG,
         border=_border_all(1, c.get("border", "#1f3328")),
         padding=_padding_only(left=4, right=4, top=4, bottom=4),
+        shadow=depth(),
     )

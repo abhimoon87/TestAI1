@@ -218,6 +218,8 @@ class SettingsViewMixin:
                 border_color=c["border"],
                 border_width=1,
                 border_radius=RADIUS_MD,
+                focused_border_color=c["green"],
+                focused_border_width=1,
                 content_padding=_padding_only(left=12, right=10, top=8, bottom=8),
             )
         ctrl._settings_key = key

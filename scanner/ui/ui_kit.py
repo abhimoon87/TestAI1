@@ -1,9 +1,9 @@
 """Shared Flet UI primitives for the HMAxEMA scanner GUI.
 
 Pure control-construction helpers (no ScannerApp state) that are used by
-``scanner.app`` and by the view-builder mixins in ``views_layout``,
-``views_results`` and ``views_settings``. The command-palette matching
-(``fuzzy_score`` / ``filter_actions`` / ``PaletteAction``) is deliberately
+scanner.app and by the view-builder mixins in views_layout,
+views_results and views_settings. The command-palette matching
+(fuzzy_score / filter_actions / PaletteAction) is deliberately
 toolkit-free so it stays unit-testable without a page.
 """
 
@@ -26,6 +26,8 @@ RADIUS_SM = 6  # chips, washes, rows, small cards
 RADIUS_MD = 10  # inputs, dropdowns, medium cards
 RADIUS_LG = 14  # cards, panels, buttons
 RADIUS_XL = 16  # hero, large shells
+RADIUS_XXL = 20  # extra-large panels / details
+RADIUS_XXXL = 24  # heroic panels / splash screens
 
 # ── Font-size roles (named scale; ad-hoc sizes predate this) ────────
 # Used by restyled surfaces — a full sweep of every ``size=`` literal
@@ -57,7 +59,6 @@ def width_tier(w) -> str:
         if w >= cut:
             return tier
     return TIER_COMPACT
-
 
 # Columns dropped as the window narrows, in hide order (tail of
 # RESULT_COLS only — the positional row specials at indexes 0/1/3/4/6
@@ -115,6 +116,18 @@ def _glass_bg() -> str:
     return ft.Colors.with_opacity(0.065, ft.Colors.WHITE)
 
 
+def _glass_card() -> ft.LinearGradient:
+    """Frosted-glass gradient for card backgrounds."""
+    return ft.LinearGradient(
+        begin=ft.Offset(0.0, 0.0),
+        end=ft.Offset(0.0, 1.0),
+        colors=[
+            ft.Colors.with_opacity(0.08, ft.Colors.WHITE),
+            ft.Colors.with_opacity(0.02, ft.Colors.WHITE),
+        ],
+    )
+
+
 def _glass_border() -> ft.Border:
     side = ft.BorderSide(width=1, color=ft.Colors.with_opacity(0.12, ft.Colors.WHITE))
     return ft.Border(top=side, bottom=side, left=side, right=side)
@@ -132,8 +145,104 @@ def _card_shadow() -> list[ft.BoxShadow]:
     ]
 
 
+def _deep_shadow() -> list[ft.BoxShadow]:
+    """Deeper, softer shadow for pronounced card lift."""
+    return [
+        ft.BoxShadow(
+            blur_radius=48,
+            spread_radius=-6,
+            offset=ft.Offset(0, 12),
+            color=ft.Colors.with_opacity(0.7, ft.Colors.BLACK),
+        ),
+        ft.BoxShadow(blur_radius=64, spread_radius=-8, color="#10b9811a"),
+    ]
+
+
+def _soft_glow(color: str, blur: int = 26, spread: int = -4) -> list[ft.BoxShadow]:
+    """Subtle offset glow for interactive elements."""
+    return [ft.BoxShadow(blur_radius=blur, spread_radius=spread, offset=ft.Offset(0, 6), color=color)]
+
+
 def _neon_glow(color: str, blur: int = 12) -> list[ft.BoxShadow]:
     return [ft.BoxShadow(blur_radius=blur, color=color)]
+
+
+# ── Report-parity depth helpers (Flet 1.0.4, spike-verified) ────────
+# Canvas Paint.gradient crashes the render tree — gradients live on
+# Containers only. letter_spacing rides TextStyle, not Text directly.
+
+
+def grad_v(colors: list[str], begin=(0.0, 0.0), end=(0.0, 1.0)) -> ft.LinearGradient:
+    """Linear gradient for card/header surfaces (vertical by default)."""
+    return ft.LinearGradient(
+        begin=ft.Offset(begin[0], begin[1]),
+        end=ft.Offset(end[0], end[1]),
+        colors=colors,
+    )
+
+
+def depth(color: str = "#00000052") -> list[ft.BoxShadow]:
+    """Drop shadow + inset top highlight — the report's lifted-card look."""
+    return [
+        ft.BoxShadow(
+            blur_radius=26,
+            spread_radius=-4,
+            offset=ft.Offset(0, 8),
+            color=color,
+        ),
+        ft.BoxShadow(
+            blur_style=ft.BlurStyle.INNER,
+            blur_radius=6,
+            offset=ft.Offset(0, 1),
+            color=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
+        ),
+    ]
+
+
+def glow(color: str, blur: int = 26, spread: int = -4) -> list[ft.BoxShadow]:
+    """Offset glow shadow (hover cards, RUN button, bars, gauges)."""
+    return [
+        ft.BoxShadow(
+            blur_radius=blur,
+            spread_radius=spread,
+            offset=ft.Offset(0, 6),
+            color=color,
+        )
+    ]
+
+
+def _inner_glow(color: str, blur: int = 12) -> list[ft.BoxShadow]:
+    """Inner glow for pressed/active states."""
+    return [
+        ft.BoxShadow(
+            blur_style=ft.BlurStyle.INNER,
+            blur_radius=blur,
+            offset=ft.Offset(0, 0),
+            color=color,
+        ),
+    ]
+
+
+def _press_shadow(color: str = "#00000033", blur: int = 12) -> list[ft.BoxShadow]:
+    """Shadow for pressed/active button feedback."""
+    return [
+        ft.BoxShadow(
+            blur_radius=blur,
+            spread_radius=-2,
+            offset=ft.Offset(0, 3),
+            color=color,
+        ),
+    ]
+
+
+def label(text: str, color: str, size: int = FS_XS) -> ft.Text:
+    """Tracked uppercase micro-label (report ``th`` / section-label voice)."""
+    return ft.Text(
+        str(text).upper(),
+        style=ft.TextStyle(
+            size=size, weight=ft.FontWeight.W_700, color=color, letter_spacing=1.1
+        ),
+    )
 
 
 def _padding_only(
@@ -229,7 +338,7 @@ def fuzzy_score(query: str, text: str) -> float | None:
         nxt = t.find(ch, pos)
         if nxt == -1:
             return None
-        if nxt == 0 or t[nxt - 1] in " _-/":
+        if nxt == 0 or t[nxt - 1] in " _-/\:":
             boundary_hits += 2.0
         total_gap += nxt - pos
         pos = nxt + 1

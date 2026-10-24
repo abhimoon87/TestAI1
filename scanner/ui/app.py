@@ -490,13 +490,22 @@ class ScannerApp(
         def _show():
             c = self.theme_colors
             if kind == "success":
-                bg, fg = c["green"], c["on_accent"]
+                bg, fg, accent = c["green"], c["on_accent"], c["on_accent"]
             elif kind == "error":
-                bg, fg = c["red"], "#ffffff"
+                bg, fg, accent = c["red"], "#ffffff", "#ffffff"
             else:
-                bg, fg = c["card2"], c["text"]
+                bg, fg, accent = c["card2"], c["text"], c["cyan"]
             bar = ft.SnackBar(
-                content=ft.Text(str(msg), color=fg, size=13),
+                content=ft.Row(
+                    [
+                        ft.Container(
+                            width=4, height=26, border_radius=2, bgcolor=accent
+                        ),
+                        ft.Text(str(msg), color=fg, size=13, expand=True),
+                    ],
+                    spacing=10,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
                 bgcolor=bg,
                 shape=ft.RoundedRectangleBorder(radius=RADIUS_MD),
                 open=True,
@@ -649,6 +658,8 @@ class ScannerApp(
             border_color=c["border"],
             border_width=1,
             border_radius=RADIUS_MD,
+            focused_border_color=c["green"],
+            focused_border_width=1,
         )
         results_col = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO, height=300)
         state = {"actions": self._palette_actions(), "shown": []}
