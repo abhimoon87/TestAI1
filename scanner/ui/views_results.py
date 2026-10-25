@@ -976,7 +976,7 @@ class ResultsViewMixin:
             else:
                 container.bgcolor = hover_bg if is_hover else base_bg
             if is_hover:
-                container.shadow = _soft_glow(c["glow_emerald"], blur=20, spread=0)
+                container.shadow = glow(c["glow_emerald"], blur=20, spread=0)
             else:
                 container.shadow = (
                     _card_shadow()
