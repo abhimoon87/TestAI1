@@ -407,7 +407,7 @@ def _css_block() -> str:
                         background: radial-gradient(130% 240% at 100% -50%, rgba(255,255,255,0.11), transparent 55%); }
     .hero-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
     .hero-text { min-width: 0; }
-    .hero-title { font-size: 19px; font-weight: 700; color: #ffffff; letter-spacing: -0.02em; line-height: 1.25;
+    .hero-title { font-size: 21px; font-weight: 700; color: #ffffff; letter-spacing: -0.025em; line-height: 1.22;
                   background: linear-gradient(92deg, #ffffff 25%, #a7f3d0 100%); -webkit-background-clip: text;
                   background-clip: text; -webkit-text-fill-color: transparent; }
     .hero-sub { color: rgba(209,250,229,0.85); font-size: 12px; margin-top: 4px; letter-spacing: 0.01em; }
@@ -486,12 +486,12 @@ def _css_block() -> str:
     .stat::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 3px;
                     background: linear-gradient(180deg, var(--accent, var(--green)), transparent 92%); opacity: 0.95; }
     .stat.green { --accent: var(--green); } .stat.lime { --accent: var(--lime); } .stat.cyan { --accent: var(--cyan); } .stat.orange { --accent: var(--orange); } .stat.red { --accent: var(--red); }
-    .stat .num { position: relative; flex: none; font-family: var(--mono); font-size: 1.4em; font-weight: 700; line-height: 1; text-align: left; color: var(--accent, var(--text));
-                 font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+    .stat .num { position: relative; flex: none; font-family: var(--mono); font-size: 1.75em; font-weight: 700; line-height: 1; text-align: left; color: var(--accent, var(--text));
+                 font-variant-numeric: tabular-nums; letter-spacing: -0.04em;
                  text-shadow: 0 0 18px color-mix(in srgb, var(--accent, var(--green)) 45%, transparent); }
-    .stat-meta { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .stat .label { color: var(--text-dim); font-size: 0.6em; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-    .stat .sub { color: var(--text-faint); font-size: 0.6em; }
+    .stat-meta { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .stat .label { color: var(--text-dim); font-size: 0.66em; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
+    .stat .sub { color: var(--text-faint); font-size: 0.68em; letter-spacing: 0.01em; }
     .filters { margin-bottom: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
                background: var(--glass); border: 1px solid var(--border); padding: 10px 14px; border-radius: var(--radius);
                backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
@@ -527,11 +527,25 @@ def _css_block() -> str:
                     animation: rise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) 0.18s both; }
     .results-title { font-size: 16px; font-weight: 700; color: var(--text); letter-spacing: -0.015em; }
     .results-title::before { content: '›'; color: var(--green); margin-right: 8px; font-weight: 400; }
-    .cb { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer;
-          transition: color .15s; }
-    .cb:hover { color: var(--text); }
-    .cb:has(input:checked) { color: var(--green); }
-    .cb input { width: 14px; height: 14px; margin: 0; accent-color: var(--green); cursor: pointer; }
+    /* Toggles: pill chips with a custom check — keeps the native input
+       (id/handler are load-bearing for tests + filterTable), only its look. */
+    .cb { display: inline-flex; align-items: center; gap: 7px; font-size: 10.5px; font-weight: 600;
+          color: var(--text-dim); cursor: pointer; background: rgba(0,0,0,0.26);
+          border: 1px solid var(--border); padding: 5px 11px 5px 8px; border-radius: 99px;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.24);
+          transition: color .15s, background .15s, border-color .15s, transform .1s, box-shadow .15s; }
+    .cb:hover { color: var(--text); border-color: var(--border-light);
+                box-shadow: 0 5px 14px rgba(0,0,0,0.34); transform: translateY(-1px); }
+    .cb:active { transform: scale(0.97); }
+    .cb:has(input:checked) { color: var(--green); background: rgba(52,211,153,0.12);
+                             border-color: rgba(52,211,153,0.45);
+                             box-shadow: 0 0 0 1px rgba(52,211,153,0.16), 0 5px 16px rgba(16,185,129,0.18); }
+    .cb input { appearance: none; -webkit-appearance: none; width: 13px; height: 13px; margin: 0; flex: none;
+                cursor: pointer; background: rgba(0,0,0,0.35); border: 1.5px solid var(--border-light);
+                border-radius: 4px; transition: background .15s, border-color .15s, box-shadow .15s; }
+    .cb:hover input { border-color: var(--green); }
+    .cb input:checked { border-color: var(--green); box-shadow: 0 0 8px rgba(16,185,129,0.55);
+                        background: var(--green) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='9' viewBox='0 0 24 24' fill='none' stroke='%23052e22' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'><path d='M20 6 9 17l-5-5'/></svg>") no-repeat center; }
     .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
     .filter-chip { background: rgba(52,211,153,0.10); border: 1px solid rgba(52,211,153,0.35); border-radius: 99px;
                    padding: 3px 10px; font-family: inherit; font-size: 10px; font-weight: 700; color: var(--green);
@@ -578,11 +592,16 @@ def _css_block() -> str:
               box-shadow: 1px 0 0 var(--row-line); }
     td.rank::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0;
                       background: var(--rail, transparent); box-shadow: 0 0 10px var(--rail, transparent); }
-    td.ticker { position: sticky; left: 52px; z-index: 2; background: inherit; box-shadow: 1px 0 0 var(--row-line); }
+    td.ticker { position: sticky; left: 52px; z-index: 2; background: inherit; box-shadow: 1px 0 0 var(--row-line);
+                padding-right: 26px; }  /* room for the absolute copy button */
     .ticker { color: var(--text); font-weight: 700; cursor: pointer; font-size: 12.5px; letter-spacing: 0.01em; }
     .ticker.above { color: var(--green); text-shadow: 0 0 14px rgba(16,185,129,0.35); }
     .ticker:hover { color: var(--ticker-hover-c); text-decoration: none; background: var(--ticker-hover-bg); border-radius: 5px; }
-    .copy-t { background: none; border: 0; padding: 0 0 0 5px; color: var(--text-faint); font-size: 10px; cursor: pointer;
+    /* Copy pinned to the ticker cell's right edge, vertically centred —
+       app parity (Row: expand ticker + badge + copy). Absolute works because
+       td.ticker is position: sticky, i.e. already a positioned ancestor. */
+    .copy-t { position: absolute; right: 6px; top: 0; bottom: 0; display: inline-flex; align-items: center;
+              background: none; border: 0; padding: 0; color: var(--text-faint); font-size: 10px; cursor: pointer;
               transition: color .14s, transform .14s; }
     .copy-t:hover { color: var(--green); transform: scale(1.18); }
     /* Score — colour-graded pill so strength reads at a glance */
@@ -596,8 +615,11 @@ def _css_block() -> str:
     .rating.r-moderate { color: var(--orange); background: linear-gradient(135deg, rgba(251,146,60,0.20), rgba(251,146,60,0.07)); box-shadow: 0 0 0 1px rgba(251,146,60,0.26); }
     .rating.r-poor { color: var(--red); background: linear-gradient(135deg, rgba(248,113,113,0.20), rgba(248,113,113,0.07)); box-shadow: 0 0 0 1px rgba(248,113,113,0.26); }
     .entry { border-radius: 7px; color: var(--text-dim); font-weight: 600; letter-spacing: 0.04em; }
-    .entry.yes { color: #052e22; font-weight: 800; background: linear-gradient(135deg, #34d399, #10b981);
-                 box-shadow: 0 3px 12px rgba(16,185,129,0.45); }
+    /* Glossy raised chip: top highlight + bottom shade beat a flat slab for depth. */
+    .entry.yes { color: #04150f; font-weight: 800; letter-spacing: 0.07em;
+                 background: linear-gradient(180deg, #6ee7b7 0%, #34d399 42%, #10b981 100%);
+                 box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -3px 8px rgba(4,21,15,0.20),
+                             0 4px 14px rgba(16,185,129,0.32); }
     .price { font-size: 12.5px; font-weight: 700; font-family: var(--mono); letter-spacing: -0.02em; }
     .bull { color: var(--green); font-weight: 600; }
     .bear { color: var(--red); font-weight: 600; }

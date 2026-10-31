@@ -450,25 +450,54 @@ class TestMaText:
         app = _make_app()
         assert (
             app._ma_text(
-                _row(ma_crossed_above=True, crossover_bars_ago=3, crossover_count=1)
+                _row(
+                    ma_crossed_above=True,
+                    ma_bullish=True,
+                    crossover_bars_ago=3,
+                    crossover_count=1,
+                )
             )
-            == "^ X3"
+            == "^ Bull · X3"
         )
         assert (
             app._ma_text(
-                _row(ma_crossed_above=True, crossover_bars_ago=3, crossover_count=2)
+                _row(
+                    ma_crossed_above=True,
+                    ma_bullish=True,
+                    crossover_bars_ago=3,
+                    crossover_count=2,
+                )
             )
-            == "^ X3(2)"
+            == "^ Bull · X3(2)"
         )
         assert app._ma_text(_row(ma_bullish=True)) == "^ Bull"
         assert app._ma_text(_row()) == "v Bear"
+        # Stale bullish cross, death cross since → bear state wins the word.
+        assert (
+            app._ma_text(_row(ma_crossed_above=True, crossover_bars_ago=10))
+            == "v Bear · X10"
+        )
 
     def test_ma_color_uses_theme(self):
         app = _make_app()
         c = app.theme_colors
-        assert app._ma_color(_row(ma_crossed_above=True)) == c["green"]
+        assert (
+            app._ma_color(
+                _row(
+                    ma_crossed_above=True,
+                    ma_bullish=True,
+                    crossover_bars_ago=3,
+                )
+            )
+            == c["green"]
+        )
         assert app._ma_color(_row(ma_bullish=True)) == c["lime"]
         assert app._ma_color(_row()) == c["red"]
+        # Stale cross on a bear row must not paint green.
+        assert (
+            app._ma_color(_row(ma_crossed_above=True, crossover_bars_ago=10))
+            == c["red"]
+        )
 
 
 class TestDataRowColoring:

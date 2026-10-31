@@ -285,7 +285,7 @@ class TestGenerateHtmlReport:
     def test_ma_cross_signal(self):
         results = [_make_score_result(ma_crossed_above=True, crossover_bars_ago=2)]
         html = generate_html_report(results, fetch_news=False)
-        assert "^ X2" in html  # shared ma_chip text, not the old "^ CROSS" pill
+        assert "^ Bull · X2" in html  # shared ma_chip text, state word + age
 
     def test_sideways_label(self):
         results = [

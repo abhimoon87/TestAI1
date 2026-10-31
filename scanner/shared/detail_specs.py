@@ -17,14 +17,21 @@ def fmt_pct(v) -> str:
 
 
 def ma_chip(r: dict) -> tuple[str, str]:
-    """(text, color role) for the MA signal: crossover / bull / bear."""
-    if r.get("ma_crossed_above"):
-        ago = r.get("crossover_bars_ago", -1)
+    """(text, color role) for the MA signal: state word first (Bull/Bear),
+    crossover age appended as a suffix so one vocabulary covers the column.
+
+    Color: green = bullish with a fresh cross, lime = bullish only,
+    red = bear (even when a stale bullish cross exists — the cross lost)."""
+    bull = bool(r.get("ma_bullish"))
+    text, role = ("^ Bull", "lime") if bull else ("v Bear", "red")
+    ago = r.get("crossover_bars_ago", -1) if r.get("ma_crossed_above") else -1
+    if ago >= 0:  # guards the impossible -1 a partial row can carry
         cnt = r.get("crossover_count") or 0
-        return (f"^ X{ago}({cnt})" if cnt > 1 else f"^ X{ago}"), "green"
-    if r.get("ma_bullish"):
-        return "^ Bull", "lime"
-    return "v Bear", "red"
+        age = f"X{ago}({cnt})" if cnt > 1 else f"X{ago}"
+        text = f"{text} · {age}"
+        if bull:
+            role = "green"
+    return text, role
 
 
 def spark_move(r: dict) -> float:
