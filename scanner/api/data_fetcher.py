@@ -36,7 +36,9 @@ class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """
 
     def _adjust_thread_count(self):
-        # Identical to the base class, but sets daemon=True *before* start().
+        # Mirror of the base class, but sets daemon=True *before* start().
+        # Branches on CPython 3.14's ThreadPoolExecutor refactor: the worker
+        # signature went (..., initializer, initargs) -> (..., ctx, work_queue).
         if self._idle_semaphore.acquire(timeout=0):
             return
 
@@ -46,15 +48,24 @@ class _DaemonThreadPoolExecutor(ThreadPoolExecutor):
         num_threads = len(self._threads)
         if num_threads < self._max_workers:
             thread_name = f"{self._thread_name_prefix or self}_{num_threads}"
-            t = threading.Thread(
-                name=thread_name,
-                target=_worker,
-                args=(
-                    weakref.ref(self, weakref_cb),
+            worker_ref = weakref.ref(self, weakref_cb)
+            if hasattr(self, "_create_worker_context"):  # Python >= 3.14
+                worker_args = (
+                    worker_ref,
+                    self._create_worker_context(),
+                    self._work_queue,
+                )
+            else:  # Python <= 3.13
+                worker_args = (
+                    worker_ref,
                     self._work_queue,
                     self._initializer,
                     self._initargs,
-                ),
+                )
+            t = threading.Thread(
+                name=thread_name,
+                target=_worker,
+                args=worker_args,
                 daemon=True,
             )
             t.start()

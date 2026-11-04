@@ -1444,3 +1444,29 @@ class TestBseBoPass:
         assert self._bo_calls(mock_yf) == [["BSETST.BO"]]
         mock_membership.assert_not_called()
         mock_fb.assert_not_called()  # full recovery — NSE fallback not needed
+
+
+class TestDaemonThreadPoolExecutor:
+    """_adjust_thread_count mirrors CPython private internals that changed
+    in 3.14 (worker args: initializer/initargs -> WorkerContext); these pin
+    the contract on whatever interpreter runs the suite."""
+
+    def test_submit_returns_result_and_spawns_daemon_worker(self):
+        ex = data_fetcher._DaemonThreadPoolExecutor(max_workers=1)
+        try:
+            assert ex.submit(lambda: 6 * 7).result(timeout=10) == 42
+            (thread,) = ex._threads
+            assert thread.daemon is True
+        finally:
+            ex.shutdown(wait=False)
+
+    def test_initializer_runs_on_worker(self):
+        # The 3.14 crash was the initializer attributes vanishing — this
+        # exercises that path directly on both interpreter generations.
+        ex = data_fetcher._DaemonThreadPoolExecutor(
+            max_workers=1, initializer=lambda: None, initargs=()
+        )
+        try:
+            assert ex.submit(lambda: "ok").result(timeout=10) == "ok"
+        finally:
+            ex.shutdown(wait=False)
