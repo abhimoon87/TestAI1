@@ -12,6 +12,7 @@ from scanner.api import data_fetcher
 from scanner.backend import scanner_engine
 from scanner.backend.scanner_engine import (
     ScannerEngine,
+    ScanResult,
     _build_scan_warnings,
     _enrich_rows_in_place,
     _find_stale_members,
@@ -488,6 +489,8 @@ class TestCancelPropagation:
             return {}
 
         engine = ScannerEngine()
+        logs: list[str] = []
+        engine._log = logs.append  # capture wording without touching scan.log
         holder = {}
 
         def worker():
@@ -515,6 +518,33 @@ class TestCancelPropagation:
         assert result.error is None
         assert result.cancelled is True  # regression: used to be False
         assert result.results == []
+        # Cancelled tickers were never tried — the summary must not claim
+        # the providers failed for them (either message).
+        assert any("stopped early" in m for m in logs)
+        assert any("not fetched" in m for m in logs)
+        assert not any("unavailable on all providers" in m for m in logs)
+
+    def test_finalize_without_cancel_keeps_unavailable_wording(self):
+        """Guard the other branch: with no stop requested, missing tickers
+        really are provider failures and must still be reported as such."""
+        engine = ScannerEngine()
+        logs: list[str] = []
+        engine._log = logs.append
+
+        engine._finalize_scan(
+            ScanResult(),
+            dict(DEFAULT_SETTINGS),
+            ["AAA", "BBB"],
+            [],
+            0,
+            0,
+            {"Bull": 0, "Bear": 0},
+            "All",
+            batch_data={},
+            scan_label="Stream Scan Complete",
+        )
+        assert any("2 tickers unavailable on all providers" in m for m in logs)
+        assert not any("not fetched" in m for m in logs)
 
     def test_scan_stream_cancel_between_chunks_keeps_partial_results(self):
         """Cancel landing after a chunk was already streamed keeps those

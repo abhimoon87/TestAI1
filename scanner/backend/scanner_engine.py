@@ -869,10 +869,18 @@ class ScannerEngine:
             missing_final = [t for t in tickers if t not in batch_data]
             self._log(f"  Total tickers: {len(tickers)} | fetched: {len(batch_data)}")
             if missing_final:
-                self._log(
-                    f"  \u26a0 {len(missing_final)} tickers unavailable on all providers "
-                    "(yfinance, jugaad-data, nselib, marketlens)"
-                )
+                if self._cancel_event.is_set():
+                    # Stopped mid-download: the rest were never tried, so
+                    # don't blame the providers.
+                    self._log(
+                        f"  \u26a0 {len(missing_final)} tickers not fetched "
+                        "(scan stopped before their batches finished)"
+                    )
+                else:
+                    self._log(
+                        f"  \u26a0 {len(missing_final)} tickers unavailable on all providers "
+                        "(yfinance, jugaad-data, nselib, marketlens)"
+                    )
         else:
             self._log(f"  Total stocks:  {len(tickers)}")
         self._log(f"  Filtered out:  {filtered_out}")
@@ -1283,10 +1291,16 @@ class ScannerEngine:
                 ),
             )
             if len(batch_data) < len(tickers):
-                self._log(
-                    f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched "
-                    f"({len(tickers) - len(batch_data)} unavailable on all providers)"
-                )
+                if self._cancel_event.is_set():
+                    self._log(
+                        f"Batch download stopped early: "
+                        f"{len(batch_data)}/{len(tickers)} stocks fetched"
+                    )
+                else:
+                    self._log(
+                        f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched "
+                        f"({len(tickers) - len(batch_data)} unavailable on all providers)"
+                    )
             else:
                 self._log(
                     f"Batch download complete: {len(batch_data)}/{len(tickers)} stocks fetched"

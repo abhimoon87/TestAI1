@@ -23,7 +23,7 @@ There's a dark-themed GUI built with Flet, an interactive CLI, and a headless en
 
 ## Installation
 
-Needs **Python 3.11+** (tested through 3.14).
+Needs **Python 3.11+** (tested through 3.15).
 
 ```bash
 pip install -r scanner/requirements.txt
