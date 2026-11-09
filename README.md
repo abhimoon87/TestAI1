@@ -44,7 +44,7 @@ The GUI also needs a display server.
 
 In the GUI, pick a universe, timeframe (Daily/Weekly/Monthly), data period, an optional trend filter, and a min score threshold, then hit RUN SCAN. Results stream into the table as they arrive — click a header to sort, use the search box to filter, and export HTML or CSV from the top bar. The Import watchlist button scans your own ticker list straight from a CSV/TXT file, and every news panel has a copy button for its ticker.
 
-Whatever you choose is saved to `scanner/settings.json`.
+Whatever you choose is saved to `scanner/scanner.db` (the settings store).
 
 If you live on the keyboard: `Ctrl+K` opens the command palette, `Ctrl+R` runs or stops a scan, `Ctrl+1/2` switches views, `Ctrl+E` exports HTML, `Ctrl+S` saves settings, and `/` jumps to the search box. Snackbars confirm when scans, exports, audits and backtests finish, the rail collapses the sidebar, and double-clicking a ticker opens its news and sentiment.
 
@@ -224,4 +224,4 @@ Test files live in `scanner/tests/`; external APIs are mocked for the offline su
 - **GUI fails to start** — check `AppLog/trace.log` for the import error.
 - **Scan returns few/no stocks** — check `AppLog/scan.log` and `AppLog/trace.log`. If Yahoo is rate-limiting, the batch fallback (jugaad-data/nselib/marketlens) kicks in automatically; if every provider fails, the ticker is skipped and reported.
 - **No data for a specific stock** — BSE-only symbols without NSE listings may be unavailable from the free providers.
-- **Reset everything** — Settings: delete `scanner/settings.json`. Cache: Settings → "Clear Cache" in the GUI, or delete `scanner/.cache/`.
+- **Reset everything** — Settings: delete `scanner/scanner.db` (resets settings and clears scan history). Cache: Settings → "Clear Cache" in the GUI, or delete `scanner/.cache/`.

@@ -69,7 +69,8 @@ def fetch_article(url: str) -> str | None:
     if cached:
         return cached
     out = run_channel(
-        ["curl", "-s", "--max-time", "15", f"https://r.jina.ai/{url}"],
+        # -f: non-2xx exits 22, so error pages are never cached as articles.
+        ["curl", "-s", "-f", "--max-time", "15", f"https://r.jina.ai/{url}"],
         timeout=20,
     )
     if not out or not out.strip():

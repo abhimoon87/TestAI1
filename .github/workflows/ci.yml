@@ -23,11 +23,16 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.14+ changed ThreadPoolExecutor internals (see _DaemonThreadPoolExecutor);
+        # the app ships on 3.15, so that branch must run in CI too.
+        python-version: ["3.11", "3.15"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - run: |
           pip install -r scanner/requirements.txt
@@ -43,7 +48,7 @@ jobs:
           --cov-fail-under=50
       - uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-report-${{ matrix.python-version }}
           path: coverage.xml
           if-no-files-found: ignore
 

@@ -91,3 +91,14 @@ def test_threads_use_own_connection_shared_file():
     t.start()
     t.join()
     assert out == ["main"]
+
+
+def test_close_all_connections_clears_cache_and_conn_still_usable():
+    conn = db.get_conn()
+    assert threading.get_ident() in db._conns
+    db._close_all_connections()
+    assert db._conns == {}
+    # A later get_conn transparently opens a fresh, working connection.
+    fresh = db.get_conn()
+    assert fresh is not conn
+    assert fresh.execute("SELECT 1").fetchone()[0] == 1

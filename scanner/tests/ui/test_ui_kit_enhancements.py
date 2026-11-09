@@ -4,25 +4,12 @@ Tests the new shadow presets, glow effects, gradient helpers, and
 font/radius constants added for the modern UI enhancements.
 """
 
-from scanner.tests.ui.conftest import make_app as _make_app
 from scanner.ui.ui_kit import (
-    ANIM_FAST,
-    ANIM_NORMAL,
-    COL_HIDE_ORDER,
-    FS_2XL,
-    FS_BASE,
     FS_HERO,
-    FS_LG,
-    FS_MD,
     FS_XL,
     FS_XS,
-    OPTIONAL_COLS,
     RADIUS_XXL,
     RADIUS_XXXL,
-    RADIUS_LG,
-    RADIUS_MD,
-    RADIUS_SM,
-    ROW_H,
     _card_shadow,
     _deep_shadow,
     _glass_bg,
@@ -37,12 +24,9 @@ from scanner.ui.ui_kit import (
     fuzzy_score,
     glow,
     grad_v,
-    hidden_cols,
     label,
     rating_color,
     score_color,
-    shimmer_cell,
-    shimmer_row,
     themed_dropdown,
     width_tier,
 )
@@ -135,7 +119,6 @@ class TestShadowPresets:
 
     def test_inner_glow_returns_list(self):
         """_inner_glow should return a list of BoxShadow with INNER blur style."""
-        from flet import BoxShadow
         shadows = _inner_glow("#10b981")
         assert isinstance(shadows, list)
         assert len(shadows) == 1

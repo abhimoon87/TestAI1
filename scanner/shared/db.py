@@ -15,6 +15,7 @@ writers (scan thread, settings save) queue instead of failing.
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
@@ -79,6 +80,22 @@ def get_conn() -> sqlite3.Connection:
             _create_schema(conn)
             _bootstrapped.add(path)
         return conn
+
+
+def _close_all_connections() -> None:
+    """Release every cached connection (process exit — see atexit below)."""
+    with _lock:
+        for conn in _conns.values():
+            try:
+                conn.close()
+            except Exception:
+                logger.debug("Closing db connection failed", exc_info=True)
+        _conns.clear()
+
+
+# Connections are per-thread and nothing else ever closes them; without this
+# a weeks-long session accumulates idle sqlite handles.
+atexit.register(_close_all_connections)
 
 
 def _create_schema(conn: sqlite3.Connection) -> None:
