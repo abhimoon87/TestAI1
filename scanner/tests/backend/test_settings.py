@@ -297,6 +297,17 @@ def test_list_scans_empty_history_returns_empty(tmp_path, monkeypatch):
     assert store_mod.list_scans() == []
 
 
+def test_list_scans_skips_empty_scans(tmp_path, monkeypatch):
+    """'Clear results' persists an empty scan — it must not appear in history."""
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "out.json"))
+    store_mod.save_results([{"ticker": "KEEP"}])
+    store_mod.save_results([])  # what the Clear results button writes
+
+    scans = store_mod.list_scans()
+    assert [s["rows"] for s in scans] == [1]
+    assert store_mod.load_results(scan_id=scans[0]["id"]) == [{"ticker": "KEEP"}]
+
+
 def test_load_results_unknown_id_is_empty_not_legacy(tmp_path, monkeypatch):
     """An explicit id returns [] and never falls into the legacy JSON import."""
     results_file = tmp_path / "last_results.json"

@@ -426,14 +426,19 @@ def save_results(rows: list[dict]):
         raise
 
 
-def list_scans(limit: int = 50) -> list[dict]:
-    """Newest-first scan history entries: ``id``, ``created_at``, ``rows``."""
+def list_scans(limit: int = SCAN_HISTORY_LIMIT) -> list[dict]:
+    """Newest-first scan history entries: ``id``, ``created_at``, ``rows``.
+
+    Scans without rows are skipped: "Clear results" and scans that matched
+    nothing store one, and they would only be dead ends in the picker.
+    """
     try:
         conn = db.get_conn()
         rows = conn.execute(
             "SELECT s.id, s.created_at, COUNT(sr.rank) AS rows"
             " FROM scans s LEFT JOIN scan_rows sr ON sr.scan_id = s.id"
-            " GROUP BY s.id ORDER BY s.id DESC LIMIT ?",
+            " GROUP BY s.id HAVING COUNT(sr.rank) > 0"
+            " ORDER BY s.id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]

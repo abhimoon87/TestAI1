@@ -94,6 +94,22 @@ def test_backtest_nonzero_exit_reports_failure(monkeypatch, tmp_path):
     assert any("exit 3" in m for m in app.logged)
 
 
+def test_backtest_setup_failure_resets_running_flag(monkeypatch, tmp_path):
+    """A failure before the subprocess starts must not wedge the command."""
+    monkeypatch.setattr(app_mod, "REPORTS_DIR", str(tmp_path))
+    app = _make_app()
+
+    def boom(*a, **kw):
+        raise OSError("denied")
+
+    monkeypatch.setattr(app_mod.os, "makedirs", boom)
+
+    app._run_backtest()
+
+    assert wait_until(lambda: not app.backtest_running)
+    assert any("Backtest failed" in m for m in app.logged)
+
+
 def test_backtest_reentrancy_guard(monkeypatch, tmp_path):
     monkeypatch.setattr(app_mod, "REPORTS_DIR", str(tmp_path))
     started = []

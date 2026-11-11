@@ -20,10 +20,11 @@ import time
 import webbrowser
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 
 import flet as ft
 
-from ..shared.constants import LOG_MAX_LINES, has_fii_dii, score_of
+from ..shared.constants import LOG_MAX_LINES, REPORTS_DIR, has_fii_dii, score_of
 from ..shared.trace import setup_trace
 
 try:
@@ -37,6 +38,7 @@ from ..backend.settings_store import (  # noqa: F401 — re-exported for tests
     DEFAULT_SETTINGS,
     STRATEGY_LABELS,
     load_settings,
+    save_settings,
 )
 from ..shared.themes import THEMES
 from ..shared.universes import UNIVERSES
@@ -63,7 +65,6 @@ from .views_settings import SettingsViewMixin
 SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(SCANNER_DIR))
 APPLOG_DIR = os.path.join(_PROJECT_ROOT, "AppLog")
-REPORTS_DIR = os.path.join(_PROJECT_ROOT, "Reports")
 LOG_FILE = os.path.join(APPLOG_DIR, "scan.log")
 
 # The UI lock guards control mutation + page.update() in _safe_update.
@@ -1234,17 +1235,22 @@ class ScannerApp(
 
         html_path = os.path.join(REPORTS_DIR, "backtest_report.html")
         csv_path = os.path.join(REPORTS_DIR, "backtest_trades.csv")
-        os.makedirs(REPORTS_DIR, exist_ok=True)
-        # Existence must mean *this* run's report: 0-trade runs write none.
+        # The subprocess reads settings from the db — persist what's on screen.
         try:
-            os.remove(html_path)
-        except OSError:
-            pass
+            save_settings(self.settings)
+        except Exception:
+            logger.info("Saving settings before backtest failed", exc_info=True)
 
         def _bg():
             kind, msg = "error", "Backtest failed"
             try:
                 self._engine_log("Backtest started (nifty50, app settings) …")
+                os.makedirs(REPORTS_DIR, exist_ok=True)
+                # Existence must mean *this* run's report: 0-trade runs write none.
+                try:
+                    os.remove(html_path)
+                except OSError:
+                    pass
                 # Unbuffered UTF-8 so streamed lines arrive promptly and ₹ survives.
                 env = {
                     **os.environ,
@@ -1280,7 +1286,7 @@ class ScannerApp(
                 else:
                     kind = "info"
                     msg = "Backtest done — report opened in browser"
-                    webbrowser.open(f"file://{os.path.abspath(html_path)}")
+                    webbrowser.open(Path(html_path).resolve().as_uri())
             except Exception as ex:
                 msg = f"Backtest failed: {ex}"
             finally:

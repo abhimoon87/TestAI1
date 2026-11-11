@@ -182,6 +182,24 @@ def test_newer_db_is_left_untouched(tmp_path):
     assert _user_version(path) == 99  # never downgrade a newer schema
 
 
+def test_pre_stamp_db_is_not_treated_as_fresh(monkeypatch, tmp_path):
+    """A db created before user_version existed reads 0 but is really v1."""
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE scans (id INTEGER PRIMARY KEY, created_at TEXT)")
+    conn.commit()
+    conn.close()  # user_version stays 0
+    calls = []
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db, "_MIGRATIONS", {2: lambda c: calls.append(2)})
+    db.set_db_path(str(path))
+
+    db.get_conn()
+
+    assert calls == [2]  # migration ran instead of being skipped as fresh
+    assert _user_version(path) == 2
+
+
 def test_fresh_db_stamped_without_running_migrations(monkeypatch, tmp_path):
     def boom(c):
         raise AssertionError("fresh db must not replay migrations")

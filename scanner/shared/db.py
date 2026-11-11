@@ -162,9 +162,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
         return
     if current == 0:
-        # Fresh db: the CREATE script above already built it at current.
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        return
+        legacy = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scans'"
+        ).fetchone()
+        if legacy is None:
+            # Fresh db: the CREATE script above already built it at current.
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+        # Pre-stamp db: the tables are exactly v1, so never treat it as fresh.
+        current = 1
+        conn.execute(f"PRAGMA user_version = {current}")
     for version in range(current + 1, SCHEMA_VERSION + 1):
         step = _MIGRATIONS.get(version)
         if step is None:

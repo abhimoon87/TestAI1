@@ -1122,12 +1122,15 @@ class TestAbortableBatchDownload:
                         ["AAA", "BBB"], period="1y", cancel_event=cancel_event
                     )
                     elapsed = time.time() - t0
-                    assert elapsed < 5  # returned while the download was blocked
-                    assert result == {}
-                    # Release the worker inside the patches so its remaining
-                    # work completes before teardown (no db write can leak).
-                    release_chunk.set()
-                    assert cache_done.wait(10)
+                    try:
+                        assert elapsed < 5  # returned while download was blocked
+                        assert result == {}
+                    finally:
+                        # Release the worker inside the patches so its remaining
+                        # work completes before teardown (no db write can leak) —
+                        # even when an assertion above fails.
+                        release_chunk.set()
+                        assert cache_done.wait(10)
 
     def test_cancel_between_batches_stops_scheduling(self):
         """Cancel fired between outer batches must not schedule further ones."""

@@ -13,15 +13,11 @@ import os
 import threading
 import webbrowser
 from datetime import datetime
+from pathlib import Path
 
-from ..shared.constants import score_of
+from ..shared.constants import REPORTS_DIR, score_of
 
 logger = logging.getLogger(__name__)
-
-# Mirrors scanner.ui.app.REPORTS_DIR — app.py keeps its own copy (backtest).
-SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(SCANNER_DIR))
-REPORTS_DIR = os.path.join(_PROJECT_ROOT, "Reports")
 
 
 class ExportViewMixin:
@@ -83,7 +79,7 @@ class ExportViewMixin:
                 self._safe_update(
                     lambda: self._toast(f"Report saved: {filename}", "success")
                 )
-                webbrowser.open(f"file://{os.path.abspath(filepath)}")
+                webbrowser.open(Path(filepath).resolve().as_uri())
             except Exception as ex:
                 logger.exception("HTML export failed")  # traceback carries ex
                 msg = f"HTML export failed: {ex}"

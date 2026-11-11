@@ -6,6 +6,11 @@ that are referenced across multiple modules. Each constant includes a brief
 comment explaining its origin or purpose.
 """
 
+from pathlib import Path
+
+# Report output folder — shared by the GUI export and the backtest runner.
+REPORTS_DIR = str(Path(__file__).resolve().parents[2] / "Reports")
+
 # ── Results grid columns ─────────────────────────────────────────────────────
 # POC / Both MA / RSI Val / Volatility mirror the always-visible columns of
 # the HTML report (backend/report.py _REPORT_COLS) so the grid and the export
