@@ -1082,12 +1082,26 @@ class TestAbortableBatchDownload:
     def test_cancel_mid_batch_returns_without_waiting_for_chunk(self):
         """Stop returns promptly even while a chunk download is still running."""
 
-        def slow_download(*a, **kw):
-            time.sleep(8)
+        # The stray chunk worker outlives this test by design; it must not
+        # touch the per-test db afterwards — a late real _set_cached write
+        # races the next test's connection teardown and crashes sqlite
+        # natively. So the worker blocks on an event, and its cache writes
+        # are mocked and drained before this test returns.
+        release_chunk = threading.Event()
+        cache_writes = []
+        cache_done = threading.Event()
+
+        def blocked_download(*a, **kw):
+            release_chunk.wait(10)  # watchdog: never hang the suite
             return _make_yf_download_result(["RELIANCE.NS"], n=200)
 
+        def cache_write(*a, **kw):
+            cache_writes.append(1)
+            if len(cache_writes) >= 2:  # both AAA and BBB got cached
+                cache_done.set()
+
         mock_yf = MagicMock()
-        mock_yf.download.side_effect = slow_download
+        mock_yf.download.side_effect = blocked_download
         cancel_event = threading.Event()
 
         def _fire():
@@ -1100,12 +1114,20 @@ class TestAbortableBatchDownload:
             with patch(
                 "scanner.api.data_fetcher._get_provider", return_value=MagicMock()
             ):
-                result = fetch_batch_yfinance(
-                    ["AAA", "BBB"], period="1y", cancel_event=cancel_event
-                )
-        elapsed = time.time() - t0
-        assert elapsed < 5  # returned while the 8s download was still running
-        assert result == {}
+                with patch(
+                    "scanner.api.data_fetcher._set_cached",
+                    side_effect=cache_write,
+                ):
+                    result = fetch_batch_yfinance(
+                        ["AAA", "BBB"], period="1y", cancel_event=cancel_event
+                    )
+                    elapsed = time.time() - t0
+                    assert elapsed < 5  # returned while the download was blocked
+                    assert result == {}
+                    # Release the worker inside the patches so its remaining
+                    # work completes before teardown (no db write can leak).
+                    release_chunk.set()
+                    assert cache_done.wait(10)
 
     def test_cancel_between_batches_stops_scheduling(self):
         """Cancel fired between outer batches must not schedule further ones."""

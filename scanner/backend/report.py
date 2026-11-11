@@ -11,7 +11,14 @@ from datetime import datetime, timedelta
 
 from ..shared.cache import TTLCache
 from ..shared.constants import has_fii_dii, score_of
-from ..shared.detail_specs import SCORE_CATS, fmt_pct, ma_chip, signal_specs, spark_move
+from ..shared.detail_specs import (
+    SCORE_CATS,
+    fmt_cr,
+    fmt_pct,
+    ma_chip,
+    signal_specs,
+    spark_move,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1674,14 +1681,6 @@ def _breakdown_html(r: dict) -> str:
     return f'<div class="bd-list">{rows}</div>'
 
 
-def _fmt_cr(v) -> str:
-    """Flow as a signed Cr string, e.g. ₹-3,694 Cr / ₹+2,838 Cr (app parity)."""
-    try:
-        return f"₹{float(v):+,.0f} Cr"
-    except (TypeError, ValueError):
-        return "-"
-
-
 def _inst_tile_html(
     label: str, value: str, total, recent, state: str | None = None
 ) -> str:
@@ -1733,10 +1732,10 @@ def _institutional_html(r: dict, flow: list | None) -> str:
             from ..api.indian_market import flow_window_pcts
 
             total, recent = flow_window_pcts(flow, flow_key)
-            return _inst_tile_html(label, _fmt_cr(flow[0][flow_key]), total, recent)
+            return _inst_tile_html(label, fmt_cr(flow[0][flow_key]), total, recent)
         net = r.get(marker_key) if marker_key else None
         if net is not None:
-            return _inst_tile_html(label, _fmt_cr(net), None, None)
+            return _inst_tile_html(label, fmt_cr(net), None, None)
         return _inst_tile_html(label, "—", None, None, state="missing")
 
     tiles = (

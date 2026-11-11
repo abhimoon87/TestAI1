@@ -16,6 +16,17 @@ def fmt_pct(v) -> str:
     return f"{v:+.{2 if abs(v) < 10 else 1}f}%"
 
 
+def fmt_cr(v) -> str:
+    """₹ flow as a signed Cr string, e.g. ₹-3,694 Cr / ₹+2,838 Cr.
+
+    Shared by the detail panel and the HTML report; unusable input → "—".
+    """
+    try:
+        return f"₹{float(v):+,.0f} Cr"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def ma_chip(r: dict) -> tuple[str, str]:
     """(text, color role) for the MA signal: state word first (Bull/Bear),
     crossover age appended as a suffix so one vocabulary covers the column.

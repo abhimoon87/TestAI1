@@ -1,7 +1,10 @@
 """Unit tests for scanner.shared.db — schema, kv helpers, transactions, threads."""
 
+import sqlite3
 import threading
 import time
+
+import pytest
 
 from scanner.shared import db
 
@@ -102,3 +105,92 @@ def test_close_all_connections_clears_cache_and_conn_still_usable():
     fresh = db.get_conn()
     assert fresh is not conn
     assert fresh.execute("SELECT 1").fetchone()[0] == 1
+
+
+# ── Schema migration hook (PRAGMA user_version + _MIGRATIONS) ───────────────
+
+
+def _db_at_version(path, version):
+    """Standalone sqlite file stamped at `version` (an 'old' app's db)."""
+    conn = sqlite3.connect(str(path))
+    conn.execute(f"PRAGMA user_version = {version}")
+    conn.commit()
+    conn.close()
+
+
+def _user_version(path):
+    conn = sqlite3.connect(str(path))
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_migration_walks_in_order_and_stamps(monkeypatch, tmp_path):
+    path = tmp_path / "old.db"
+    _db_at_version(path, 1)
+    calls = []
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 3)
+    monkeypatch.setattr(
+        db,
+        "_MIGRATIONS",
+        {2: lambda c: calls.append(2), 3: lambda c: calls.append(3)},
+    )
+    db.set_db_path(str(path))
+
+    conn = db.get_conn()
+
+    assert calls == [2, 3]  # oldest first
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+
+
+def test_missing_migration_stops_before_stamping(monkeypatch, tmp_path):
+    path = tmp_path / "old.db"
+    _db_at_version(path, 1)
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 3)
+    monkeypatch.setattr(db, "_MIGRATIONS", {3: lambda c: None})  # v2 missing
+    db.set_db_path(str(path))
+
+    db.get_conn()
+
+    assert _user_version(path) == 1  # stuck at last applied version
+
+
+def test_failing_migration_rolls_back_and_keeps_version(monkeypatch, tmp_path):
+    path = tmp_path / "old.db"
+    _db_at_version(path, 1)
+
+    def boom(c):
+        raise RuntimeError("half-applied")
+
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db, "_MIGRATIONS", {2: boom})
+    db.set_db_path(str(path))
+
+    with pytest.raises(RuntimeError):
+        db.get_conn()
+    assert _user_version(path) == 1  # step + stamp share one transaction
+
+
+def test_newer_db_is_left_untouched(tmp_path):
+    path = tmp_path / "future.db"
+    _db_at_version(path, 99)
+    db.set_db_path(str(path))
+
+    db.get_conn()
+
+    assert _user_version(path) == 99  # never downgrade a newer schema
+
+
+def test_fresh_db_stamped_without_running_migrations(monkeypatch, tmp_path):
+    def boom(c):
+        raise AssertionError("fresh db must not replay migrations")
+
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 1)
+    monkeypatch.setattr(db, "_MIGRATIONS", {1: boom})
+    db.set_db_path(str(tmp_path / "fresh.db"))
+
+    conn = db.get_conn()
+
+    # The CREATE script builds fresh dbs at current — no steps to replay.
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1

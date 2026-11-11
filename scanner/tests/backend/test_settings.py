@@ -275,3 +275,34 @@ def test_history_capped_at_limit(tmp_path, monkeypatch):
     assert (
         store_mod.load_results()[0]["ticker"] == f"T{store_mod.SCAN_HISTORY_LIMIT + 4}"
     )
+
+
+def test_list_scans_newest_first_with_row_counts(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "out.json"))
+    rows1 = [{"ticker": "OLD", "total": 55.0}]
+    rows2 = [{"ticker": "NEW", "total": 61.0}, {"ticker": "NEW2", "total": 60.0}]
+    store_mod.save_results(rows1)
+    store_mod.save_results(rows2)
+
+    scans = store_mod.list_scans()
+    assert [s["rows"] for s in scans] == [2, 1]  # newest first, row counts
+    assert all("created_at" in s for s in scans)
+    assert store_mod.load_results(scan_id=scans[0]["id"]) == rows2
+    assert store_mod.load_results(scan_id=scans[1]["id"]) == rows1
+    assert store_mod.load_results() == rows2  # default path unchanged
+
+
+def test_list_scans_empty_history_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(tmp_path / "out.json"))
+    assert store_mod.list_scans() == []
+
+
+def test_load_results_unknown_id_is_empty_not_legacy(tmp_path, monkeypatch):
+    """An explicit id returns [] and never falls into the legacy JSON import."""
+    results_file = tmp_path / "last_results.json"
+    results_file.write_text(json.dumps([{"ticker": "LEGACY"}]), encoding="utf-8")
+    monkeypatch.setattr(store_mod, "RESULTS_FILE", str(results_file))
+
+    assert store_mod.load_results(scan_id=99999) == []
+    # history is still empty, so the default path imports the legacy file
+    assert store_mod.load_results() == [{"ticker": "LEGACY"}]

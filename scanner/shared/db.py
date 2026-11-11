@@ -22,13 +22,17 @@ import os
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
+# Migration steps for future schema bumps: {new_version: fn(conn)}. On bump,
+# add the step here AND update the CREATE script above — fresh dbs are built
+# from the script and stamped directly; only pre-existing dbs walk this map.
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
 _DEFAULT_DB = str(Path(__file__).resolve().parent.parent / "scanner.db")
 
 _lock = threading.RLock()
@@ -140,7 +144,36 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Stamp a fresh db; walk ``_MIGRATIONS`` for dbs behind SCHEMA_VERSION.
+
+    Each step runs in one transaction together with its version stamp, so a
+    failing migration leaves the db at the last fully-applied version.
+    """
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current > SCHEMA_VERSION:
+        logger.warning(
+            "db schema v%d is newer than this app (v%d) — left untouched",
+            current,
+            SCHEMA_VERSION,
+        )
+        return
+    if current == 0:
+        # Fresh db: the CREATE script above already built it at current.
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        return
+    for version in range(current + 1, SCHEMA_VERSION + 1):
+        step = _MIGRATIONS.get(version)
+        if step is None:
+            # Never stamp past an unapplied step — retry (and warn) next open.
+            logger.warning("missing migration for schema v%d", version)
+            break
+        with transaction(conn):
+            step(conn)
+            conn.execute(f"PRAGMA user_version = {version}")
 
 
 @contextmanager

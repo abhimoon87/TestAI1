@@ -426,15 +426,40 @@ def save_results(rows: list[dict]):
         raise
 
 
-def load_results() -> list[dict]:
-    """Latest scan's result rows; no history → import last_results.json once."""
+def list_scans(limit: int = 50) -> list[dict]:
+    """Newest-first scan history entries: ``id``, ``created_at``, ``rows``."""
     try:
         conn = db.get_conn()
-        last = conn.execute("SELECT id FROM scans ORDER BY id DESC LIMIT 1").fetchone()
-        if last:
+        rows = conn.execute(
+            "SELECT s.id, s.created_at, COUNT(sr.rank) AS rows"
+            " FROM scans s LEFT JOIN scan_rows sr ON sr.scan_id = s.id"
+            " GROUP BY s.id ORDER BY s.id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning("Failed to list scans: %s", e)
+        return []
+
+
+def load_results(scan_id: int | None = None) -> list[dict]:
+    """Result rows of ``scan_id``; without one, the latest scan.
+
+    An explicit id returns [] when unknown or empty — the legacy
+    last_results.json import only fills a totally empty history.
+    """
+    try:
+        conn = db.get_conn()
+        if scan_id is None:
+            last = conn.execute(
+                "SELECT id FROM scans ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if last:
+                scan_id = last["id"]
+        if scan_id is not None:
             rows = conn.execute(
                 "SELECT row FROM scan_rows WHERE scan_id = ? ORDER BY rank",
-                (last["id"],),
+                (scan_id,),
             ).fetchall()
             return [
                 r for r in (json.loads(x["row"]) for x in rows) if isinstance(r, dict)
