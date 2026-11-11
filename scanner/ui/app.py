@@ -13,6 +13,8 @@ import asyncio
 import logging
 import os
 import queue
+import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -48,7 +50,12 @@ from .ui_kit import (
     parse_watchlist_text,
     width_tier,
 )
+from .views_audit import AuditViewMixin
+from .views_cache import CacheViewMixin
+from .views_detail import DetailViewMixin
+from .views_export import ExportViewMixin
 from .views_layout import SIDE_W, LayoutViewMixin
+from .views_panels import PanelsViewMixin
 from .views_results import ResultsViewMixin
 from .views_scan import ScanOrchestrationMixin
 from .views_settings import SettingsViewMixin
@@ -86,7 +93,15 @@ def _log_writer():
 
 
 class ScannerApp(
-    ScanOrchestrationMixin, LayoutViewMixin, ResultsViewMixin, SettingsViewMixin
+    ScanOrchestrationMixin,
+    LayoutViewMixin,
+    ResultsViewMixin,
+    PanelsViewMixin,
+    DetailViewMixin,
+    SettingsViewMixin,
+    CacheViewMixin,
+    AuditViewMixin,
+    ExportViewMixin,
 ):
     def __init__(self, page: ft.Page):
         self.page = page
@@ -615,6 +630,15 @@ class ScannerApp(
                 "clear-results", "Clear results", "", lambda: self._clear_results()
             ),
             PaletteAction(
+                "open-scan-history",
+                "Open scan from history…",
+                "",
+                lambda: self._open_scan_history(),
+            ),
+            PaletteAction(
+                "run-backtest", "Run backtest", "", lambda: self._run_backtest()
+            ),
+            PaletteAction(
                 "toggle-right-panel",
                 "Toggle profile panel",
                 "",
@@ -1130,600 +1154,153 @@ class ScannerApp(
 
     # ── Results rendering ───────────────────────────────────────────────
 
-    # ── Cache management ───────────────────────────────────────────────
+    # ── Scan history ────────────────────────────────────────────────────
 
-    def _cache_ui_controls(self, kind: str):
-        """(label, clear-button) for a cache card; None before the sidebar exists."""
-        if kind == "neg":
-            lbl = getattr(self, "cache_status_lbl", None)
-            btn = getattr(self, "cache_clear_btn", None)
-        elif kind == "enrich":
-            lbl = getattr(self, "enrich_cache_status_lbl", None)
-            btn = getattr(self, "enrich_cache_clear_btn", None)
-        else:
-            lbl = getattr(self, "price_cache_status_lbl", None)
-            btn = getattr(self, "price_cache_prune_btn", None)
-        if lbl is None:
-            return None
-        return lbl, btn
+    def _open_scan_history(self, e=None):
+        """Reopen an older scan from db history (palette: "Open scan…")."""
+        from ..backend.settings_store import list_scans
+        from .ui_kit import themed_dropdown
 
-    def _cache_ui_snapshot(self, kind: str):
-        """Compute (label text, button visible) for a cache card.
-
-        Touches only caches — no controls — so it is safe off the UI thread.
-        """
-        if self._cache_ui_controls(kind) is None:
-            return None
-        from ..api import cache_manager
-
-        if kind in ("neg", "enrich"):
-            title = "Dead-symbol cache" if kind == "neg" else "Enrichment cache"
-            try:
-                if kind == "neg":
-                    n = len(cache_manager.negative_load())
-                    ttl_h = cache_manager.negative_ttl_hours()
-                else:
-                    n = cache_manager.enrichment_size()
-                    ttl_h = cache_manager.ENRICHMENT_CACHE_TTL_HOURS
-            except Exception:
-                logger.info("Failed to load %s info", title, exc_info=True)
-                n, ttl_h = 0, 24
-            text = f"{title}: {n} (auto-resets ~{ttl_h}h)" if n else f"{title}: empty"
-            return text, bool(n)
-
-        # price cache has a different shape (stale count)
-        try:
-            h = cache_manager.cache_health()
-            n, stale = h["price_entries"], h["stale_entries"]
-        except Exception:
-            logger.info("Failed to load price cache health", exc_info=True)
-            n, stale = 0, 0
-        if not n:
-            text = "Price cache: empty"
-        elif stale:
-            text = f"Price cache: {n} ({stale} stale — auto-prunes on next scan)"
-        else:
-            text = f"Price cache: {n} (clean)"
-        return text, bool(stale)
-
-    def _apply_cache_ui(self, kind: str, text: str, visible: bool) -> None:
-        """Push a computed snapshot onto the cache card controls (UI thread)."""
-        controls = self._cache_ui_controls(kind)
-        if controls is None:
+        scans = list_scans()
+        if not scans:
+            self._toast("No saved scans yet — run a scan first", "error")
             return
-        lbl, btn = controls
-        lbl.value = text
-        if btn is not None:
-            btn.visible = visible
-
-    def _refresh_cache_ui(self, kind: str):
-        """Shared status/clear wiring for the three cache cards (UI thread)."""
-        snap = self._cache_ui_snapshot(kind)
-        if snap is not None:
-            self._apply_cache_ui(kind, *snap)
-
-    def _refresh_cache_ui_bg(self, *kinds: str) -> None:
-        """Compute cache-card status off-thread, then apply on the UI thread."""
-        kinds = kinds or ("neg", "enrich", "price")
-
-        def _bg():
-            snaps = {k: self._cache_ui_snapshot(k) for k in kinds}
-
-            def _apply():
-                for k, snap in snaps.items():
-                    if snap is not None:
-                        self._apply_cache_ui(k, *snap)
-
-            self._safe_update(_apply)
-
-        t = threading.Thread(target=_bg, daemon=True)
-        # Joinable handle: the snapshot reads sqlite/parquet, and a test
-        # teardown that closes db conns under a still-running reader crashes
-        # natively — tests join this before the db fixture tears down.
-        self._cache_refresh_thread = t
-        t.start()
-
-    def _refresh_neg_cache_ui(self):
-        self._refresh_cache_ui("neg")
-
-    def _finish_cache_action(self, refresh, log_msg, toast_msg, is_error=False):
-        """Log + toast + re-read a cache card — shared by the card actions."""
-        self._log(log_msg)
-        if toast_msg is not None:
-            self._toast(toast_msg, "error" if is_error else "success")
-        refresh()
-        self.page.update()
-
-    def _clear_negative_cache(self, e=None):
-        def _bg():
-            is_error = False
-            try:
-                from ..api import cache_manager
-
-                cache_manager.negative_update(
-                    clears=list(cache_manager.negative_load().keys())
-                )
-                msg = "Cleared dead-symbol cache — fallback will re-attempt all symbols"
-                toast = "Dead-symbol cache cleared"
-            except Exception as ex:
-                msg = toast = f"Could not clear dead-symbol cache: {ex}"
-                is_error = True
-            self._safe_update(
-                lambda: self._finish_cache_action(
-                    self._refresh_neg_cache_ui, msg, toast, is_error
-                )
-            )
-
-        threading.Thread(target=_bg, daemon=True).start()
-
-    def _refresh_enrich_cache_ui(self):
-        self._refresh_cache_ui("enrich")
-
-    def _clear_enrichment_cache(self, e=None):
-        def _bg():
-            is_error = False
-            try:
-                from ..api import cache_manager
-
-                cache_manager.enrichment_clear()
-                msg = "Cleared enrichment cache — next scan will re-fetch phase-2 data"
-                toast = "Enrichment cache cleared"
-            except Exception as ex:
-                msg = toast = f"Could not clear enrichment cache: {ex}"
-                is_error = True
-            self._safe_update(
-                lambda: self._finish_cache_action(
-                    self._refresh_enrich_cache_ui, msg, toast, is_error
-                )
-            )
-
-        threading.Thread(target=_bg, daemon=True).start()
-
-    def _refresh_price_cache_ui(self):
-        self._refresh_cache_ui("price")
-
-    def _prune_price_cache(self, e=None):
-        def _bg():
-            is_error = False
-            try:
-                from ..api import cache_manager
-
-                removed = cache_manager.prune_stale_cache(force=True)
-                if removed:
-                    msg = f"Pruned {removed} price-cache entrie(s) (expired + over cap)"
-                    toast = f"Pruned {removed} price-cache entries"
-                else:
-                    msg = "Price cache clean — nothing to prune"
-                    toast = None
-            except Exception as ex:
-                msg = toast = f"Could not prune price cache: {ex}"
-                is_error = True
-            self._safe_update(
-                lambda: self._finish_cache_action(
-                    self._refresh_price_cache_ui, msg, toast, is_error
-                )
-            )
-
-        threading.Thread(target=_bg, daemon=True).start()
-
-    def _audit_report(self, universe: str):
-        """Sync core of the stale-member audit button (threaded in the GUI)."""
-        from ..backend.audit_stale_members import audit_stale_members, format_report
-        from ..shared.universes import UNIVERSES
-
-        tickers = list(UNIVERSES.get(universe, []))
-        res = audit_stale_members(tickers)
-        return res, format_report(res)
-
-    def _audit_fixable(self, res: dict) -> bool:
-        """True when the audit result has anything apply_fixes could change."""
-        return bool(
-            res.get("rename_suggestions")
-            or res.get("unannotated_stale")
-            or res.get("annotated_fresh")
-        )
-
-    def _audit_verdict(self, res: dict) -> str:
-        """One-line audit summary shown in the log + status label."""
-        verdict = (
-            f"{len(res['unannotated_stale'])} new candidate(s), "
-            f"{len(res['annotated_stale'])} still annotated, "
-            f"{len(res['missing'])} missing"
-        )
-        renames = res.get("rename_suggestions", {})
-        if renames:
-            verdict += f", {len(renames)} rename(s) suggested"
-        if self._audit_fixable(res):
-            verdict += " — fixes ready"
-        return verdict
-
-    def _run_stale_audit(self, e=None):
-        lock = getattr(self, "_state_lock", None)
-        if lock is not None:
-            with lock:
-                if getattr(self, "stale_audit_running", False):
-                    return
-                self.stale_audit_running = True
-        elif getattr(self, "stale_audit_running", False):
-            return
-        else:
-            self.stale_audit_running = True
-        universe = None
-        dd = getattr(self, "universe_dd", None)
-        if dd is not None and getattr(dd, "value", None):
-            universe = str(dd.value)
-        universe = universe or "ALL (Combined)"
-
-        def _bg():
-            try:
-                self._log(f"Stale-member audit: {universe} …")
-                res, report = self._audit_report(universe)
-                verdict = self._audit_verdict(res)
-                lock = getattr(self, "_state_lock", None)
-                if lock is not None:
-                    with lock:
-                        self._last_audit_res = res
-                else:
-                    self._last_audit_res = res
-                self._log("\n" + report)
-                self._safe_update(lambda: self._log(f"Audit done — {verdict}"))
-                self._safe_update(
-                    lambda: self._toast(f"Audit done — {verdict}", "info")
-                )
-                if hasattr(self, "stale_audit_lbl"):
-                    self._safe_update(
-                        lambda: setattr(
-                            self.stale_audit_lbl, "value", f"Audit done — {verdict}"
-                        )
-                    )
-                if hasattr(self, "stale_fix_btn"):
-                    self._safe_update(
-                        lambda: setattr(
-                            self.stale_fix_btn, "disabled", not self._audit_fixable(res)
-                        )
-                    )
-            except Exception as ex:
-                msg = f"Stale-member audit failed: {ex}"
-                self._safe_update(lambda: self._log(msg))
-                # Never leave a stale (previously fixable) result actionable
-                # after a failed audit — force a fresh audit before applying.
-                lock = getattr(self, "_state_lock", None)
-                if lock is not None:
-                    with lock:
-                        self._last_audit_res = None
-                else:
-                    self._last_audit_res = None
-                if hasattr(self, "stale_fix_btn"):
-                    self._safe_update(
-                        lambda: setattr(self.stale_fix_btn, "disabled", True)
-                    )
-            finally:
-                lock = getattr(self, "_state_lock", None)
-                if lock is not None:
-                    with lock:
-                        self.stale_audit_running = False
-                else:
-                    self.stale_audit_running = False
-                self._safe_update(lambda: self.page.update())
-
-        threading.Thread(target=_bg, daemon=True).start()
-
-    def _apply_fixes_core(self, res: dict):
-        """Sync core of the Apply fixes button (threaded in the GUI)."""
-        from ..backend.audit_stale_members import apply_fixes, format_fix_summary
-
-        summary = apply_fixes(res)
-        return summary, format_fix_summary(summary)
-
-    def _apply_stale_fixes(self, e=None):
-        """Ask for confirmation, then apply audit fixes to universes.py.
-
-        The dialog lists exactly what will change (renames / annotation adds /
-        removals); its Apply button runs the threaded fix, which keeps a .bak
-        and re-audits afterwards to confirm the file is clean.
-        """
-        if getattr(self, "stale_fix_running", False):
-            return
-        lock = getattr(self, "_state_lock", None)
-        if lock is not None:
-            with lock:
-                res = getattr(self, "_last_audit_res", None)
-        else:
-            res = getattr(self, "_last_audit_res", None)
-        if not res or not self._audit_fixable(res):
-            return
-        parts = []
-        renames = len(res.get("rename_suggestions", {}))
-        if renames:
-            parts.append(f"{renames} rename(s)")
-        adds = len(res.get("unannotated_stale", []))
-        if adds:
-            parts.append(f"{adds} annotation add(s)")
-        removes = len(res.get("annotated_fresh", []))
-        if removes:
-            parts.append(f"{removes} annotation removal(s)")
         c = self.theme_colors
+        opts = [
+            ft.dropdown.Option(
+                key=str(s["id"]),
+                text=f"{s['created_at'].replace('T', ' ')} — {s['rows']} rows",
+            )
+            for s in scans
+        ]
+        dd = themed_dropdown(opts, opts[0].key, c, width=360)
         dlg = ft.AlertDialog(
             modal=True,
             bgcolor=c["panel_bg"],
             shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
             actions_alignment=ft.MainAxisAlignment.END,
-            title=ft.Text("Apply audit fixes?"),
-            content=ft.Text(
-                f"This edits scanner/shared/universes.py ({', '.join(parts)}). "
-                "A .bak backup is kept and the edit is syntax-checked. "
-                "The app re-audits afterwards; restart it for scans to "
-                "pick up the new universe lists.",
-                size=13,
-            ),
+            title=ft.Text("Open scan from history"),
+            content=dd,
             actions=[
                 ft.TextButton(
                     content=ft.Text("Cancel"),
                     on_click=lambda _: self._close_dialog(dlg),
                 ),
                 ft.Button(
-                    content=ft.Text("Apply fixes"),
+                    content=ft.Text("Open"),
                     bgcolor=c["green"],
                     color=c["on_accent"],
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=RADIUS_MD)
                     ),
-                    on_click=lambda _: self._run_apply_fixes(dlg),
+                    on_click=lambda _: self._open_chosen_scan(dlg, dd.value),
                 ),
             ],
         )
         self._safe_update(lambda: self.page.show_dialog(dlg))
 
-    def _close_dialog(self, dlg):
-        self._safe_update(lambda: self.page.pop_dialog())
-
-    def _reload_universes(self):
-        """Re-read universes.py after a fix so a re-audit sees the edits."""
-        try:
-            import importlib
-
-            import scanner.shared.universes as univ
-
-            importlib.reload(univ)
-        except Exception as ex:
-            self._log(f"Could not reload universes after fix: {ex}")
-
-    def _run_apply_fixes(self, dlg=None):
-        """Threaded fix runner: apply_fixes, log the summary, re-audit."""
-        if dlg is not None:
-            self._close_dialog(dlg)
-        res = getattr(self, "_last_audit_res", None)
-        if not res or getattr(self, "stale_fix_running", False):
+    def _open_chosen_scan(self, dlg, scan_id):
+        """Load the dialog's selected scan into the results grid."""
+        self._close_dialog(dlg)
+        if not scan_id:
             return
-        self.stale_fix_running = True
+        from ..backend.settings_store import load_results
+
+        rows = load_results(scan_id=int(scan_id))
+        if not rows:
+            self._toast("That scan has no rows", "error")
+            return
+        self._show_view("dashboard")
+        self._restore_saved_results(rows)
+
+    # ── Backtest ────────────────────────────────────────────────────────
+
+    def _run_backtest(self, e=None):
+        """Run the backtest CLI in a subprocess and open its HTML report.
+
+        Subprocess, not in-process: ``backtest.main()`` parses ``sys.argv``.
+        No cancel in v1 — the daemon thread just runs to completion.
+        """
+        lock = getattr(self, "_state_lock", None)
+        if lock is not None:
+            with lock:
+                if getattr(self, "backtest_running", False):
+                    return
+                self.backtest_running = True
+        elif getattr(self, "backtest_running", False):
+            return
+        else:
+            self.backtest_running = True
+
+        html_path = os.path.join(REPORTS_DIR, "backtest_report.html")
+        csv_path = os.path.join(REPORTS_DIR, "backtest_trades.csv")
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        # Existence must mean *this* run's report: 0-trade runs write none.
+        try:
+            os.remove(html_path)
+        except OSError:
+            pass
 
         def _bg():
+            kind, msg = "error", "Backtest failed"
             try:
-                self._log("Applying audit fixes to scanner/shared/universes.py …")
-                summary, text = self._apply_fixes_core(res)
-                self._log("\n" + text)
-                if summary.get("changed"):
-                    verdict = (
-                        f"{len(summary['renamed'])} rename(s), "
-                        f"{len(summary['annotated_added'])} annotation(s) added, "
-                        f"{len(summary['annotated_removed'])} removed — "
-                        "universes.py updated (backup kept; restart the app "
-                        "for scans to pick up the new symbols)"
-                    )
+                self._engine_log("Backtest started (nifty50, app settings) …")
+                # Unbuffered UTF-8 so streamed lines arrive promptly and ₹ survives.
+                env = {
+                    **os.environ,
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUNBUFFERED": "1",
+                }
+                proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "scanner.backend.backtest",
+                        "--html",
+                        html_path,
+                        "--csv",
+                        csv_path,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=_PROJECT_ROOT,
+                    env=env,
+                )
+                for line in proc.stdout:
+                    self._engine_log(line.rstrip())
+                rc = proc.wait()
+                if rc != 0:
+                    msg = f"Backtest failed (exit {rc}) — see log"
+                elif not os.path.exists(html_path):
+                    kind = "info"
+                    msg = "Backtest finished with no trades — no report written"
                 else:
-                    verdict = "Nothing to apply (annotation list and symbols current)"
-                self._safe_update(lambda: self._log(f"Fix done — {verdict}"))
-                if hasattr(self, "stale_audit_lbl"):
-                    self._safe_update(
-                        lambda: setattr(
-                            self.stale_audit_lbl, "value", f"Fix done — {verdict}"
-                        )
-                    )
-                if hasattr(self, "stale_fix_btn"):
-                    self._safe_update(
-                        lambda: setattr(self.stale_fix_btn, "disabled", True)
-                    )
-                # Confirm the file is clean: reload the edited module and
-                # re-run the same audit (cache-warm, fast).
-                if summary.get("changed"):
-                    self._reload_universes()
-                    self._safe_update(
-                        lambda: self._log(
-                            "Re-auditing to confirm universes.py is clean …"
-                        )
-                    )
-                    self._run_stale_audit()
+                    kind = "info"
+                    msg = "Backtest done — report opened in browser"
+                    webbrowser.open(f"file://{os.path.abspath(html_path)}")
             except Exception as ex:
-                msg = f"Applying audit fixes failed: {ex}"
-                self._safe_update(lambda: self._log(msg))
+                msg = f"Backtest failed: {ex}"
             finally:
-                # Clear only the result we applied — the re-audit started above
-                # may already have stored a newer result that must survive.
-                # The check-and-clear is atomic under the lock; without it a
-                # racing audit could store a fresh result between our read and
-                # write and we would silently discard it.
                 lock = getattr(self, "_state_lock", None)
                 if lock is not None:
                     with lock:
-                        if self._last_audit_res is res:
-                            self._last_audit_res = None
-                elif self._last_audit_res is res:
-                    self._last_audit_res = None
-                self.stale_fix_running = False
-                self._safe_update(lambda: self.page.update())
-
-        threading.Thread(target=_bg, daemon=True).start()
-
-    # ── Export ──────────────────────────────────────────────────────────
-
-    def _export_html(self, e=None):
-        if not self.results:
-            return
-        from ..backend.report import generate_html_report, save_report
-
-        threshold = self.settings.get("min_score", 50)
-        tf_names = {"D": "Daily", "W": "Weekly", "M": "Monthly"}
-        tf_label = tf_names.get(self.settings.get("timeframe", "D"), "Daily")
-        # Export the full scan: the report re-applies the grid filter state
-        # client-side, so its checkboxes/chips stay interactive like the app.
-        # Counts/status track the full scan; news prefetch stays scoped to
-        # what the grid shows so export time doesn't grow with the universe.
-        all_src = self.all_results or self.results
-        results_snapshot = list(all_src)
-        news_targets = (
-            self._visible_results()
-            if getattr(self, "all_results", None)
-            else list(self.results)
-        )
-        universe_name = self.universe_dd.value or "NIFTY 50"
-        safe_title = "HMAxEMA Scanner"
-        filters = {
-            "search": self.filter_text or "",
-            "rating": self._rating_filter(),
-            "score": self._score_threshold(),
-            "fii_dii": self._checkbox_on("inst_filter_cb"),
-            "price100": self._checkbox_on("price_filter_cb"),
-            "fund0": self._checkbox_on("fund_filter_cb"),
-            "scanned": len(all_src),
-            "above": sum(1 for r in all_src if score_of(r) >= threshold),
-        }
-
-        def _bg():
-            try:
-                os.makedirs(REPORTS_DIR, exist_ok=True)
-                if any("_news_items" not in r for r in news_targets):
-                    self._log("Fetching news sentiment for exported stocks...")
+                        self.backtest_running = False
                 else:
-                    self._log("Exporting report (news already prefetched)...")
-                html = generate_html_report(
-                    results_snapshot,
-                    title=safe_title,
-                    threshold=threshold,
-                    fetch_news=True,
-                    meta=[f"🌐 {universe_name}", f"📊 {tf_label}"],
-                    filters=filters,
-                    news_targets=news_targets,
-                )
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"scanner_report_{timestamp}.html"
-                filepath = os.path.join(REPORTS_DIR, filename)
-                save_report(html, filepath)
-                self._safe_update(lambda: self._log(f"HTML report saved: {filename}"))
-                self._safe_update(
-                    lambda: self._toast(f"Report saved: {filename}", "success")
-                )
-                webbrowser.open(f"file://{os.path.abspath(filepath)}")
-            except Exception as ex:
-                logger.exception("HTML export failed")  # traceback carries ex
-                msg = f"HTML export failed: {ex}"
-                # Bind first — ``ex`` is cleared on except-block exit.
-                self._safe_update(lambda: self._log(msg))
-                self._safe_update(lambda: self._toast(msg, "error"))
+                    self.backtest_running = False
+
+                def _finish():
+                    self._log(msg)
+                    self._toast(msg, kind)
+
+                self._safe_update(_finish)
 
         threading.Thread(target=_bg, daemon=True).start()
 
-    def _export_csv(self, e=None):
-        if not self.results:
-            return
-        import csv
-
-        from ..backend.report import prune_old
-
-        with self._results_lock:
-            results_snapshot = list(self.results)
-
-        def _bg():
-            try:
-                os.makedirs(REPORTS_DIR, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"scanner_results_{timestamp}.csv"
-                filepath = os.path.join(REPORTS_DIR, filename)
-                with open(filepath, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(
-                        [
-                            "Rank",
-                            "Ticker",
-                            "Score",
-                            "Rating",
-                            "Price",
-                            "MA_Signal",
-                            "POC",
-                            "Both_MA",
-                            "Trend",
-                            "Momentum",
-                            "RSI",
-                            "MACD",
-                            "Volume",
-                            "RelStrength",
-                            "Fundamentals",
-                            "Direction",
-                            "RSI_Val",
-                            "ADX",
-                            "1M_Change",
-                            "Volatility_Stat",
-                            "Sideways",
-                        ]
-                    )
-                    for i, r in enumerate(results_snapshot, 1):
-                        sideways_reasons = ", ".join(r.get("sideways_reasons", []))
-                        ma_signal = "Bull" if r.get("ma_bullish") else "Bear"
-                        if r.get("ma_crossed_above"):
-                            bars = r.get("crossover_bars_ago")
-                            ma_signal += f" (x{bars}b)" if bars is not None else " (x)"
-                        poc = (
-                            f"Above ({r.get('vp_poc', '—')})"
-                            if r.get("above_poc")
-                            else f"Below ({r.get('vp_poc', '—')})"
-                        )
-                        both_ma = "Yes" if r.get("close_above_both_ma") else "No"
-                        writer.writerow(
-                            [
-                                i,
-                                r.get("ticker", ""),
-                                r.get("total", 0) or 0,
-                                r.get("combined_rating", "POOR"),
-                                r.get("close"),
-                                ma_signal,
-                                poc,
-                                both_ma,
-                                r.get("trend"),
-                                r.get("momentum"),
-                                r.get("rsi"),
-                                r.get("macd"),
-                                r.get("volume"),
-                                r.get("rel_str"),
-                                r.get("fundamentals", 0),
-                                r.get("trend_dir", ""),
-                                r.get("rsi_val"),
-                                r.get("adx_val"),
-                                r.get("pc1m"),
-                                r.get("volat_stat", ""),
-                                (
-                                    "Yes"
-                                    + (
-                                        f" ({sideways_reasons})"
-                                        if sideways_reasons
-                                        else ""
-                                    )
-                                )
-                                if r.get("is_sideways")
-                                else "No",
-                            ]
-                        )
-                prune_old(REPORTS_DIR, "scanner_results_*.csv", 4)
-                self._safe_update(lambda: self._log(f"CSV saved: {filename}"))
-                self._safe_update(
-                    lambda: self._toast(f"CSV saved: {filename}", "success")
-                )
-            except Exception as exc:
-                err = str(exc)
-                self._safe_update(lambda: self._log(f"CSV export failed: {err}"))
-                self._safe_update(
-                    lambda: self._toast(f"CSV export failed: {err}", "error")
-                )
-
-        threading.Thread(target=_bg, daemon=True).start()
+    def _close_dialog(self, dlg):
+        self._safe_update(lambda: self.page.pop_dialog())
 
     # ── Utilities ───────────────────────────────────────────────────────
 

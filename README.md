@@ -46,7 +46,7 @@ In the GUI, pick a universe, timeframe (Daily/Weekly/Monthly), data period, an o
 
 Whatever you choose is saved to `scanner/scanner.db` (the settings store).
 
-If you live on the keyboard: `Ctrl+K` opens the command palette, `Ctrl+R` runs or stops a scan, `Ctrl+1/2` switches views, `Ctrl+E` exports HTML, `Ctrl+S` saves settings, and `/` jumps to the search box. Snackbars confirm when scans, exports, audits and backtests finish, the rail collapses the sidebar, and double-clicking a ticker opens its news and sentiment.
+If you live on the keyboard: `Ctrl+K` opens the command palette, `Ctrl+R` runs or stops a scan, `Ctrl+1/2` switches views, `Ctrl+E` exports HTML, `Ctrl+S` saves settings, and `/` jumps to the search box. The palette can also **Run backtest** (background run with the app's current settings; opens the HTML report when done) and **Open scan from history…** (reopen any of the last 100 stored scans). Snackbars confirm when scans, exports, audits and backtests finish, the rail collapses the sidebar, and double-clicking a ticker opens its news and sentiment.
 
 ---
 
@@ -56,9 +56,14 @@ If you live on the keyboard: `Ctrl+K` opens the command palette, `Ctrl+R` runs o
 
 | Module | Responsibility |
 |---|---|
-| `scanner/ui/app.py` | Flet GUI — `ScannerApp` wires the view mixins below; owns app lifecycle, scanning/events, cache UI, HTML/CSV export, activity log, palette, shortcuts and snackbars |
+| `scanner/ui/app.py` | Flet GUI — `ScannerApp` wires the view mixins below; owns app lifecycle, scanning/events, scan history, backtest runner, activity log, palette, shortcuts and snackbars |
 | `scanner/ui/views_layout.py` | `LayoutViewMixin` — dashboard panes (rail, sidebar, main area, right panel), summary + top-pick cards |
 | `scanner/ui/views_results.py` | `ResultsViewMixin` — paginated results grid, data-row/header builders, sorting keys, score chart, row-level news expansion, summary/hero updates |
+| `scanner/ui/views_panels.py` | `PanelsViewMixin` — news/article/research/extra side panels |
+| `scanner/ui/views_detail.py` | `DetailViewMixin` — per-stock detail panel, institutional/promoter tiles |
+| `scanner/ui/views_cache.py` | `CacheViewMixin` — price/enrichment/negative-cache status cards + clear actions |
+| `scanner/ui/views_audit.py` | `AuditViewMixin` — stale-member audit run/apply flow + `universes.py` reload |
+| `scanner/ui/views_export.py` | `ExportViewMixin` — HTML/CSV export from the top bar |
 | `scanner/ui/views_settings.py` | `SettingsViewMixin` — declarative settings spec + settings-page builder/inputs |
 | `scanner/ui/ui_kit.py` | Shared primitives (`_border_all`, `_glass_bg`, ...), palette matcher (`fuzzy_score`, `filter_actions`) |
 | `scanner/backend/scanner_engine.py` | Headless scan orchestration (`scan`, `scan_stream`) shared by GUI/CLI; "fast mode" for >500 tickers (technicals first, enrich top 200) |
@@ -192,6 +197,8 @@ The backtest engine (`scanner/backend/backtest.py`) replays the full strategy on
 ```bash
 python -m scanner.backend.backtest --years 3   # custom lookback
 ```
+
+In the GUI, `Ctrl+K` → **Run backtest** runs the same engine in the background with the app's current settings and opens `Reports/backtest_report.html` when it finishes.
 
 Entry: fast MA crosses above slow MA, close above the crossover level, close above the volume-profile POC, and score above `min_score` (plus the ADX gate). Exit: stop loss → target → trailing stop after target, with optional position sizing, ATR stops and sector rotation. `--html` / `--csv` write the report and trade log.
 
