@@ -402,12 +402,19 @@ class ResultsViewMixin:
                 filter_parts.append("close < ₹100")
             if self._checkbox_on("fund_filter_cb"):
                 filter_parts.append("fund 0")
-            suffix = (
-                f"  |  filter: {', '.join(filter_parts)} ({len(shown)})"
-                if filter_parts
-                else ""
-            )
-            self.result_count_label.value = f"{len(results)} scanned  |  {len([r for r in results if _score_of(r) >= threshold])} above {threshold:.0f}+{suffix}"
+            # Shown count sits before the filter list so a narrow window clips
+            # the filter names, not the number explaining the gap.
+            above = len([r for r in results if _score_of(r) >= threshold])
+            if filter_parts:
+                self.result_count_label.value = (
+                    f"{len(results)} scanned  |  {len(shown)} shown  |  "
+                    f"{above} above {threshold:.0f}+  |  filter: "
+                    f"{', '.join(filter_parts)}"
+                )
+            else:
+                self.result_count_label.value = (
+                    f"{len(results)} scanned  |  {above} above {threshold:.0f}+"
+                )
         else:
             self.result_count_label.value = "no scan yet"
         self._update_filter_chips()

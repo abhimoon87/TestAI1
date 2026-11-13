@@ -1038,7 +1038,9 @@ function syncResultsHead(shown) {
     const base = el.dataset.scanned + " scanned  |  " + el.dataset.above
                + " above " + el.dataset.threshold + "+";
     el.textContent = parts.length
-        ? base + "  |  filter: " + parts.join(", ") + " (" + shown + ")"
+        ? el.dataset.scanned + " scanned  |  " + shown + " shown  |  "
+          + el.dataset.above + " above " + el.dataset.threshold
+          + "+  |  filter: " + parts.join(", ")
         : base;
     const chipQ = document.getElementById("chip-search");
     chipQ.hidden = !search;
@@ -1541,8 +1543,12 @@ def _results_head_html(results: list, threshold: float, filters: dict | None) ->
         parts.append("close < ₹100")
     if f.get("fund0"):
         parts.append("fund 0")
-    suffix = f"  |  filter: {', '.join(parts)} ({shown})" if parts else ""
-    status = f"{scanned} scanned  |  {above} above {threshold:.0f}+{suffix}"
+    suffix = f"  |  filter: {', '.join(parts)}" if parts else ""
+    status = (
+        f"{scanned} scanned  |  {shown} shown  |  {above} above {threshold:.0f}+{suffix}"
+        if parts
+        else f"{scanned} scanned  |  {above} above {threshold:.0f}+"
+    )
 
     def _cb(cid: str, label: str, on: bool) -> str:
         checked = " checked" if on else ""

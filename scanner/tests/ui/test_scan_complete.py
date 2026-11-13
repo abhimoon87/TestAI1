@@ -345,7 +345,10 @@ class TestFiiDiiCheckboxFilter:
         app._on_filter_toggled(None)
 
         assert [r["ticker"] for r in app.filtered_results] == ["STK000"]
-        assert "FII/DII data" in app.result_count_label.value
+        label = app.result_count_label.value
+        assert "FII/DII data" in label
+        # Shown count precedes the filter list so a narrow window cannot clip it.
+        assert label.index("1 shown") < label.index("filter:")
 
 
 class TestPriceAndFundCheckboxFilters:

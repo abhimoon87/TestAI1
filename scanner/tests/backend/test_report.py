@@ -1052,8 +1052,8 @@ class TestReportElegance:
             'id="countLabel" data-scanned="153" data-above="84" data-threshold="50"'
         ) in html
         assert (
-            ">153 scanned  |  84 above 50+  |  "
-            "filter: rating Good, score ≥ 50, FII/DII data (1)</span>"
+            ">153 scanned  |  1 shown  |  84 above 50+  |  "
+            "filter: rating Good, score ≥ 50, FII/DII data</span>"
         ) in html
 
     def test_results_head_without_filters_has_no_suffix(self):
@@ -1099,7 +1099,9 @@ class TestReportElegance:
             threshold=50.0,
             filters={"search": "tata"},
         )
-        assert ">1 scanned  |  1 above 50+  |  filter: 'TATA' (0)</span>" in html
+        assert (
+            ">1 scanned  |  0 shown  |  1 above 50+  |  filter: 'TATA'</span>" in html
+        )
         assert "'TATA'  ✕</button>" in html
 
     def test_ticker_cell_has_copy_button(self):
