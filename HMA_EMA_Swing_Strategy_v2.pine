@@ -55,7 +55,7 @@ showSidewaysStatus = input.bool(true, "Show Sideways Status", group="Sideways Fi
 sidewaysMinCount   = input.int(2, "Min Filters to Trigger Sideways (1-3)", minval=1, maxval=3, group="Sideways Filter")
 
 // ── Strategy / Confirmation ────────────────────────────────────────────────
-confirmDays  = input.int(5, "Confirm Expiry (Chart Bars)", minval=1, maxval=50, group="Strategy", tooltip="Bars of the CHART timeframe, not daily bars. On a 4h chart, 5 = 20 hours.")
+confirmDays  = input.int(5, "Confirm Expiry (Daily Bars)", minval=1, maxval=50, group="Strategy")
 minScore     = input.int(50, "Min Score for Entry", minval=0, maxval=100, group="Strategy")
 minAdxEntry  = input.float(20.0, "Min ADX at Entry (0 = off)", minval=0.0, maxval=100.0, step=1.0, group="Strategy")
 exitMode     = input.string("Signals Only", "Exit Mode (Signals Only = old baseline)", options=["Signals Only", "R-Bracket", "ATR Trail"], group="Strategy")
@@ -165,10 +165,7 @@ safe(n) =>
 vpBins(float hh, float ll) =>
     float rowSize = (hh - ll) == 0 ? syminfo.mintick : (hh - ll) / vpRows
     array<float> a_vol = array.new_float(vpRows, 0.0)
-    // Clamp to bars actually loaded: history refs past bar 0 are na, which
-    // would poison the bin bounds on symbols with short histories.
-    int nBars = math.min(vpLookback - 1, bar_index)
-    for i = 0 to nBars
+    for i = 0 to vpLookback - 1
         float b_h = high[i]
         float b_l = low[i]
         float b_v = volume[i]
@@ -228,95 +225,50 @@ get_mtf_data() =>
     mtf_sideSlope = mtf_sideMA[slopeLookback] != 0 ? math.abs((mtf_sideMA - mtf_sideMA[slopeLookback]) / mtf_sideMA[slopeLookback]) * 100 : 0.0
     [mtf_fast_ma, mtf_slow_ma, mtf_bullishCross, mtf_bearishCross, mtf_stockRS, mtf_rsi, mtf_volMA, mtf_atr, mtf_pc1, mtf_pc3, mtf_volT, mtf_macdHist, mtf_stochK, mtf_obv, mtf_obvMA, mtf_adx, close, volume, mtf_sideADX, mtf_sideChop, mtf_sideSlope]
 
-// NOT syminfo.tickerid — it appends the adjustment JSON
-// ("...{"adjustment":"dividends",...}") on adjusted charts and breaks both the
-// table text and symbol resolution inside request.* calls.
-string clean_ticker = syminfo.prefix == "" ? syminfo.ticker : syminfo.prefix + ":" + syminfo.ticker
+[fast_ma, slow_ma, bx, sx, stockRS, rsi, volMA, atr, pc1M, pc3M, volT, macdHist, stochK, obv, obvMA, mtf_adx, tf_close, tf_volume, sideADX, sideChop, sideSlope] = request.security(syminfo.tickerid, tf, get_mtf_data())
 
-[fast_ma, slow_ma, bx, sx, stockRS, rsi, volMA, atr, pc1M, pc3M, volT, macdHist, stochK, obv, obvMA, mtf_adx, tf_close, tf_volume, sideADX, sideChop, sideSlope] = request.security(clean_ticker, tf, get_mtf_data())
-
-// ── Non-repainting MTF cross ───────────────────────────────────────────────
-// request.security carries a boolean forward across every intra-period chart
-// bar, so `bx` can turn true mid-week on a still-forming analysis bar and turn
-// false again by the close. Latch the cross from the LAST COMPLETED analysis
-// bar (`[1]` on the period-boundary bar) and compare it with the previous
-// period's confirmed value: nothing is emitted until the period has closed.
-newPeriod = ta.change(time(tf)) != 0
-var bool bxPrevConf = false
-var bool sxPrevConf = false
-bool bxConf = bx[1]
-bool sxConf = sx[1]
-rawBuy  = newPeriod and bxConf and not bxPrevConf
-rawSell = newPeriod and sxConf and not sxPrevConf
-if newPeriod
-    bxPrevConf := bxConf
-    sxPrevConf := sxConf
-
-// ── Confirmed analysis-bar snapshot ────────────────────────────────────────
-// The sideways vote reads the same completed bar bx[1] reads, so the filter
-// cannot flip while the setup waits for an entry candle.
-var float confClose     = na
-var float confFastMA    = na
-var float confSlowMA    = na
-var float confSideADX   = na
-var float confSideChop  = na
-var float confSideSlope = na
-if newPeriod
-    confClose     := tf_close[1]
-    confFastMA    := fast_ma[1]
-    confSlowMA    := slow_ma[1]
-    confSideADX   := sideADX[1]
-    confSideChop  := sideChop[1]
-    confSideSlope := sideSlope[1]
+// NOTE: `and not bx[1]` is needed for MTF — request.security carries the boolean
+// forward across all intra-period lower-TF bars, so deduplication collapses
+// multiple true values into a single signal per crossover event.
+rawBuy  = bx and not bx[1]
+rawSell = sx and not sx[1]
 
 // ── Sideways gate (moved up from §7 so the signal gate can see it) ─────────
-// ADX / Choppiness / Slope were computed by request.security on the ANALYSIS
-// timeframe (matches the scanner, which scores is_sideways on analysis-TF
-// bars) and are read from the confirmed snapshot above.
-isSidewaysADX   = confSideADX < adxThreshold
-isSidewaysChop  = confSideChop > chopThreshold
-isSidewaysSlope = confSideSlope < flatThreshold
+// ADX / Choppiness / Slope arrive from request.security — computed on the
+// ANALYSIS timeframe (matches the scanner, which scores is_sideways on
+// analysis-TF bars). Identical to the old chart-TF math when tf == chart.
+isSidewaysADX   = sideADX < adxThreshold
+isSidewaysChop  = sideChop > chopThreshold
+isSidewaysSlope = sideSlope < flatThreshold
 
 int sidewaysCount = (isSidewaysADX ? 1 : 0) + (isSidewaysChop ? 1 : 0) + (isSidewaysSlope ? 1 : 0)
 isSideways = sidewaysCount >= sidewaysMinCount
 
 // Entries are gated on the sideways vote; exits are never filtered.
 blocked    = rawBuy and isSideways
-// Entry condition 2: the completed analysis bar closed above BOTH MAs. Judged
-// on the same bar the cross was latched from — checking the first bar of the
-// new period against the still-forming period's MAs would mix two periods.
-crossAboveMAs = not na(confClose) and not na(confFastMA) and not na(confSlowMA) and confClose > math.max(confFastMA, confSlowMA)
+// Entry condition 2: the crossover DAILY candle must close above BOTH weekly MAs.
+// After a bullish cross fast_ma > slow_ma, so max() == fast_ma.
+crossAboveMAs = not na(fast_ma) and not na(slow_ma) and close > math.max(fast_ma, slow_ma)
 buyCross   = rawBuy and crossAboveMAs and not isSideways
 sellCross  = rawSell
 
-// Volume-profile window, declared here because the entry gate snapshots its
-// POC at arm time; §5 draws the profile from the same values.
-float vp_hh = ta.highest(high, vpLookback)
-float vp_ll = ta.lowest(low, vpLookback)
-
 // ── Pending confirmation: armed on the signal bar, consumed by confEntry
-// (computed in §5 after score is known) or cancelled by an opposite signal /
-// expiry.
+// (computed in §5 after score + POC are known) or cancelled by an opposite
+// signal / expiry.
 var float pendLevel = na
-var float pendPOC   = na
 var int   pendBar   = na
 if sellCross or (not na(pendBar) and bar_index > pendBar + confirmDays)
     pendLevel := na
-    pendPOC   := na
     pendBar   := na
 if buyCross
-    // The cross is only known once its analysis period has closed, so the
-    // reference candle is that period's last chart bar (high[1]).
-    pendLevel := high[1]
-    // Snapshot the POC: a rolling window would drift every bar of the wait and
-    // silently move the gate the setup was armed against.
-    pendPOC   := not na(vp_hh) and not na(vp_ll) ? vpPOC(vp_hh, vp_ll) : na
+    pendLevel := high
     pendBar   := bar_index
 
 // Smoothed MTF MA display: ramp between the two most recent CONFIRMED
 // analysis-TF values so a weekly MA on a daily chart is continuous instead
 // of a 5-bar staircase.  Lands exactly on the true value at each period end;
 // raw fast_ma/slow_ma keep feeding signals + scoring (scanner parity).
+newPeriod = ta.change(time(tf)) != 0
 var int   dispStart      = bar_index
 var int   dispPrevStart  = bar_index
 var float rawFastPrev    = na
@@ -374,13 +326,13 @@ rsNftCol = rsNft > 0 ? color.green : color.red
 // ── Fundamental Data (unconditional calls so stocks work; ignore_invalid_symbol keeps Forex/Index/Crypto from erroring) ──
 bool hasFund = syminfo.type == "stock"
 string assetType = hasFund ? "" : syminfo.type == "forex" ? "Forex" : syminfo.type == "crypto" ? "Crypto" : syminfo.type == "index" ? "Index" : syminfo.type == "commodity" ? "Commodity" : syminfo.type == "futures" ? "Futures" : str.upper(syminfo.type)
-float epsBasic    = request.financial(clean_ticker, "EARNINGS_PER_SHARE", "TTM", barmerge.gaps_off, true)
-float epsCurrent  = request.financial(clean_ticker, "EARNINGS_PER_SHARE_DILUTED", "TTM", barmerge.gaps_off, true)
-float epsPrev     = request.financial(clean_ticker, "EARNINGS_PER_SHARE_DILUTED", "FY", barmerge.gaps_off, true)
-float revCurrent  = request.financial(clean_ticker, "TOTAL_REVENUE", "TTM", barmerge.gaps_off, true)
-float revPrev     = request.financial(clean_ticker, "TOTAL_REVENUE", "FY", barmerge.gaps_off, true)
-float netIncome   = request.financial(clean_ticker, "NET_INCOME", "TTM", barmerge.gaps_off, true)
-float equity      = request.financial(clean_ticker, "COMMON_EQUITY_TOTAL", "FQ", barmerge.gaps_off, true)
+float epsBasic    = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE", "TTM", barmerge.gaps_off, true)
+float epsCurrent  = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "TTM", barmerge.gaps_off, true)
+float epsPrev     = request.financial(syminfo.tickerid, "EARNINGS_PER_SHARE_DILUTED", "FY", barmerge.gaps_off, true)
+float revCurrent  = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "TTM", barmerge.gaps_off, true)
+float revPrev     = request.financial(syminfo.tickerid, "TOTAL_REVENUE", "FY", barmerge.gaps_off, true)
+float netIncome   = request.financial(syminfo.tickerid, "NET_INCOME", "TTM", barmerge.gaps_off, true)
+float equity      = request.financial(syminfo.tickerid, "COMMON_EQUITY_TOTAL", "FQ", barmerge.gaps_off, true)
 
 // Derived fundamental metrics (only meaningful when hasFund; otherwise stay na via guards below)
 float calcPE       = not na(epsBasic) and epsBasic != 0 ? tf_close / epsBasic : na
@@ -487,15 +439,9 @@ if hasFund
     fundScore := math.min(fundScore, 20.0)
 
 // ── TOTAL SCORE ─────────────────────────────────────────────────────────────
-float rawScore = trendScore + momScore + rsiScore + macdScore + stochScore + obvScore + volScore2 + rsScore + volatScore + fundScore
-// Non-stock symbols have no fundamentals, so their pool is 80 points instead of
-// 100. Normalising back to a 0–100 basis keeps minScore / scoreGood /
-// scoreExcellent meaning the same thing on stocks and on indices/forex/crypto
-// (previously the same settings demanded 62.5% of attainable score on a
-// non-stock but only 50% on a stock).
+float score = trendScore + momScore + rsiScore + macdScore + stochScore + obvScore + volScore2 + rsScore + volatScore + fundScore
 int   maxScore = hasFund ? 100 : 80
-rawScore := math.max(0.0, math.min(rawScore, float(maxScore)))
-float score = maxScore > 0 ? rawScore * 100 / maxScore : 0.0
+score := math.max(0.0, math.min(score, float(maxScore)))
 
 // ── Score Components for Dashboard ──────────────────────────────────────────
 string trendComp = str.tostring(math.round(trendScore)) + "/15"
@@ -537,7 +483,8 @@ if sellCross
 // 5. VOLUME PROFILE
 // ══════════════════════════════════════════════════════════════════════════════
 
-// vp_hh / vp_ll are declared in §3 — the entry gate snapshots its POC there.
+float vp_hh = ta.highest(high, vpLookback)
+float vp_ll = ta.lowest(low, vpLookback)
 
 // Daily ATR for the chandelier stop (the MTF `atr` is weekly — ~5× too wide
 // for a trailing stop). Highest high since entry drives the ratchet.
@@ -546,10 +493,9 @@ var float riskHi = na
 // Chandelier stop: highest high since fill − atrMult × live ATR. Monotonic
 // guard so an ATR expansion can never LOWER the stop mid-trade.
 var float chandStop = na
-// Per-trade risk unit (1R). slPct% for R-Bracket / Signals Only; ATR Trail
-// refines this in §5b to the initial chandelier distance. Set at entry, kept
-// while flat so the just-closed dashboard aggregation still sees the closing
-// trade's unit.
+// Per-trade risk unit (1R): the REAL stop distance — ATR-based in ATR Trail
+// mode, slPct% otherwise. Set at entry, kept while flat so the just-closed
+// dashboard aggregation still sees the closing trade's unit.
 var float tradeR = na
 if strategy.position_size > 0
     riskHi := na(riskHi) ? strategy.position_avg_price : math.max(riskHi, high)
@@ -563,19 +509,17 @@ if strategy.position_size > 0 and strategy.position_size[1] <= 0
 // 5b. ENTRY CONFIRMATION & ORDERS
 // ══════════════════════════════════════════════════════════════════════════════
 // Conditions (1+2 already folded into buyCross in §3):
-//   1. Analysis-TF MA cross confirmed by the last closed bar → rawBuy
-//   2. Completed analysis bar closed above both MAs           → crossAboveMAs
-//   3. Entry candle closes above the cross period's HIGH      → close > pendLevel
-//   4. Entry candle GREEN and close above the POC snapshot    → close > open, close > pendPOC
-//   5. Score >= minScore (normalised 0–100)                   → score >= minScore
-//   6. Still above both MAs, NIFTY above its 50-EMA, ADX >= gate
+//   1. Weekly HMA crosses weekly EMA                    → rawBuy
+//   2. Crossover DAILY candle closes above both MAs     → crossAboveMAs
+//   3. Entry candle closes above crossover candle HIGH  → close > pendLevel
+//   4. Entry candle GREEN and close above VP POC        → close > open, close > POC
+//   5. Score >= minScore                                → score >= minScore
+//   6. Entry candle still above both MAs, NIFTY above its 50-EMA, ADX >= gate
 //      (scanner parity — without these the script enters trend-less /
 //      risk-off breakouts the app rejects)
+float entryPOC = not na(pendBar) and not na(vp_hh) and not na(vp_ll) ? vpPOC(vp_hh, vp_ll) : na
 bool adxOk = minAdxEntry <= 0 or (not na(mtf_adx) and mtf_adx >= minAdxEntry)
-// The scanner's 9-gate stack re-checks both MAs on the ENTRY bar; the signal
-// gate above only proves the cross bar was above them.
-bool entryAboveMAs = not na(fast_ma) and not na(slow_ma) and close > math.max(fast_ma, slow_ma)
-confEntry = not na(pendBar) and bar_index > pendBar and bar_index <= pendBar + confirmDays and close > open and close > pendLevel and not na(pendPOC) and close > pendPOC and entryAboveMAs and regimeOk and adxOk and not na(score) and score >= minScore
+confEntry = not na(pendBar) and bar_index > pendBar and bar_index <= pendBar + confirmDays and close > open and close > pendLevel and not na(entryPOC) and close > entryPOC and crossAboveMAs and regimeOk and adxOk and not na(score) and score >= minScore
 
 // ── Orders — long only, filled at the next bar's open ─────────────────────
 // sellCross fills at the next bar's open, so the flag is set on the SIGNAL
@@ -600,7 +544,6 @@ if confEntry
         // percent-of-equity sizing instead of sizing to a phantom slPct% stop.
         strategy.entry("Long", strategy.long, alert_message="HMAxEMA LONG confirmed on {{ticker}} @ {{close}}")
     pendLevel := na
-    pendPOC   := na
     pendBar   := na
 if sellCross and strategy.position_size > 0
     strategy.close("Long", alert_message="HMAxEMA SELL on {{ticker}} @ {{close}}")
@@ -625,24 +568,15 @@ if exitMode != "Signals Only" and strategy.position_size > 0
         // ratchets with every new high — one formula for SL AND trailing SL.
         float cand = riskHi - atrMult * chartAtr
         chandStop := na(chandStop) ? cand : math.max(chandStop, cand)
-        // 1R must be the REAL initial stop distance. The ratchet starts from
-        // max(fill, entry-bar high), so the first stop is usually TIGHTER than
-        // atrMult × ATR — leaving tradeR at the ATR estimate overstated every
-        // R figure (Open R, avg R, PF-by-R) in this mode only.
-        if strategy.position_size[1] <= 0 and entryPx - chandStop > 0
-            tradeR := entryPx - chandStop
         strategy.exit("Risk Exit", "Long", stop=chandStop, alert_message="HMAxEMA RISK EXIT on {{ticker}} @ {{close}}")
 
 // ── Re-arm: a stop/trailing exit mid-trend reopens the confirmation gate ───
-// Uses the confirmed analysis-bar snapshot, so a stop-out mid-period cannot
-// re-arm on a developing cross or an unfinished sideways reading.
 bool justClosed = strategy.position_size[1] > 0 and strategy.position_size == 0
 if justClosed
     if sigExitPending
         sigExitPending := false
-    else if not na(confFastMA) and not na(confSlowMA) and confFastMA > confSlowMA and not isSideways
+    else if not na(fast_ma) and not na(slow_ma) and fast_ma > slow_ma and not isSideways
         pendLevel := high
-        pendPOC   := not na(vp_hh) and not na(vp_ll) ? vpPOC(vp_hh, vp_ll) : na
         pendBar   := bar_index
 
 // ── Running closed-trade aggregates for the dashboard ──────────────────────
@@ -681,8 +615,6 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
     a_vol = vpBins(vp_hh, vp_ll)
 
     float maxVol = array.max(a_vol)
-    // All-zero bins (no volume data) would divide by zero below.
-    float volDen = maxVol > 0 ? maxVol : 1.0
     int pocIdx = array.indexof(a_vol, maxVol)
     float pocPrice = vp_ll + (pocIdx * rowSize) + (rowSize / 2)
     int startBar = int(math.max(0, bar_index - vpLookback))
@@ -692,7 +624,7 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
         for r = 0 to vpRows - 1
             float binVol = array.get(a_vol, r)
             if binVol > 0
-                int widthBars = int(math.max(1, math.round((binVol / volDen) * vpWidth)))
+                int widthBars = int(math.max(1, math.round((binVol / maxVol) * vpWidth)))
                 float binBot = vp_ll + (r * rowSize)
                 float binTop = vp_ll + ((r + 1) * rowSize)
 
@@ -710,6 +642,10 @@ if barstate.islast and showVP and not na(vp_hh) and not na(vp_ll)
 
     if showPOC
         pocLine := line.new(startBar, pocPrice, bar_index, pocPrice, color=pocColor, width=2, style=line.style_solid)
+
+// NOT syminfo.tickerid — it appends the adjustment JSON
+// ("...{"adjustment":"dividends",...}") on adjusted charts and breaks the table.
+string clean_ticker = syminfo.prefix + ":" + syminfo.ticker
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 6. STEP CHANNEL MOMENTUM
@@ -803,7 +739,7 @@ if showDash and barstate.islast
     color  perfCol   = nClosed == 0 ? color.gray : not na(pf) and pf >= 1.5 ? color.green : not na(pf) and pf >= 1.0 ? color.orange : color.red
     if compactMode
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 1, str.tostring(score, "#") + "/100", text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 1, str.tostring(score, "#") + "/" + str.tostring(maxScore), text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 2, "Trend",      text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 2, trdStr, text_color=trdCol2,  bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 3, "RSI",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
@@ -825,7 +761,7 @@ if showDash and barstate.islast
         table.cell(dash, 0, 9, "PF",         text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 9, perfStr,       text_color=perfCol,  bgcolor=alt_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
     else
-        int filled = int(math.round(score / 10))
+        int filled = int(math.round(score * 10 / maxScore))
         string scoreBar = ""
         for i = 0 to 9
             scoreBar += i < filled ? "█" : "░"
@@ -835,7 +771,7 @@ if showDash and barstate.islast
         color volRowCol   = volScore2 >= 7 ? color.green : volScore2 >= 4 ? color.orange : color.red
         color fundRowCol  = hasFund ? (fundScore >= 14 ? color.green : fundScore >= 8 ? color.orange : color.red) : color.gray
         table.cell(dash, 0, 1, "Score",      text_color=color.white, bgcolor=hdr_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
-        table.cell(dash, 1, 1, str.tostring(score, "#") + "/100" + " " + scoreBar + " " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
+        table.cell(dash, 1, 1, str.tostring(score, "#") + "/" + str.tostring(maxScore) + " " + scoreBar + " " + recStr, text_color=color.yellow, bgcolor=hdr_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 2, "Trend",      text_color=lbl_col,  bgcolor=odd_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 1, 2, trdStr + "  " + trendComp, text_color=trendRowCol, bgcolor=odd_bg, text_halign=text.align_right, text_size=size.small, text_font_family=font.family_monospace)
         table.cell(dash, 0, 3, "RSI",        text_color=lbl_col,  bgcolor=alt_bg, text_halign=text.align_left,  text_size=size.small, text_font_family=font.family_monospace)
