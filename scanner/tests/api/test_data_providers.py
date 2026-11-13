@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 
+import scanner.api.data_providers as dp_mod
 from scanner.api.data_providers import (
     DataProvider,
     _cache_key,
@@ -1054,3 +1055,23 @@ class TestCacheHealth:
         prune_stale_cache()  # records the sweep time
         h = cache_health()
         assert h["last_prune"] != ""  # ISO stamp of the in-process prune
+
+class TestApiKeyPrecedence:
+    """Env vars override api_config.json (README + load_api_config contract)."""
+
+    def _config(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "api_config.json"
+        cfg.write_text(json.dumps({"FINNHUB_API_KEY": "from-file"}))
+        monkeypatch.setattr(dp_mod, "_config_file", cfg)
+        monkeypatch.setattr(dp_mod, "_API_KEYS", {})
+        monkeypatch.setattr(dp_mod, "_API_KEYS_MTIME", 0.0)
+
+    def test_env_overrides_file(self, tmp_path, monkeypatch):
+        self._config(tmp_path, monkeypatch)
+        monkeypatch.setenv("FINNHUB_API_KEY", "from-env")
+        assert dp_mod._get_api_key("FINNHUB_API_KEY") == "from-env"
+
+    def test_file_used_when_env_missing(self, tmp_path, monkeypatch):
+        self._config(tmp_path, monkeypatch)
+        monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+        assert dp_mod._get_api_key("FINNHUB_API_KEY") == "from-file"

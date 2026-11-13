@@ -43,31 +43,35 @@ logger = logging.getLogger(__name__)
 # Load API keys from config file (re-read on each call to pick up live edits)
 _API_KEYS: dict[str, str] = {}
 _API_KEYS_MTIME: float = 0.0
+_API_KEYS_LOCK = threading.Lock()
 _config_file = Path(__file__).parent.parent / "api_config.json"
 
 
 def _get_api_key(key_name: str) -> str:
-    """Resolve an API key: config file first, then os.environ.
+    """Resolve an API key: os.environ first, then the config file.
 
-    Re-reads api_config.json when its mtime changes so key rotations
-    take effect without restarting the process.
+    Env wins, matching settings_store.load_api_config() and the README — a
+    rotated key takes effect without editing the file. The file is re-read
+    when its mtime changes so in-place edits still apply.
     """
     global _API_KEYS, _API_KEYS_MTIME
-    try:
-        mtime = _config_file.stat().st_mtime if _config_file.exists() else 0.0
-    except OSError:
-        mtime = 0.0
-    if mtime != _API_KEYS_MTIME:
-        _API_KEYS_MTIME = mtime
+    with _API_KEYS_LOCK:
         try:
-            if _config_file.exists():
-                with open(_config_file) as f:
-                    _API_KEYS = json.load(f)
-            else:
-                _API_KEYS = {}
-        except Exception:
-            logger.info("API key config parse failed", exc_info=True)
-    return _API_KEYS.get(key_name) or os.environ.get(key_name, "")
+            mtime = _config_file.stat().st_mtime if _config_file.exists() else 0.0
+        except OSError:
+            mtime = 0.0
+        if mtime != _API_KEYS_MTIME:
+            _API_KEYS_MTIME = mtime
+            try:
+                if _config_file.exists():
+                    with open(_config_file) as f:
+                        _API_KEYS = json.load(f)
+                else:
+                    _API_KEYS = {}
+            except Exception:
+                logger.info("API key config parse failed", exc_info=True)
+        file_key = _API_KEYS.get(key_name)
+    return os.environ.get(key_name) or file_key or ""
 
 
 # ── Cache Directory ────────────────────────────────────────────────────────

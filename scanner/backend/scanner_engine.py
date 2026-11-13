@@ -411,7 +411,29 @@ def _guarded_score(score_fn, item):
         return None, "error"
 
 
-def _parallel_score(items, score_fn, cancel_event, max_workers=8):
+class _ScoreTally:
+    """Filter/rating/direction counters shared by scan() and scan_stream()."""
+
+    def __init__(self):
+        self.filtered = 0
+        self.poor_rating = 0
+        self.directions = {"Bull": 0, "Bear": 0}
+
+    def add(self, scores, direction: str, out: list) -> None:
+        """Count one ``(scores, direction)`` result and append it when scored."""
+        if scores is None:
+            if direction == "filtered":
+                self.filtered += 1
+            elif direction == "poor_rating":
+                self.poor_rating += 1
+            return
+        self.directions[direction] = self.directions.get(direction, 0) + 1
+        out.append(scores)
+
+
+def _parallel_score(
+    items, score_fn, cancel_event, max_workers=8, on_complete=None
+):
     """Score ``(ticker, df)`` items concurrently, preserving input order.
 
     Network-bound provider work scales ~linearly with workers; CPU-bound
@@ -421,6 +443,9 @@ def _parallel_score(items, score_fn, cancel_event, max_workers=8):
     mirrors ``cancel_event``. Cancel is polled every 0.5s (same cadence as
     the large-universe loop) so Stop stays responsive; items that never ran
     are simply absent from ``ordered``.
+
+    ``on_complete(result)`` runs as each worker finishes (progress sinks) —
+    never let it raise, it is called from the polling loop.
     """
     from concurrent.futures import FIRST_COMPLETED, wait
 
@@ -443,10 +468,16 @@ def _parallel_score(items, score_fn, cancel_event, max_workers=8):
         completed, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
         for fut in completed:
             try:
-                ordered[futs[fut]] = fut.result()
+                result = fut.result()
             except Exception as e:  # e.g. CancelledError after a late cancel
                 logger.info("Parallel scoring worker failed: %s", e)
-                ordered[futs[fut]] = (None, "error")
+                result = (None, "error")
+            ordered[futs[fut]] = result
+            if on_complete is not None:
+                try:
+                    on_complete(result)
+                except Exception as e:
+                    logger.info("Parallel score progress callback failed: %s", e)
     if not cancelled:
         executor.shutdown(wait=True)
     return ordered, cancelled
@@ -1308,12 +1339,9 @@ class ScannerEngine:
 
             results = []
             total = len(batch_data)
-            filtered_out = 0
-            poor_rating_hidden = 0
-            direction_counts = {"Bull": 0, "Bear": 0}
+            tally = _ScoreTally()
 
             # ── Phase 1: Fast technical scoring (no enrichment) ────────────
-            # Use ThreadPool for CPU-bound scoring on large universes
             def _score_one(item):
                 ticker, df = item
                 return _score_ticker(
@@ -1328,101 +1356,63 @@ class ScannerEngine:
                     enrich=self._enrich_with_providers,
                 )
 
-            if is_large and total > 200:
-                # Parallel scoring for large universes — poll cancel every 0.5s
-                from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-
+            items = list(batch_data.items())
+            large_parallel = is_large and total > 200
+            if large_parallel:
+                # Large universes: progress streams as workers finish; the
+                # ordered pass below only tallies and logs. Cancel is polled
+                # inside _parallel_score every 0.5s.
                 max_workers = min(8, (total // 50) + 2)
                 self._log(
                     f"Parallel scoring {total} stocks with {max_workers} workers..."
                 )
-                executor = ThreadPoolExecutor(max_workers=max_workers)
-                future_to_ticker = {
-                    executor.submit(_score_one, item): item[0]
-                    for item in batch_data.items()
-                }
-                cancelled_loop = False
-                pending = set(future_to_ticker)
                 done = 0
-                while pending:
-                    if self._cancel_event.is_set():
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        cancelled_loop = True
-                        result.cancelled = True
-                        break
-                    completed, pending = wait(
-                        pending, timeout=0.5, return_when=FIRST_COMPLETED
-                    )
-                    if not completed:
-                        continue
-                    for future in completed:
-                        done += 1
-                        if done % 50 == 0 or done <= 5:
-                            self._progress(
-                                0.1 + (done / total * 0.7), f"Scoring {done}/{total}"
-                            )
-                        scores, direction = future.result()
-                        if scores is None:
-                            if direction == "filtered":
-                                filtered_out += 1
-                            elif direction == "poor_rating":
-                                poor_rating_hidden += 1
-                            continue
-                        direction_counts[direction] = (
-                            direction_counts.get(direction, 0) + 1
+
+                def _progress_one(_res):
+                    nonlocal done
+                    done += 1
+                    if done % 50 == 0 or done <= 5:
+                        self._progress(
+                            0.1 + (done / total * 0.7), f"Scoring {done}/{total}"
                         )
-                        results.append(scores)
-                        if len(results) % 20 == 0 or len(results) <= 5:
-                            tag = (
-                                "\u2713"
-                                if scores["total"] >= settings.get("min_score", 50)
-                                else "\u2717"
-                            )
-                            self._log(
-                                f"  {tag} {scores['ticker']}: {scores['total']:.1f}/100 ({direction})"
-                            )
-                if not cancelled_loop:
-                    executor.shutdown(wait=True)
+
+                ordered, _pcancelled = _parallel_score(
+                    items,
+                    _score_one,
+                    self._cancel_event,
+                    max_workers=max_workers,
+                    on_complete=_progress_one,
+                )
             else:
-                # Small universes run full per-ticker enrichment (~3s of
-                # provider calls each) — parallelize across tickers the way
-                # phase 2 does. Input order is preserved for the logs below.
-                items = list(batch_data.items())
                 ordered, _pcancelled = _parallel_score(
                     items, _score_one, self._cancel_event
                 )
-                if _pcancelled:
-                    self._log("\n\u23f9  Scan cancelled by user")
-                    result.cancelled = True
-                done = 0
-                for i, (ticker, _df) in enumerate(items, 1):
-                    res = ordered.get(i - 1)
-                    if res is None:
-                        continue  # cancelled before this item ran
-                    scores, direction = res
-                    done += 1
+            if _pcancelled:
+                self._log("\n\u23f9  Scan cancelled by user")
+                result.cancelled = True
+
+            # Tally in input order so logs and result order are deterministic.
+            done = 0
+            for i, (ticker, _df) in enumerate(items, 1):
+                res = ordered.get(i - 1)
+                if res is None:
+                    continue  # cancelled before this item ran
+                scores, direction = res
+                tally.add(scores, direction, results)
+                if scores is None:
+                    continue
+                done += 1
+                if not large_parallel:
                     progress = 0.1 + (done / total * 0.9) if total > 0 else 0.5
                     self._progress(progress, f"[{done}/{total}] {ticker}")
-
-                    if scores is None:
-                        if direction == "filtered":
-                            filtered_out += 1
-                        elif direction == "poor_rating":
-                            poor_rating_hidden += 1
-                        continue
-                    direction_counts[direction] = direction_counts.get(direction, 0) + 1
-                    results.append(scores)
-
-                    if len(results) % 10 == 0 or len(results) <= 5:
-                        score_val = scores["total"]
-                        tag = (
-                            "\u2713"
-                            if score_val >= settings.get("min_score", 50)
-                            else "\u2717"
-                        )
-                        self._log(
-                            f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})"
-                        )
+                if done % 10 == 0 or done <= 5:
+                    score_val = scores["total"]
+                    tag = (
+                        "\u2713"
+                        if score_val >= settings.get("min_score", 50)
+                        else "\u2717"
+                    )
+                    self._log(f"  {tag} {ticker}: {score_val:.1f}/100 ({direction})")
 
             # ── Phase 2: Enrich top 200 for large universes ───────────────
             if is_large and results and not self._cancel_event.is_set():
@@ -1454,9 +1444,9 @@ class ScannerEngine:
                 settings,
                 tickers,
                 results,
-                filtered_out,
-                poor_rating_hidden,
-                direction_counts,
+                tally.filtered,
+                tally.poor_rating,
+                tally.directions,
                 trend_filter,
                 batch_data=batch_data,
                 scan_label="Scan Complete",
@@ -1569,9 +1559,7 @@ class ScannerEngine:
 
             results: list[dict] = []
             batch_data_all: dict = {}
-            filtered_out = 0
-            poor_rating_hidden = 0
-            direction_counts = {"Bull": 0, "Bear": 0}
+            tally = _ScoreTally()
             total_tickers = len(tickers)
             fetched_so_far = 0
             batch_idx = 0
@@ -1623,68 +1611,25 @@ class ScannerEngine:
 
                 t_sc = _time.monotonic()
                 chunk_results: list[dict] = []
-                # For large universes use parallel scoring per chunk (smaller
-                # pool) — poll cancel every 0.5s so Stop isn't held by scoring.
-                if is_large and len(chunk_data) > 20:
-                    from concurrent.futures import (
-                        FIRST_COMPLETED,
-                        wait,
-                    )
-
-                    max_w = min(8, (len(chunk_data) // 25) + 1)
-                    ex = _DaemonThreadPoolExecutor(max_workers=max_w)
-                    futs = {
-                        ex.submit(_score_one, item): item[0]
-                        for item in chunk_data.items()
-                    }
-                    cancelled_loop = False
-                    pending = set(futs)
-                    while pending:
-                        if self._cancel_event.is_set():
-                            ex.shutdown(wait=False, cancel_futures=True)
-                            cancelled_loop = True
-                            break
-                        completed, pending = wait(
-                            pending, timeout=0.5, return_when=FIRST_COMPLETED
-                        )
-                        if not completed:
-                            continue
-                        for fut in completed:
-                            scores, direction = fut.result()
-                            if scores is None:
-                                if direction == "filtered":
-                                    filtered_out += 1
-                                elif direction == "poor_rating":
-                                    poor_rating_hidden += 1
-                                continue
-                            direction_counts[direction] = (
-                                direction_counts.get(direction, 0) + 1
-                            )
-                            chunk_results.append(scores)
-                    if not cancelled_loop:
-                        ex.shutdown(wait=True)
-                else:
-                    # Small universes run full per-ticker enrichment (~3s of
-                    # provider calls each) — parallelize across tickers the
-                    # way phase 2 does. Input order is preserved so the batch
-                    # callback sees the same sequence as a sequential run.
-                    items = list(chunk_data.items())
-                    ordered, _ = _parallel_score(items, _score_one, self._cancel_event)
-                    for idx, (_ticker, _df) in enumerate(items):
-                        res = ordered.get(idx)
-                        if res is None:
-                            continue  # cancelled before this item ran
-                        scores, direction = res
-                        if scores is None:
-                            if direction == "filtered":
-                                filtered_out += 1
-                            elif direction == "poor_rating":
-                                poor_rating_hidden += 1
-                            continue
-                        direction_counts[direction] = (
-                            direction_counts.get(direction, 0) + 1
-                        )
-                        chunk_results.append(scores)
+                items = list(chunk_data.items())
+                # Large universes use a smaller per-chunk pool. Cancel is
+                # polled inside _parallel_score every 0.5s either way.
+                max_w = (
+                    min(8, (len(chunk_data) // 25) + 1)
+                    if is_large and len(chunk_data) > 20
+                    else 8
+                )
+                ordered, _pcancelled = _parallel_score(
+                    items, _score_one, self._cancel_event, max_workers=max_w
+                )
+                if _pcancelled:
+                    result.cancelled = True
+                for idx in range(len(items)):
+                    res = ordered.get(idx)
+                    if res is None:
+                        continue  # cancelled before this item ran
+                    scores, direction = res
+                    tally.add(scores, direction, chunk_results)
                 score_accum += _time.monotonic() - t_sc
 
                 if chunk_results:
@@ -1756,9 +1701,9 @@ class ScannerEngine:
                 settings,
                 tickers,
                 results,
-                filtered_out,
-                poor_rating_hidden,
-                direction_counts,
+                tally.filtered,
+                tally.poor_rating,
+                tally.directions,
                 trend_filter,
                 batch_data=batch_data_all,
                 scan_label="Stream Scan Complete",
